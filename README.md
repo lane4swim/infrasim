@@ -1,5 +1,8 @@
 # Phase 1 — Playable Prototype
 
+*(See [Phase 2 — Rail](#phase-2--rail) below for what's built on top of
+this since.)*
+
 This started as Phase 1 of the build order from the architecture spec:
 **ground-level roads + trucks, a single resource, a single recipe, a basic
 tick loop** — plus the two interaction models the whole spec depends on
@@ -238,7 +241,9 @@ tooling. There's nothing to install.
   browsers. The simulation code here is already isolated from rendering
   (look at `simTick()` vs `render()`) — moving it into a worker later is a
   refactor, not a redesign.
-- Rail/ship/plane/pipeline/powerline modes, multi-modal transfer nodes.
+- Ship/plane/pipeline/powerline modes. (Rail — the first additional
+  transport mode, plus a true multi-modal transfer node — is no longer
+  deferred; see [Phase 2 — Rail](#phase-2--rail-a-second-transport-mode).)
 - The full multi-layer height system (§3–4) — this build only has two
   layers (ground/elevated) and only for roads; underground layers, and
   elevated/underground for buildings or other transport modes, aren't here.
@@ -280,3 +285,128 @@ tooling. There's nothing to install.
 - Demolishing one layer's road tile at a cell (say, elevated) automatically
   removes a Ramp there too, since a Ramp needs both layers present — you'll
   need to rebuild the Ramp (and pay for it again) if you want the link back.
+
+---
+
+# Phase 2 — Rail
+
+The first milestone of Phase 2 (per the architecture spec's build order,
+§15): **Rail as a genuinely different transport mode, plus a true
+cross-mode transfer node** — the Rail Depot — that Phase 1's Station
+deliberately wasn't. Still one self-contained `index.html`, no build step.
+
+## Running the tests
+
+Unlike Phase 1, this milestone ships with a headless regression suite:
+
+```
+node test/test-rail.js
+```
+
+`test/harness.js` runs the *actual* `<script>` contents of `index.html`
+inside a Node `vm` context, stubbed with just enough of a DOM (`document`,
+`requestAnimationFrame`, …) that the file loads without ever starting its
+render loop — real shipped code, not a reimplementation. `test-rail.js`
+covers block mutual exclusion, block-boundary computation (including
+recompute-on-demolish), a full Mine → truck → Depot → train → Depot →
+truck → Town chain, and confirms the F=ma physics model generalizes to
+trains unmodified. It also re-runs Phase 1's own Mine → Mill → Town chain
+headlessly as a stand-in for "no regressions," since this repo doesn't have
+Phase 1's original suites checked in to literally re-run.
+
+## What's implemented (maps to the Rail milestone plan)
+
+- **A third grid layer, reusing the road pattern deliberately.** `rail`
+  sits alongside `ground`/`elevated` with the exact same
+  `{track, edges, oneWayBlocked}` shape (the `road` boolean was renamed to
+  the generic `track`, since none of `getCell`/`findRoadPath`/connectivity
+  bookkeeping was ever actually road-specific). Track is grid data, not
+  ECS entities — same reasoning as roads in Phase 1: uniform,
+  position-indexed, and numerous, which was already the reason roads
+  weren't entities either.
+- **Block signaling — a genuinely new state category.** A `Block`
+  (`{occupiedBy: entityId|null}`) covers a maximal run of rail edges
+  between "hubs": a junction or dead end (degree ≠ 2), a signal, or a cell
+  touching a Rail Depot. Recomputed wholesale on track build/demolish
+  (`computeRailBlocks`), never per tick. Two trains can never hold the same
+  block at once — a hard rule layered on top of the same soft
+  velocity-gap/footprint spacing trucks already use, not a replacement for
+  it. Blocks live in `world.railBlocks` (keyed by block id) rather than as
+  an ECS component, for the same reason track itself isn't ECS — there's
+  no entity to attach a component to.
+- **Rail Depot — a true cross-mode transfer node.** Unlike a Station (a
+  storage-less access point), a Depot has real `Storage`, sized so it can
+  absorb the rate mismatch between a train dropping off dozens of units at
+  once and trucks drawing it down a few at a time. Its `out` and `in`
+  slots are *the same object* (not two separate counters that happen to
+  share a resource id) — a Depot doesn't convert anything, so there's only
+  one physical pile of whatever resource it buffers, and a truck's
+  drop-off and a train's pickup need to read/write that one number
+  regardless of direction. Road access works exactly like a Mine/Mill/Town
+  (a Station built touching it does the docking — `findLinkedIndustry` now
+  recognizes any Storage-having building, not just Producer/Consumer
+  ones); rail access is full-perimeter (any touching track tile), no
+  facing UI needed.
+- **`tickTrainMovement`, sharing the road vehicles' physics wholesale.**
+  `applySpeedStep`/`advanceAlongPath`/the occupancy-map machinery were
+  factored out of `tickVehicles` into functions both trucks and trains
+  call — trains get individual `maxSpeed`/`massEmpty`/`engineForce`/
+  `brakeForce` exactly like trucks, just with much larger base values, and
+  `brakeForce > engineForce` still guarantees decel > accel at any mass.
+  The only genuinely new piece is layered on top: before crossing into the
+  next block, a train must acquire it (and release whichever block it's
+  leaving); if the next block is already held, it decelerates to a full
+  stop *at the boundary*.
+- **`findRailPath`**, a near-copy of `findRoadPath`'s BFS for the rail
+  layer (uniform edge cost, so still BFS, no A*) — one flat layer, no
+  ramp/vertical-move concept the way ground/elevated roads have.
+- **A train's cargo resource isn't fixed at creation, unlike a truck's.**
+  `TRAIN_DEFS.freight.resource` is `null`; `Cargo.resource` is set at the
+  point of loading, from whichever `load` order is executing
+  (`v.cargoResource = order.resource` in `tickTrainMovement`'s loading
+  branch) — a small, type-gated exception rather than a redesign of
+  `Cargo`. Rationale: a 40-capacity freight train is a much bigger
+  commitment than a $200 truck, and "one expensive asset serving several
+  parts of the network" is part of rail's identity versus roads.
+- **Explicit Load/Unload stop buttons**, replacing the single "+ Add stop"
+  button. A Depot's `out` and `in` sharing one resource made the old
+  resource-match inference (which slot has this resource?) ambiguous for
+  the first time — Mill's two differently-resourced Stations never hit
+  this. The player now says which action they mean; `resolveStopTarget`
+  validates it (via a Station's chain for trucks, or directly for trains
+  at a Depot) and rejects a stop that doesn't support it. This also
+  quietly fixed a latent bug: a Station touching a building whose
+  `out`/`in` happened to match on resource could only ever resolve to one
+  action before, never the other.
+- **Rail tool group**: Build Track, Toggle Signal Direction (mechanically
+  identical to Toggle One-Way — a signal *is* a one-way restriction, and
+  additionally a block boundary), Build Rail Depot, Buy Freight Train.
+  Depot inspector shows both links ("Road side: Station #N" / "Rail side:
+  connected/not") instead of a Station's single line. Train inspector
+  shows the same physics readout trucks have, plus "Currently carrying: —"
+  until its first load.
+
+## Deliberately deferred
+
+- Ship/plane/pipeline/powerline modes and the later performance pass stay
+  future milestones (§15) — this is Rail only.
+- Block computation cost at scale. Recomputing all blocks from scratch on
+  every track edit is fine at this grid size; flagged for the later
+  performance pass, not solved here.
+- The content-pack refactor, Worker split, and persistence workstreams
+  that the implementation plan schedules after Rail — not part of this
+  milestone.
+
+## Known rough edges
+
+- Demolishing rail track out from under a train mid-journey isn't handled
+  specially — same accepted rough edge as Phase 1's "deleting a road
+  segment mid-transit doesn't invalidate a path." The stale block
+  reference is guarded against crashing, but a train in that situation
+  won't recover cleanly.
+- A stationary train that hasn't crossed a block edge yet (freshly
+  purchased, or idle with no orders) doesn't hold any block — only the
+  soft cell-footprint reservation still prevents another train from
+  physically overlapping it. Real block signaling would reserve the whole
+  block for a parked train too; this is a simplification, same spirit as
+  Phase 1's vehicle-`trail` rough edge.

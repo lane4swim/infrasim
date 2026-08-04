@@ -166,6 +166,22 @@
       Flatbed can only be given Steel-handling ones. The order editor
       enforces this — a mismatched stop is rejected.</div>
 
+    <div class="section-label">Rail</div>
+    <button class="tool-btn" data-tool="track"><span class="tool-swatch" style="background:#9b6bd6"></span>Build Track<span class="cost" id="trackCost">$25/tile</span></button>
+    <button class="tool-btn" data-tool="signal"><span class="tool-swatch" style="background:var(--amber)"></span>Toggle Signal Direction</button>
+    <button class="tool-btn" data-tool="depot"><span class="tool-swatch" style="background:#6b5b95"></span>Build Rail Depot<span class="cost" id="depotCost">$300</span></button>
+    <select id="depotResourceSelect">
+      <option value="ore">Depot handles: Ore</option>
+      <option value="steel">Depot handles: Steel</option>
+    </select>
+    <button class="tool-btn" data-tool="freighttrain"><span class="tool-swatch" style="background:#9b6bd6"></span>Buy Freight Train<span class="cost">$900</span></button>
+    <div class="hint-text">A Rail Depot has real storage, like a Mill — it's what lets a train drop
+      off 40 units at once while trucks draw it down a few at a time. Build a
+      Station touching it for road access, same as a Mine or Mill; track
+      touching any side gives it rail access, no facing needed. A train's
+      cargo isn't fixed like a truck's — it carries whatever resource its
+      current load order says, one load at a time.</div>
+
     <div class="section-label">About</div>
     <div class="hint-text">
       Trucks load and unload at Stations, never at a Mine, Mill, or Town
@@ -174,6 +190,10 @@
       right next to one.
       An elevated road never connects to a ground road at the same cell —
       only a Ramp links the two layers.
+      Trains work the same way but on their own network — track instead of
+      road, Rail Depots instead of Stations. A signal is rail's one-way: it
+      also marks a hard block boundary, so two trains can never occupy the
+      same signaled segment at once.
     </div>
   </div>
 
@@ -236,6 +256,14 @@ const BUILDING_DEFS = {
   mill:    { buildCost: 220, tiers: { small:{cap:20, add:0}, large:{cap:50, add:120} }, color:'#8a4a3a', label:'Steel Mill', footprint:{w:3,h:2}, recipe:'smelt_steel' },
   town:    { buildCost: 100, tiers: { small:{cap:20, add:0, population:50}, large:{cap:50, add:80, population:150} }, color:'#3a6ea5', label:'Town', footprint:{w:3,h:2} },
   station: { buildCost: 60,  tiers: { small:{cap:0, add:0}, large:{cap:0, add:0} }, color:'#c9a227', label:'Station', footprint:{w:1,h:1} },
+  // A Rail Depot is a true cross-mode transfer node: it has real Storage
+  // (unlike a Station) so it can absorb the rate mismatch between a train
+  // dropping off dozens of units at once and trucks drawing it down a few
+  // at a time. Road access works exactly like a Mine/Mill/Town — a Station
+  // built touching it does the docking — and it separately has full-
+  // perimeter rail access (any touching rail tile), so no facing UI is
+  // needed on either side.
+  depot:   { buildCost: 300, tiers: { small:{cap:30, add:0}, large:{cap:80, add:150} }, color:'#6b5b95', label:'Rail Depot', footprint:{w:2,h:2} },
 };
 const VEHICLE_DEFS = {
   // Bulk trucks haul raw ore; flatbeds haul finished steel. A vehicle's
@@ -249,6 +277,26 @@ const VEHICLE_DEFS = {
     maxSpeedTilesPerTick: 1.1, massEmpty: 6, engineForce: 0.55, brakeForce: 1.7, lengthTiles: 1.5,
   },
 };
+const RAIL_DEFS = {
+  track: { costPerTile: 25 }, // pricier than road, matching §16.2's layer-multiplier spirit
+};
+const TRAIN_DEFS = {
+  // Unlike trucks, a train's cargo resource is NOT fixed at creation — it's
+  // set per-trip by whichever `load` order it executes (Cargo.resource
+  // starts null and is assigned at the point of loading; see tickTrainMovement).
+  // That's a deliberate divergence from trucks: a train is a much bigger
+  // capital commitment, and part of rail's identity is "one expensive asset
+  // serving several parts of the network" rather than "buy one train per resource."
+  freight: { purchaseCost:900, runningCostPerTick:3, capacity:40, sellFraction:0.4, label:'Freight Train', resource:null, color:'#9b6bd6',
+    maxSpeedTilesPerTick: 1.6, massEmpty: 40, engineForce: 3.0, brakeForce: 6.0, lengthTiles: 4,
+  },
+};
+// Single lookup point for "what def table is this vehicle type in" — used
+// everywhere a truck-or-train's stats/cost/label are needed, so adding a
+// third vehicle family (ship, plane) later only means adding one more def
+// table and one more branch here, not touching every call site.
+function getVehicleDef(type){ return VEHICLE_DEFS[type] || TRAIN_DEFS[type]; }
+function isTrainType(type){ return !!TRAIN_DEFS[type]; }
 
 // ---------------------------------------------------------------------
 // WORLD STATE
@@ -257,20 +305,44 @@ const GRID_W = 22, GRID_H = 14, CELL = 40;
 const world = {
   treasury: INITIAL_TREASURY,
   tick: 0,
-  grid: new Map(),          // "x,y" -> { buildingId, ramp, layers:{ground,elevated} }
+  grid: new Map(),          // "x,y" -> { buildingId, ramp, layers:{ground,elevated,rail} }
   entities: new Map(),      // id -> entity handle (see makeEntityHandle below)
   components: {},           // componentName -> Map<entityId, componentData> — the real storage
+  // blockId -> {occupiedBy: entityId|null}. Rail's mutual-exclusion state
+  // (§ Block segmentation) is deliberately NOT an ECS component: a block is
+  // a property of a *track segment*, and track — like roads — was already a
+  // deliberate non-entity (§ Track as grid data) because it's uniform,
+  // position-indexed, and numerous. This table is the direct analog of a
+  // component table (recomputed wholesale on track topology change; each
+  // rail edge's `blockId` in the grid points into it), just keyed by block
+  // id instead of entity id, for the same reason components are keyed by
+  // entity id — independent, queryable storage.
+  railBlocks: new Map(),
   nextId: 1,
 };
 
 function cellKey(x,y){ return x+','+y; }
-function newTrack(){ return { road:false, edges:{N:false,S:false,E:false,W:false}, oneWayBlocked:{N:false,S:false,E:false,W:false} }; }
+// `track` (was `road` in Phase 1) is a generic "is there a network tile
+// here" flag — the same {track,edges,oneWayBlocked} shape now backs the
+// ground/elevated ROAD layers and the RAIL layer, since nothing about
+// per-edge connectivity, one-way blocking, or BFS pathfinding is actually
+// road-specific (see the Rail milestone notes below). `blockId` is only
+// ever populated for the rail layer (mutual-exclusion segment id per
+// edge) but lives on every layer's track object for shape-uniformity.
+function newTrack(){
+  return {
+    track:false,
+    edges:{N:false,S:false,E:false,W:false},
+    oneWayBlocked:{N:false,S:false,E:false,W:false},
+    blockId:{N:null,S:null,E:null,W:null},
+  };
+}
 function getCell(x,y){
   const k = cellKey(x,y);
   if(!world.grid.has(k)) world.grid.set(k,{
     buildingId: null,
     ramp: false,             // true if ground and elevated tracks are linked vertically here
-    layers: { ground:newTrack(), elevated:newTrack() },
+    layers: { ground:newTrack(), elevated:newTrack(), rail:newTrack() },
   });
   return world.grid.get(k);
 }
@@ -290,10 +362,11 @@ const COMPONENT_TYPES = [
   'Producer',   // {recipeId,ticksRemaining} — Mines and Mills
   'Consumer',   // {population,consumptionPerTick,priceMultiplier} — Towns only
   'Identity',   // {kind:'building'|'vehicle', type} — every entity
-  'Movement',   // {speed,maxSpeed,massEmpty,engineForce,brakeForce,length,path,pathIndex,frac,trail} — vehicles only
+  'Movement',   // {speed,maxSpeed,massEmpty,engineForce,brakeForce,length,path,pathIndex,frac,trail,currentBlock} — vehicles only; currentBlock is rail-only (see tickTrainMovement)
   'Status',     // {state} — vehicles only (idle|moving|loading|unloading|blocked)
   'Orders',     // {list,index} — vehicles only, player-authored (§6.6)
-  'Cargo',      // {amount,capacity,resource} — vehicles only; resource is fixed per vehicle (§ vehicle types)
+  'Cargo',      // {amount,capacity,resource} — vehicles only; fixed per vehicle for trucks, settable per-trip for trains (§2.5)
+  'RailNode',   // {} — marks a building (Rail Depot) as a valid rail-network endpoint, full-perimeter access
 ];
 for(const name of COMPONENT_TYPES) world.components[name] = new Map();
 
@@ -321,6 +394,7 @@ function queryEntities(...names){
 }
 
 function destroyEntity(id){
+  if(hasComponent(id,'Movement')) releaseBlock(world.entities.get(id)); // don't leave a rail block held by a sold/removed train
   world.entities.delete(id);
   for(const name of COMPONENT_TYPES) world.components[name].delete(id);
 }
@@ -338,6 +412,7 @@ const FIELD_MAP = {
   speed:['Movement','speed'], maxSpeed:['Movement','maxSpeed'], massEmpty:['Movement','massEmpty'],
   engineForce:['Movement','engineForce'], brakeForce:['Movement','brakeForce'], length:['Movement','length'],
   path:['Movement','path'], pathIndex:['Movement','pathIndex'], frac:['Movement','frac'], trail:['Movement','trail'],
+  currentBlock:['Movement','currentBlock'], // rail-only: the Block id (see world.railBlocks) this train currently holds, or null
   state:['Status','state'],
   orders:['Orders','list'], ordersIndex:['Orders','index'],
   cargoAmount:['Cargo','amount'], capacity:['Cargo','capacity'], cargoResource:['Cargo','resource'],
@@ -475,7 +550,7 @@ const ROAD_DIRS = [
 function neighbors4(x,y){
   return [[x+1,y],[x-1,y],[x,y+1],[x,y-1]].filter(([nx,ny])=>inBounds(nx,ny));
 }
-function isRoad(x,y,layer){ return getCell(x,y).layers[layer||'ground'].road; }
+function isRoad(x,y,layer){ return getCell(x,y).layers[layer||'ground'].track; }
 
 // Every cell a building occupies, derived from its anchor (x,y) + footprint.
 function footprintCells(building){
@@ -504,6 +579,23 @@ function buildingRoadAccessCell(building){
     for(const [nx,ny] of neighbors4(cell.x,cell.y)){
       if(own.has(nx+','+ny)) continue; // don't count a neighbor that's part of the same building
       if(isRoad(nx,ny,'ground')) return {x:nx,y:ny,layer:'ground'};
+    }
+  }
+  return null;
+}
+
+// A Rail Depot's rail side, in contrast, is full-perimeter — any touching
+// rail tile counts, no facing to choose at build time (§2.1's simpler of
+// the two options: the depot's identity as a transfer node is already the
+// new thing here, so this deliberately doesn't ALSO introduce a rail-facing
+// UI). Structurally the same "scan every side" fallback buildingRoadAccessCell
+// already has for a building with no `facing`, just against the rail layer.
+function buildingRailAccessCell(building){
+  const own = new Set(footprintCells(building).map(c=>c.x+','+c.y));
+  for(const cell of footprintCells(building)){
+    for(const [nx,ny] of neighbors4(cell.x,cell.y)){
+      if(own.has(nx+','+ny)) continue;
+      if(getCell(nx,ny).layers.rail.track) return {x:nx,y:ny};
     }
   }
   return null;
@@ -550,16 +642,157 @@ function findRoadPath(start, end){
   }
   return null;
 }
+
+// Near-copy of findRoadPath for the rail layer: same BFS (uniform edge
+// cost, so no need for A* — §10), same one-way/signal respect, just a
+// single layer with no ramp/vertical-move concept. Kept as a separate
+// function rather than parameterizing findRoadPath because the two differ
+// in exactly the ways road and rail differ structurally (ground/elevated +
+// ramps vs. one flat layer) — forcing them through one function would mean
+// more branching in the shared code than the two bodies actually share.
+function findRailPath(start, end){
+  const nodeKey = n => n.x+','+n.y;
+  if(start.x===end.x && start.y===end.y) return [start];
+  const visited = new Set([nodeKey(start)]);
+  const queue = [start];
+  const cameFrom = new Map();
+  function tryVisit(node, cur){
+    const k = nodeKey(node);
+    if(visited.has(k)) return null;
+    visited.add(k);
+    cameFrom.set(k, cur);
+    if(node.x===end.x && node.y===end.y){
+      let path = [node]; let c = cur;
+      while(c){ path.unshift(c); c = cameFrom.get(nodeKey(c)); }
+      return path;
+    }
+    queue.push(node);
+    return undefined;
+  }
+  while(queue.length){
+    const cur = queue.shift();
+    const track = getCell(cur.x, cur.y).layers.rail;
+    for(const {dir,dx,dy} of ROAD_DIRS){
+      if(!track.edges[dir]) continue;
+      if(track.oneWayBlocked[dir]) continue; // a signal blocks departure this way
+      const found = tryVisit({x:cur.x+dx, y:cur.y+dy}, cur);
+      if(found) return found;
+    }
+  }
+  return null;
+}
+
+// Direction (from ROAD_DIRS) from cell `a` to orthogonally-adjacent cell `b`.
+function dirBetween(a,b){ return ROAD_DIRS.find(r => b.x===a.x+r.dx && b.y===a.y+r.dy); }
+
+// ---------------------------------------------------------------------
+// RAIL BLOCKS — mutual-exclusion segments, recomputed on track edit only
+// (§ Block segmentation), never per tick. A block is a maximal run of rail
+// edges between two "hubs." A cell is a hub — a block boundary — if it's a
+// junction or dead end (its own degree isn't exactly 2), has a signal on
+// any of its edges (a signal IS a boundary, not just a direction filter),
+// or touches a Rail Depot (so a train's approach to a depot is always its
+// own segment, never shared with unrelated through-traffic). Two trains
+// can never hold the same block at once, regardless of the softer
+// velocity-gap spacing trains also use for smooth car-following — the
+// block is a hard guarantee on top of that, not a replacement for it (see
+// tickTrainMovement).
+// ---------------------------------------------------------------------
+function railCellDegree(x,y){
+  const track = getCell(x,y).layers.rail;
+  let n = 0;
+  for(const {dir} of ROAD_DIRS) if(track.edges[dir]) n++;
+  return n;
+}
+function railCellHasSignal(x,y){
+  const track = getCell(x,y).layers.rail;
+  for(const {dir} of ROAD_DIRS) if(track.edges[dir] && track.oneWayBlocked[dir]) return true;
+  return false;
+}
+function railCellTouchesDepot(x,y){
+  for(const [nx,ny] of neighbors4(x,y)){
+    const buildingId = getCell(nx,ny).buildingId;
+    if(buildingId!=null && hasComponent(buildingId,'RailNode')) return true;
+  }
+  return false;
+}
+function railCellIsHub(x,y){
+  return railCellDegree(x,y) !== 2 || railCellHasSignal(x,y) || railCellTouchesDepot(x,y);
+}
+
+function computeRailBlocks(){
+  world.railBlocks = new Map();
+  let nextBlockId = 1;
+  const visitedEdge = new Set(); // "x,y,dir" — each directed edge is visited exactly once across both walking passes below
+  const railCells = [];
+  for(const [k,cell] of world.grid){
+    const track = cell.layers.rail;
+    if(!track.track) continue;
+    const [x,y] = k.split(',').map(Number);
+    railCells.push({x,y});
+    for(const {dir} of ROAD_DIRS) track.blockId[dir] = null; // stale ids from the previous topology
+  }
+  // Walk every edge out of a hub cell until the next hub, assigning one
+  // shared block id to every edge crossed along the way (both directions —
+  // block membership doesn't depend on direction of travel).
+  function walkBlock(startX, startY, startDir){
+    const blockId = nextBlockId++;
+    world.railBlocks.set(blockId, {occupiedBy:null});
+    let x = startX, y = startY, dir = startDir;
+    while(true){
+      const d = ROAD_DIRS.find(r=>r.dir===dir);
+      const nx = x+d.dx, ny = y+d.dy;
+      getCell(x,y).layers.rail.blockId[dir] = blockId;
+      getCell(nx,ny).layers.rail.blockId[d.opp] = blockId;
+      visitedEdge.add(x+','+y+','+dir);
+      visitedEdge.add(nx+','+ny+','+d.opp);
+      if(railCellIsHub(nx,ny)) break;
+      const track = getCell(nx,ny).layers.rail;
+      const forward = ROAD_DIRS.find(r=>r.dir!==d.opp && track.edges[r.dir]);
+      if(!forward || visitedEdge.has(nx+','+ny+','+forward.dir)) break; // dead end, or a hub-less loop closing back on itself
+      x = nx; y = ny; dir = forward.dir;
+    }
+  }
+  // Pass 1: every edge reachable from an actual hub.
+  for(const {x,y} of railCells){
+    if(!railCellIsHub(x,y)) continue;
+    const track = getCell(x,y).layers.rail;
+    for(const {dir} of ROAD_DIRS){
+      if(!track.edges[dir] || visitedEdge.has(x+','+y+','+dir)) continue;
+      walkBlock(x,y,dir);
+    }
+  }
+  // Pass 2: whatever's left is a closed loop of degree-2 track with no
+  // signal or depot anywhere on it — no natural boundary, so it becomes one
+  // block, split arbitrarily at whichever edge is encountered first.
+  for(const {x,y} of railCells){
+    const track = getCell(x,y).layers.rail;
+    for(const {dir} of ROAD_DIRS){
+      if(!track.edges[dir] || visitedEdge.has(x+','+y+','+dir)) continue;
+      walkBlock(x,y,dir);
+    }
+  }
+}
+function releaseBlock(v){
+  if(v.currentBlock==null) return;
+  const block = world.railBlocks.get(v.currentBlock);
+  if(block && block.occupiedBy===v.id) block.occupiedBy = null;
+  v.currentBlock = null;
+}
+
 // Vehicles always live on road cells (they dock next to a building rather
 // than entering its footprint), so a vehicle's own path is simply the road
 // route from where it stands to the target building's dock cell.
 
 // A Station has no storage of its own. It's only a physical access point:
 // vehicles load/unload there, and the Station forwards that transfer to
-// whichever industry (Mine/Town) it's touching — directly, or through a
-// chain of other Stations that all touch each other. This walks that chain
-// and returns the first Mine/Town it finds, or null if the station isn't
-// connected to any industry right now.
+// whichever industry it's touching — directly, or through a chain of other
+// Stations that all touch each other. This walks that chain and returns the
+// first Storage-having building it finds (Mine, Mill, Town, or a Rail
+// Depot — anything with real Storage counts, not just Producer/Consumer
+// buildings, which is what makes a Depot reachable through a Station chain
+// exactly like a Mine or Town is today), or null if the station isn't
+// connected to anything right now.
 function findLinkedIndustry(station){
   const visited = new Set([station.id]);
   const queue = [station];
@@ -573,7 +806,7 @@ function findLinkedIndustry(station){
         if(!nb || nb.id===s.id) continue;
         if(nb.type==='station'){
           if(!visited.has(nb.id)){ visited.add(nb.id); queue.push(nb); }
-        } else if(nb.producer || nb.consumer){
+        } else if(hasComponent(nb.id,'Storage')){
           return nb;
         }
       }
@@ -583,9 +816,10 @@ function findLinkedIndustry(station){
 }
 
 // Does this footprint (for a building about to be placed) touch at least
-// one Mine, Town, or Station? Used to require Stations to actually connect
-// to something before they can be built (§6.6-style: don't let the player
-// build something structurally useless without at least a warning).
+// one Storage-having building or Station? Used to require Stations to
+// actually connect to something before they can be built (§6.6-style:
+// don't let the player build something structurally useless without at
+// least a warning).
 function touchesIndustryOrStation(x, y, footprint){
   const own = new Set();
   for(let dx=0; dx<footprint.w; dx++) for(let dy=0; dy<footprint.h; dy++) own.add((x+dx)+','+(y+dy));
@@ -594,11 +828,26 @@ function touchesIndustryOrStation(x, y, footprint){
       for(const [nx,ny] of neighbors4(x+dx, y+dy)){
         if(own.has(nx+','+ny)) continue;
         const nb = getCell(nx,ny).buildingId ? world.entities.get(getCell(nx,ny).buildingId) : null;
-        if(nb && (nb.type==='mine' || nb.type==='mill' || nb.type==='town' || nb.type==='station')) return true;
+        if(nb && (nb.type==='station' || hasComponent(nb.id,'Storage'))) return true;
       }
     }
   }
   return false;
+}
+
+// The Station immediately touching a building's footprint, if any — used
+// by the Depot inspector to show its road-side link. Deliberately just the
+// immediate neighbor (not a full chain walk like findLinkedIndustry) since
+// it's describing "what's physically touching this building," not "what's
+// it ultimately connected to."
+function findTouchingStation(building){
+  for(const cell of footprintCells(building)){
+    for(const [nx,ny] of neighbors4(cell.x,cell.y)){
+      const nb = getCell(nx,ny).buildingId ? world.entities.get(getCell(nx,ny).buildingId) : null;
+      if(nb && nb.type==='station') return nb;
+    }
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------
@@ -633,6 +882,20 @@ function createBuilding(type, x, y, tier, facing, resource){
     // delivered, and what its Storage.in buffer/consumption operate on.
     addComponent(id, 'Storage', {out:null, in:{resource: resource || 'ore', stock:0, cap: def.tiers[tier].cap}});
   }
+  if(type==='depot'){
+    // `out` and `in` are literally the SAME slot object (not two separate
+    // counters that happen to share a resource id) — a Depot doesn't
+    // convert anything, so there's only one physical pile of the resource
+    // it buffers. Aliasing them means a truck's drop-off (which writes
+    // `in.stock`) and a train's pickup (which reads `out.stock`) are
+    // reading/writing the exact same number, in either direction, using
+    // the existing Storage machinery completely unchanged — no special
+    // casing needed anywhere else in the codebase.
+    const cap = def.tiers[tier].cap;
+    const slot = {resource: resource || 'ore', stock:0, cap};
+    addComponent(id, 'Storage', {out: slot, in: slot});
+    addComponent(id, 'RailNode', {});
+  }
   const handle = makeEntityHandle(id);
   world.entities.set(id, handle);
   for(const cell of footprintCells(handle)) getCell(cell.x, cell.y).buildingId = id;
@@ -640,16 +903,17 @@ function createBuilding(type, x, y, tier, facing, resource){
 }
 function createVehicle(x,y,vehicleType){
   vehicleType = vehicleType || 'bulk'; // back-compat: old call sites / tests that omit this get a bulk (ore) truck
-  const def = VEHICLE_DEFS[vehicleType];
+  const def = getVehicleDef(vehicleType);
+  const isTrain = isTrainType(vehicleType);
   const id = world.nextId++;
   addComponent(id, 'Identity', {kind:'vehicle', type:vehicleType});
-  addComponent(id, 'Transform', {x, y, layer:'ground'});
+  addComponent(id, 'Transform', {x, y, layer: isTrain ? 'rail' : 'ground'});
   // Individual, fractional per-vehicle values — not a shared constant. Two
-  // trucks bought back to back will normally end up with slightly
+  // vehicles bought back to back will normally end up with slightly
   // different top speeds/mass/engine/brake force/lengths, the same way
   // real vehicles of the same model aren't perfectly identical.
   addComponent(id, 'Movement', {
-    speed: 0,             // current velocity, tiles/tick — starts at rest and accelerates (see tickVehicles)
+    speed: 0,             // current velocity, tiles/tick — starts at rest and accelerates (see tickVehicles/tickTrainMovement)
     maxSpeed: def.maxSpeedTilesPerTick * (0.85 + Math.random()*0.3),
     massEmpty: def.massEmpty * (0.9 + Math.random()*0.2),
     engineForce: def.engineForce * (0.85 + Math.random()*0.3),
@@ -659,10 +923,11 @@ function createVehicle(x,y,vehicleType){
     frac:0,                // 0..1 progress from path[pathIndex] toward path[pathIndex+1]
     trail:[],               // recently-occupied {x,y,layer} cells, most recent first — the physical
                              // basis for this vehicle's trailing-length reservation (see tickVehicles)
+    currentBlock: null,     // rail-only: the Block id this train currently holds (see tickTrainMovement)
   });
   addComponent(id, 'Status', {state:'idle'}); // idle|moving|loading|unloading|blocked
   addComponent(id, 'Orders', {list:[], index:0}); // [{nodeId, action, resource}] — player authored, §6.6
-  addComponent(id, 'Cargo', {amount:0, capacity:def.capacity, resource:def.resource}); // resource is fixed for this vehicle's life
+  addComponent(id, 'Cargo', {amount:0, capacity:def.capacity, resource:def.resource}); // fixed per truck's life; null for a train until its first load (§2.5)
   const handle = makeEntityHandle(id);
   world.entities.set(id, handle);
   return handle;
@@ -671,53 +936,75 @@ function createVehicle(x,y,vehicleType){
 // ---------------------------------------------------------------------
 // COMMANDS  (§7 — the only way the world is mutated by the player)
 // ---------------------------------------------------------------------
+// Connect only the specific edges that actually border an existing tile on
+// the SAME layer — a ground tile and an elevated (or rail) tile at the same
+// (x,y) never connect to each other just by overlapping; that's what lets
+// an elevated road cross a ground road, or track cross a road entirely,
+// without joining it. Shared by every "lay a tile" command (road, rail
+// track) since none of this is road-specific.
+function connectNewTileEdges(x,y,layer,track){
+  for(const {dir,dx,dy,opp} of ROAD_DIRS){
+    const nTrack = getCell(x+dx,y+dy).layers[layer];
+    if(nTrack.track){ track.edges[dir] = true; nTrack.edges[opp] = true; }
+  }
+}
 function cmdBuildRoad(x,y,layer,autoConnect){
   layer = layer || 'ground';
   if(autoConnect === undefined) autoConnect = true;
   const cell = getCell(x,y);
   const track = cell.layers[layer];
-  if(track.road) return;
+  if(track.track) return;
   if(layer==='ground' && cell.buildingId) return; // can't lay ground road under a building
   const cost = ROAD_COST_PER_TILE * (layer==='elevated' ? ELEVATED_COST_MULTIPLIER : 1);
   if(!canAfford(cost)){ logEvent('Insufficient funds for road.', 'warn'); return; }
   charge(cost, layer==='elevated' ? 'elevated road tile' : 'road tile');
-  track.road = true;
-  if(!autoConnect) return; // placed isolated — wire it up later with Connect / Disconnect
-  // Connect only the specific edges that actually border an existing road
-  // tile on the SAME layer — a ground tile and an elevated tile at the same
-  // (x,y) never connect to each other just by overlapping; that's what lets
-  // an elevated road cross a ground road without joining it. A dedicated
-  // Ramp is the only thing that links the two layers at a cell.
-  for(const {dir,dx,dy,opp} of ROAD_DIRS){
-    const nx = x+dx, ny = y+dy;
-    const nTrack = getCell(nx,ny).layers[layer];
-    if(nTrack.road){ track.edges[dir] = true; nTrack.edges[opp] = true; }
-  }
+  track.track = true;
+  if(autoConnect) connectNewTileEdges(x,y,layer,track); // else placed isolated — wire it up later with Connect / Disconnect
+}
+// Rail track tile — same construction/connection shape as a road tile (see
+// connectNewTileEdges), just on the `rail` layer and at RAIL_DEFS' own
+// per-tile cost. Block segmentation only ever needs recomputing when the
+// track graph's topology actually changes, so it's done once here (and in
+// cmdDemolish/cmdToggleOneWay-on-rail) rather than every tick.
+function cmdBuildTrack(x,y,autoConnect){
+  if(autoConnect === undefined) autoConnect = true;
+  const cell = getCell(x,y);
+  const track = cell.layers.rail;
+  if(track.track) return;
+  if(cell.buildingId) return; // can't lay track under a building
+  const cost = RAIL_DEFS.track.costPerTile;
+  if(!canAfford(cost)){ logEvent('Insufficient funds for track.', 'warn'); return; }
+  charge(cost, 'rail track tile');
+  track.track = true;
+  if(autoConnect) connectNewTileEdges(x,y,'rail',track);
+  computeRailBlocks();
 }
 function cmdToggleConnection(x1,y1,x2,y2,layer){
-  // Manually connect or sever the specific edge between two adjacent road
-  // tiles — the counterpart to auto-connect, and what lets two parallel
-  // one-way streets sit side by side without joining across the middle.
+  // Manually connect or sever the specific edge between two adjacent tiles
+  // on the same layer — the counterpart to auto-connect, and what lets two
+  // parallel one-way streets (or rail lines) sit side by side without
+  // joining across the middle.
   const d = ROAD_DIRS.find(r => x1+r.dx===x2 && y1+r.dy===y2);
   if(!d){ logEvent('Connect only works between two orthogonally adjacent tiles.', 'warn'); return; }
   const aTrack = getCell(x1,y1).layers[layer];
   const bTrack = getCell(x2,y2).layers[layer];
-  if(!aTrack.road || !bTrack.road){ logEvent(`Both tiles need a ${layer} road to connect.`, 'warn'); return; }
+  if(!aTrack.track || !bTrack.track){ logEvent(`Both tiles need ${layer} track to connect.`, 'warn'); return; }
   if(aTrack.edges[d.dir]){
     // currently connected — sever it, and clear any one-way state on what
     // is now not an edge at all (a stale block would otherwise linger and
     // silently reapply if the same two tiles are ever reconnected later)
     aTrack.edges[d.dir] = false; bTrack.edges[d.opp] = false;
     aTrack.oneWayBlocked[d.dir] = false; bTrack.oneWayBlocked[d.opp] = false;
-    logEvent('Road connection removed.');
+    logEvent('Connection removed.');
   } else {
     aTrack.edges[d.dir] = true; bTrack.edges[d.opp] = true; // new connections start two-way
-    logEvent('Road connection made.');
+    logEvent('Connection made.');
   }
+  if(layer==='rail') computeRailBlocks();
 }
 function cmdBuildRamp(x,y){
   const cell = getCell(x,y);
-  if(!cell.layers.ground.road || !cell.layers.elevated.road){
+  if(!cell.layers.ground.track || !cell.layers.elevated.track){
     logEvent('A Ramp needs both a ground and an elevated road tile at the same cell.', 'warn');
     return;
   }
@@ -727,8 +1014,12 @@ function cmdBuildRamp(x,y){
   cell.ramp = true;
 }
 function cmdToggleOneWay(x1,y1,x2,y2,layer){
+  // Also doubles as rail's "Toggle Signal Direction" (layer='rail') — same
+  // mechanism, since a signal is exactly a one-way restriction on a track
+  // edge; a signal is additionally a rail block boundary (see
+  // computeRailBlocks), which plain road one-ways don't need to care about.
   const d = ROAD_DIRS.find(r => x1+r.dx===x2 && y1+r.dy===y2);
-  if(!d){ logEvent('One-Way only applies between two orthogonally adjacent tiles.', 'warn'); return; }
+  if(!d){ logEvent('This only applies between two orthogonally adjacent tiles.', 'warn'); return; }
   const aTrack = getCell(x1,y1).layers[layer];
   const bTrack = getCell(x2,y2).layers[layer];
   if(!aTrack.edges[d.dir]){ logEvent(`Those tiles aren't connected on the ${layer} layer.`, 'warn'); return; }
@@ -741,6 +1032,7 @@ function cmdToggleOneWay(x1,y1,x2,y2,layer){
     bTrack.oneWayBlocked[d.opp] = true;  // block the reverse
     logEvent('Edge set to one-way.');
   }
+  if(layer==='rail') computeRailBlocks();
 }
 function cmdBuildBuilding(type, x, y, tier, facing, resource){
   const def = BUILDING_DEFS[type];
@@ -750,7 +1042,7 @@ function cmdBuildBuilding(type, x, y, tier, facing, resource){
       const cx = x+dx, cy = y+dy;
       if(!inBounds(cx,cy)){ logEvent(`${def.label} footprint (${w}x${h}) doesn't fit on the grid there.`, 'warn'); return; }
       const cell = getCell(cx,cy);
-      if(cell.layers.ground.road || cell.buildingId){ logEvent(`${def.label} footprint overlaps something at (${cx},${cy}).`, 'warn'); return; }
+      if(cell.layers.ground.track || cell.layers.rail.track || cell.buildingId){ logEvent(`${def.label} footprint overlaps something at (${cx},${cy}).`, 'warn'); return; }
     }
   }
   if(type==='station'){
@@ -772,34 +1064,43 @@ function cmdDemolish(x,y,layer){
   if(cell.buildingId){
     const buildingId = cell.buildingId; // capture before the footprint loop clears this very cell's buildingId
     const building = world.entities.get(buildingId);
+    const wasRailNode = hasComponent(buildingId, 'RailNode'); // a Depot touching rail can be a block boundary — see computeRailBlocks
     if(building){ for(const c of footprintCells(building)) getCell(c.x,c.y).buildingId = null; }
     destroyEntity(buildingId);
+    if(wasRailNode) computeRailBlocks();
     return;
   }
   const track = cell.layers[layer];
-  if(track.road){
+  if(track.track){
     // Sever this tile's edges from whichever neighbors it was connected to,
-    // so they don't retain a connection to a road that no longer exists.
+    // so they don't retain a connection to track that no longer exists.
     for(const {dir,dx,dy,opp} of ROAD_DIRS){
       if(track.edges[dir]) getCell(x+dx, y+dy).layers[layer].edges[opp] = false;
     }
-    track.road = false;
+    track.track = false;
     track.edges = {N:false, S:false, E:false, W:false};
     track.oneWayBlocked = {N:false, S:false, E:false, W:false};
+    track.blockId = {N:null, S:null, E:null, W:null};
     if(cell.ramp) cell.ramp = false; // a Ramp needs both layers present
+    if(layer==='rail') computeRailBlocks(); // topology changed — block boundaries may have moved
   }
 }
 function cmdPurchaseVehicle(x,y,vehicleType){
   vehicleType = vehicleType || 'bulk';
   const cell = getCell(x,y);
-  if(!cell.layers.ground.road){ logEvent('Trucks must be placed on a ground road tile.', 'warn'); return; }
-  const def = VEHICLE_DEFS[vehicleType];
+  const isTrain = isTrainType(vehicleType);
+  if(isTrain){
+    if(!cell.layers.rail.track){ logEvent('Trains must be placed on a rail track tile.', 'warn'); return; }
+  } else if(!cell.layers.ground.track){
+    logEvent('Trucks must be placed on a ground road tile.', 'warn'); return;
+  }
+  const def = getVehicleDef(vehicleType);
   if(!canAfford(def.purchaseCost)){ logEvent(`Insufficient funds for ${def.label.toLowerCase()}.`, 'warn'); return; }
   charge(def.purchaseCost, `${def.label.toLowerCase()} purchase`);
   createVehicle(x,y,vehicleType);
 }
 function cmdSellVehicle(vehicle){
-  const def = VEHICLE_DEFS[vehicle.type];
+  const def = getVehicleDef(vehicle.type);
   const refund = Math.round(def.purchaseCost * def.sellFraction);
   credit(refund, `${def.label.toLowerCase()} sold`);
   destroyEntity(vehicle.id);
@@ -876,60 +1177,130 @@ function advanceOrder(vehicle){
   vehicle.ordersIndex = (vehicle.ordersIndex + 1) % vehicle.orders.length;
 }
 
-function tickVehicles(){
-  // Track which (x,y,layer) cells are currently reserved, and by whom, so a
-  // vehicle queues behind another instead of overlapping it. A vehicle
-  // reserves not just its current cell but a trailing footprint sized to
-  // its own `length` (in tile-units) — this is what makes a longer vehicle
-  // need a bigger following gap, the same way it would in real traffic.
-  // Reservations are seeded from positions before anyone moves this tick,
-  // then kept in sync as vehicles commit steps below, so a whole queue can
-  // advance together in one tick when there's room.
-  const occupied = new Map(); // "x,y,layer" -> vehicleId
-  const posKey = (x,y,layer) => x+','+y+','+layer;
-  function footprintKeys(v){
-    // The cell it's currently in, plus enough cells from its actual recent
-    // trail to cover its length. Using the physical trail (not the current
-    // path array) matters right when a vehicle starts a fresh path leg —
-    // pathIndex resets to 0 then, but the vehicle still has real cells
-    // behind it that its body occupies. A vehicle with length 1.3 reserves
-    // 2 cells (ceil(1.3)); length 1 reserves just its own cell.
-    const cellsNeeded = Math.max(1, Math.ceil(v.length));
-    const keys = [posKey(v.x, v.y, v.layer)];
-    for(let i=0; i<v.trail.length && keys.length<cellsNeeded; i++){
-      const c = v.trail[i];
-      keys.push(posKey(c.x, c.y, c.layer));
-    }
-    return keys;
+// ---------------------------------------------------------------------
+// SHARED MOVEMENT ENGINE — the physics, queueing, and cell-crossing rules
+// below are identical for road vehicles and trains (§2.4/§2.7 test 4: reuse
+// the physics, don't re-derive it for rail). tickVehicles and
+// tickTrainMovement each build their own occupancy map (trucks never
+// contend with trains for a cell, since they're never on the same layer)
+// and call into these; a train's only real difference is layered on top,
+// via advanceAlongPath's optional canEnter/onEnter hooks (the hard rail
+// block rule — see tickTrainMovement).
+// ---------------------------------------------------------------------
+function posKey(x,y,layer){ return x+','+y+','+layer; }
+
+// The cell a vehicle is currently in, plus enough cells from its actual
+// recent trail to cover its length. Using the physical trail (not the
+// current path array) matters right when a vehicle starts a fresh path leg
+// — pathIndex resets to 0 then, but the vehicle still has real cells behind
+// it that its body occupies. A vehicle with length 1.3 reserves 2 cells
+// (ceil(1.3)); length 1 reserves just its own cell.
+function footprintKeysFor(v){
+  const cellsNeeded = Math.max(1, Math.ceil(v.length));
+  const keys = [posKey(v.x, v.y, v.layer)];
+  for(let i=0; i<v.trail.length && keys.length<cellsNeeded; i++){
+    const c = v.trail[i];
+    keys.push(posKey(c.x, c.y, c.layer));
   }
-  // Distance (in tile-units) from a vehicle's current continuous position
-  // to the nearest thing ahead of it on its path — another vehicle's
-  // reserved footprint, or the path's own end (so it brakes smoothly into
-  // its stop instead of arriving at full speed). Capped at LOOKAHEAD tiles;
-  // beyond that we just treat the road as clear. Also returns the safety
-  // buffer to require beyond pure stopping distance: 0 when the "obstacle"
-  // is just the vehicle's own destination (fully closing that gap to zero
-  // is the correct, safe outcome — arriving), but a small positive cushion
-  // when it's another vehicle (don't plan to stop exactly touching it).
-  const LOOKAHEAD = 15;
-  function gapAheadFor(v){
-    if(!v.path) return {gap:Infinity, buffer:0.5};
-    const currentPos = v.pathIndex + v.frac;
-    for(let i=1; i<=LOOKAHEAD; i++){
-      const idx = v.pathIndex + i;
-      if(idx >= v.path.length) return {gap:(v.path.length-1) - currentPos, buffer:0};
-      const node = v.path[idx];
-      const occupant = occupied.get(posKey(node.x, node.y, node.layer));
-      if(occupant !== undefined && occupant !== v.id) return {gap: idx - currentPos, buffer:0.5};
-    }
-    return {gap: LOOKAHEAD - v.frac, buffer:0.5};
-  }
-  for(const id of queryEntities('Movement')){
+  return keys;
+}
+function buildOccupancyMap(entityIds){
+  // "x,y,layer" -> vehicleId. Reservations are seeded from positions before
+  // anyone moves this tick, then kept in sync as vehicles commit steps in
+  // advanceAlongPath, so a whole queue can advance together in one tick
+  // when there's room.
+  const occupied = new Map();
+  for(const id of entityIds){
     const v = world.entities.get(id);
-    for(const k of footprintKeys(v)) occupied.set(k, v.id);
+    for(const k of footprintKeysFor(v)) occupied.set(k, v.id);
   }
+  return occupied;
+}
+// Distance (in tile-units) from a vehicle's current continuous position to
+// the nearest thing ahead of it on its path — another vehicle's reserved
+// footprint, or the path's own end (so it brakes smoothly into its stop
+// instead of arriving at full speed). Capped at LOOKAHEAD tiles; beyond
+// that we just treat the network as clear. Also returns the safety buffer
+// to require beyond pure stopping distance: 0 when the "obstacle" is just
+// the vehicle's own destination (fully closing that gap to zero is the
+// correct, safe outcome — arriving), but a small positive cushion when
+// it's another vehicle (don't plan to stop exactly touching it).
+const LOOKAHEAD = 15;
+function gapAheadFor(v, occupied){
+  if(!v.path) return {gap:Infinity, buffer:0.5};
+  const currentPos = v.pathIndex + v.frac;
+  for(let i=1; i<=LOOKAHEAD; i++){
+    const idx = v.pathIndex + i;
+    if(idx >= v.path.length) return {gap:(v.path.length-1) - currentPos, buffer:0};
+    const node = v.path[idx];
+    const occupant = occupied.get(posKey(node.x, node.y, node.layer!==undefined ? node.layer : v.layer));
+    if(occupant !== undefined && occupant !== v.id) return {gap: idx - currentPos, buffer:0.5};
+  }
+  return {gap: LOOKAHEAD - v.frac, buffer:0.5};
+}
+// Adjusts v.speed for this tick via F = ma. Accel/decel aren't fixed per
+// vehicle — they're derived every tick: a heavier vehicle (more cargo
+// currently loaded, since mass = massEmpty + cargo weight) gets less
+// acceleration AND less deceleration out of the same engine/brake force,
+// exactly like a real loaded truck (or train). decel > accel still holds at
+// any mass, since both divide by the same current mass in a given tick —
+// only the *ratio* of brakeForce to engineForce matters for that, not the
+// mass itself. Decelerates if the gap ahead isn't enough room to stop from
+// the current speed (d = v²/2a, the same physics as real braking distance,
+// plus a small buffer), otherwise accelerates toward this vehicle's own max
+// speed — required stopping distance grows with the SQUARE of speed, so a
+// faster (or heavier) vehicle needs a disproportionately bigger gap.
+function applySpeedStep(v, occupied){
+  const unitWeight = v.cargoResource ? RESOURCES[v.cargoResource].unitWeight : 0; // a train between loads carries no resource yet
+  const mass = v.massEmpty + v.cargoAmount * unitWeight;
+  const accel = v.engineForce / mass;
+  const decel = v.brakeForce / mass;
+  const {gap, buffer} = gapAheadFor(v, occupied);
+  const requiredGap = (v.speed*v.speed) / (2*decel) + buffer;
+  if(gap < requiredGap) v.speed = Math.max(0, v.speed - decel);
+  else v.speed = Math.min(v.maxSpeed, v.speed + accel);
+}
+// Advances v along its path by its current speed, crossing cell boundaries
+// one at a time. Each crossing is checked against the occupancy map as a
+// hard safety net (independent of the soft speed regulation in
+// applySpeedStep) — and, if `canEnter` is given, against any additional
+// per-network rule (trains' block exclusivity). `onEnter`, if given, fires
+// after a crossing actually commits (trains use it to acquire/release
+// blocks). Queues right at a cell boundary — never overshoots into a cell
+// it can't enter.
+function advanceAlongPath(v, occupied, canEnter, onEnter){
+  v.frac += v.speed;
+  while(v.frac >= 1 && v.pathIndex < v.path.length-1){
+    const cur = v.path[v.pathIndex];
+    const next = v.path[v.pathIndex+1];
+    const nextLayer = next.layer!==undefined ? next.layer : v.layer;
+    const nextKey = posKey(next.x, next.y, nextLayer);
+    const occupant = occupied.get(nextKey);
+    const blocked = (occupant !== undefined && occupant !== v.id) || (canEnter && !canEnter(cur, next));
+    if(blocked){
+      v.frac = Math.min(v.frac, 0.999);
+      break;
+    }
+    const oldFootprint = footprintKeysFor(v);
+    v.trail.unshift({x:v.x, y:v.y, layer:v.layer});
+    if(v.trail.length > 6) v.trail.length = 6; // generous cap — no vehicle in this build needs more
+    v.pathIndex++;
+    v.x = next.x; v.y = next.y; v.layer = nextLayer;
+    v.frac -= 1;
+    if(onEnter) onEnter(cur, next);
+    const newFootprint = footprintKeysFor(v);
+    const newSet = new Set(newFootprint);
+    for(const k of oldFootprint) if(!newSet.has(k)) occupied.delete(k);
+    for(const k of newFootprint) occupied.set(k, v.id);
+  }
+  if(v.pathIndex >= v.path.length-1) v.frac = 0; // discard any leftover speed at the very end
+}
+
+function tickVehicles(){
+  const occupied = buildOccupancyMap(queryEntities('Movement').filter(id=>!isTrainType(getComponent(id,'Identity').type)));
 
   for(const id of queryEntities('Movement','Orders','Cargo','Status')){
+    if(isTrainType(getComponent(id,'Identity').type)) continue; // trains run their own tickTrainMovement below
     const v = world.entities.get(id);
 
     const order = currentOrder(v);
@@ -958,60 +1329,8 @@ function tickVehicles(){
         v.path = null; v.frac = 0;
         continue;
       }
-      // Adjust current speed before moving. Accel/decel aren't fixed per
-      // vehicle — they're derived every tick from F = ma: a heavier vehicle
-      // (more cargo currently loaded, since mass = massEmpty + cargo weight)
-      // gets less acceleration AND less deceleration out of the same
-      // engine/brake force, exactly like a real loaded truck. The
-      // decel > accel property still holds at any mass, since both divide
-      // by the same current mass in a given tick — only the *ratio* of
-      // brakeForce to engineForce matters for that, not the mass itself.
-      const mass = v.massEmpty + v.cargoAmount * RESOURCES[v.cargoResource].unitWeight;
-      const accel = v.engineForce / mass;
-      const decel = v.brakeForce / mass;
-      // Decelerate if the gap ahead isn't enough room to stop from the
-      // current speed (using the same physics as real braking distance —
-      // d = v² / 2a — plus a small buffer), otherwise accelerate toward
-      // this vehicle's own max speed. Because required stopping distance
-      // grows with the SQUARE of speed, a faster-moving (or heavier, since
-      // that lowers decel) vehicle needs a disproportionately bigger gap
-      // ahead, which is what makes the enforced gap genuinely
-      // velocity-dependent (and now, load-dependent too).
-      const {gap, buffer} = gapAheadFor(v);
-      const requiredGap = (v.speed*v.speed) / (2*decel) + buffer;
-      if(gap < requiredGap){
-        v.speed = Math.max(0, v.speed - decel);
-      } else {
-        v.speed = Math.min(v.maxSpeed, v.speed + accel);
-      }
-      // Advance by the (now-adjusted) current speed. A slow-moving vehicle
-      // needs several ticks to cross one cell; a fast one can cross more
-      // than one cell in a single tick — each individual cell boundary it
-      // crosses is still checked against other vehicles' reservations below
-      // as a hard safety net, independent of the soft speed regulation above.
-      v.frac += v.speed;
-      while(v.frac >= 1 && v.pathIndex < v.path.length-1){
-        const next = v.path[v.pathIndex+1];
-        const nextKey = posKey(next.x, next.y, next.layer);
-        const occupant = occupied.get(nextKey);
-        if(occupant !== undefined && occupant !== v.id){
-          // Someone else's body (front or trailing length) is there — queue
-          // right at this cell's boundary rather than overshooting into it.
-          v.frac = Math.min(v.frac, 0.999);
-          break;
-        }
-        const oldFootprint = footprintKeys(v);
-        v.trail.unshift({x:v.x, y:v.y, layer:v.layer});
-        if(v.trail.length > 6) v.trail.length = 6; // generous cap — no vehicle in this build needs more
-        v.pathIndex++;
-        v.x = next.x; v.y = next.y; v.layer = next.layer;
-        v.frac -= 1;
-        const newFootprint = footprintKeys(v);
-        const newSet = new Set(newFootprint);
-        for(const k of oldFootprint) if(!newSet.has(k)) occupied.delete(k);
-        for(const k of newFootprint) occupied.set(k, v.id);
-      }
-      if(v.pathIndex >= v.path.length-1) v.frac = 0; // discard any leftover speed at the very end
+      applySpeedStep(v, occupied);
+      advanceAlongPath(v, occupied);
       continue;
     }
 
@@ -1055,17 +1374,123 @@ function tickVehicles(){
   }
 }
 
+function startMovingToRail(train, building){
+  const dock = buildingRailAccessCell(building);
+  if(!dock){ train.state='blocked'; return false; } // no rail track touches this building right now
+  const path = findRailPath({x:train.x, y:train.y}, dock);
+  if(!path){ train.state='blocked'; return false; }
+  train.path = path;
+  train.pathIndex = 0;
+  train.frac = 0;
+  train.speed = 0;
+  train.state = 'moving';
+  return true;
+}
+
+function tickTrainMovement(){
+  const occupied = buildOccupancyMap(queryEntities('Movement').filter(id=>isTrainType(getComponent(id,'Identity').type)));
+
+  for(const id of queryEntities('Movement','Orders','Cargo','Status')){
+    if(!isTrainType(getComponent(id,'Identity').type)) continue;
+    const v = world.entities.get(id);
+
+    const order = currentOrder(v);
+    if(!order){ v.state='idle'; v.path=null; continue; }
+    // A train's target IS the industry — a Rail Depot has real Storage of
+    // its own (unlike a Station), so there's no chain to walk (§2.4).
+    const target = world.entities.get(order.nodeId);
+    if(!target){ advanceOrder(v); v.path=null; continue; } // stop was demolished
+
+    if(v.state==='idle' || v.state==='blocked'){
+      const dock = buildingRailAccessCell(target);
+      if(!dock){ v.state='blocked'; continue; }
+      if(v.x===dock.x && v.y===dock.y){
+        v.state = order.action==='load_full' ? 'loading' : 'unloading';
+      } else {
+        startMovingToRail(v, target);
+      }
+      continue;
+    }
+
+    if(v.state==='moving'){
+      if(!v.path){ startMovingToRail(v, target); continue; }
+      if(v.pathIndex >= v.path.length-1){
+        v.state = order.action==='load_full' ? 'loading' : 'unloading';
+        v.path = null; v.frac = 0;
+        continue;
+      }
+      applySpeedStep(v, occupied);
+      // The hard rule on top of the soft gap above: a train may only enter
+      // the next cell if the BLOCK that edge belongs to is unheld (or
+      // already held by this same train) — never "as close as physics
+      // allows," always a full stop at the block boundary. Acquiring a new
+      // block releases whichever one this train held before, so it never
+      // holds more than one at a time.
+      advanceAlongPath(v, occupied,
+        (cur,next) => {
+          const dir = dirBetween(cur,next).dir;
+          const blockId = getCell(cur.x,cur.y).layers.rail.blockId[dir];
+          const block = blockId!=null ? world.railBlocks.get(blockId) : null;
+          return !block || block.occupiedBy===null || block.occupiedBy===v.id;
+        },
+        (cur,next) => {
+          const dir = dirBetween(cur,next).dir;
+          const blockId = getCell(cur.x,cur.y).layers.rail.blockId[dir];
+          if(blockId !== v.currentBlock){
+            releaseBlock(v);
+            const block = blockId!=null ? world.railBlocks.get(blockId) : null;
+            if(block) block.occupiedBy = v.id;
+            v.currentBlock = blockId ?? null;
+          }
+        }
+      );
+      continue;
+    }
+
+    if(v.state==='loading'){
+      if(target.outStock===undefined){ v.state='blocked'; continue; }
+      if(target.outStock <= 0){ v.state='blocked'; continue; }
+      const room = v.capacity - v.cargoAmount;
+      if(room <= 0){ advanceOrder(v); v.state='idle'; continue; }
+      if(v.cargoAmount<=0) v.cargoResource = order.resource; // §2.5: a train's cargo resource is set per-trip, at the point of loading
+      const amt = Math.min(TRANSFER_RATE, target.outStock, room);
+      target.outStock -= amt;
+      v.cargoAmount += amt;
+      if(v.cargoAmount >= v.capacity){ advanceOrder(v); v.state='idle'; }
+      continue;
+    }
+
+    if(v.state==='unloading'){
+      if(target.inStock===undefined){ v.state='blocked'; continue; }
+      if(v.cargoAmount<=0){ advanceOrder(v); v.state='idle'; continue; }
+      const room = target.inCap - target.inStock;
+      if(room <= 0){ v.state='blocked'; continue; }
+      const amt = Math.min(TRANSFER_RATE, v.cargoAmount, room);
+      target.inStock += amt;
+      v.cargoAmount -= amt;
+      if(target.consumer){
+        const resource = order.resource || v.cargoResource || target.inResource;
+        const income = Math.round(amt * RESOURCES[resource].baseValue * target.priceMultiplier);
+        credit(income, `delivery to ${BUILDING_DEFS[target.type].label} #${target.id}`);
+      }
+      if(v.cargoAmount<=0){ advanceOrder(v); v.state='idle'; }
+      continue;
+    }
+  }
+}
+
 function tickUpkeep(){
   for(const id of queryEntities('Movement','Orders')){
     const v = world.entities.get(id);
-    if(v.orders.length===0) continue; // parked/unassigned trucks don't burn cash
-    world.treasury -= VEHICLE_DEFS[v.type].runningCostPerTick;
+    if(v.orders.length===0) continue; // parked/unassigned vehicles don't burn cash
+    world.treasury -= getVehicleDef(v.type).runningCostPerTick;
   }
 }
 
 function simTick(){
   tickProduction();
   tickVehicles();
+  tickTrainMovement();
   tickConsumption();
   tickUpkeep();
   world.tick++;
@@ -1106,6 +1531,11 @@ function render(){
   // independent lines rather than one merged road.
   drawRoadLayer('ground', getCss('--road'), 8);
   drawRoadLayer('elevated', '#7fb8c9', 12);
+  // Rail reuses drawRoadLayer entirely unchanged — same {track,edges,
+  // oneWayBlocked} shape, so a signal renders exactly like a one-way arrow
+  // for free, and rail crossing a road at the same cell reads as two
+  // independent lines (different layer key, never auto-connected).
+  drawRoadLayer('rail', '#9b6bd6', 10);
 
   // ramps — a small diamond marking a cell where ground and elevated are
   // deliberately linked (the only place a vehicle can change layer)
@@ -1124,7 +1554,7 @@ function render(){
     ctx.fillStyle = color;
     for(const [k,cell] of world.grid){
       const track = cell.layers[layerName];
-      if(!track.road) continue;
+      if(!track.track) continue;
       const [x,y] = k.split(',').map(Number);
       ctx.fillStyle = color;
       ctx.fillRect(x*CELL+margin, y*CELL+margin, CELL-margin*2, CELL-margin*2); // core
@@ -1193,8 +1623,14 @@ function render(){
       }
     } else {
       const bars = [];
-      if(e.outStock!==undefined) bars.push({stock:e.outStock, cap:e.outCap, color:getCss('--teal')});
-      if(e.inStock!==undefined) bars.push({stock:e.inStock, cap:e.inCap, color:'#7fb8c9'});
+      if(e.type==='depot'){
+        // out and in are the same physical pile here (see createBuilding) —
+        // one bar, not two identical stacked ones.
+        bars.push({stock:e.outStock, cap:e.outCap, color:getCss('--teal')});
+      } else {
+        if(e.outStock!==undefined) bars.push({stock:e.outStock, cap:e.outCap, color:getCss('--teal')});
+        if(e.inStock!==undefined) bars.push({stock:e.inStock, cap:e.inCap, color:'#7fb8c9'});
+      }
       const barH = 4, gap = 1;
       bars.forEach((bar, i)=>{
         const y = py+ph-9-(bars.length-1-i)*(barH+gap);
@@ -1217,22 +1653,36 @@ function render(){
       drawX = a.x + (b.x-a.x)*v.frac;
       drawY = a.y + (b.y-a.y)*v.frac;
     }
-    ctx.fillStyle = v.state==='blocked' ? getCss('--danger') : VEHICLE_DEFS[v.type].color;
+    ctx.fillStyle = v.state==='blocked' ? getCss('--danger') : getVehicleDef(v.type).color;
     const cx = drawX*CELL+CELL/2, cy = drawY*CELL+CELL/2;
-    const r = v.layer==='elevated' ? 6 : 8;
-    ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
-    if(v.layer==='elevated'){ ctx.strokeStyle='#7fb8c9'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(cx,cy,r+2,0,Math.PI*2); ctx.stroke(); }
-    if(v===selected){ ctx.strokeStyle='#fff'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(cx,cy,r+3,0,Math.PI*2); ctx.stroke(); }
+    if(isTrainType(v.type)){
+      // A train is a much bigger commitment than a truck — drawn as a
+      // rectangle rather than a dot so it reads as visually distinct on
+      // the rail layer, oriented along its direction of travel.
+      const horizontal = v.path && v.pathIndex < v.path.length-1
+        ? v.path[v.pathIndex+1].x !== v.path[v.pathIndex].x
+        : true;
+      ctx.save();
+      ctx.translate(cx,cy);
+      const w = horizontal ? CELL*0.9 : CELL*0.5, h = horizontal ? CELL*0.5 : CELL*0.9;
+      ctx.fillRect(-w/2, -h/2, w, h);
+      ctx.restore();
+    } else {
+      const r = v.layer==='elevated' ? 6 : 8;
+      ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+      if(v.layer==='elevated'){ ctx.strokeStyle='#7fb8c9'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(cx,cy,r+2,0,Math.PI*2); ctx.stroke(); }
+    }
+    if(v===selected){ ctx.strokeStyle='#fff'; ctx.lineWidth=2; ctx.strokeRect(cx-9, cy-9, 18, 18); }
   }
 
   // hover ghost for build tools — sized to the building's footprint where relevant
   if(hoverCell){
     ctx.strokeStyle = getCss('--teal');
     ctx.lineWidth = 2;
-    if(currentTool==='mine' || currentTool==='mill' || currentTool==='town' || currentTool==='station'){
+    if(currentTool==='mine' || currentTool==='mill' || currentTool==='town' || currentTool==='station' || currentTool==='depot'){
       const fp = BUILDING_DEFS[currentTool].footprint;
       ctx.strokeRect(hoverCell.x*CELL+1, hoverCell.y*CELL+1, fp.w*CELL-2, fp.h*CELL-2);
-    } else if(currentTool==='road' || currentTool==='bulktruck' || currentTool==='flatbedtruck'){
+    } else if(currentTool==='road' || currentTool==='track' || currentTool==='bulktruck' || currentTool==='flatbedtruck' || currentTool==='freighttrain'){
       ctx.strokeRect(hoverCell.x*CELL+1, hoverCell.y*CELL+1, CELL-2, CELL-2);
     }
   }
@@ -1250,7 +1700,7 @@ function getCss(varName){ return getComputedStyle(document.documentElement).getP
 // ---------------------------------------------------------------------
 let currentTool = 'select';
 let selected = null;       // selected building or vehicle
-let pickingStopFor = null; // vehicle awaiting a click on a building to add a stop
+let pickingStopFor = null; // {vehicle, action} awaiting a click on a building to add that stop
 let oneWayFirst = null;    // first tile picked for the One-Way tool, awaiting a second click
 let connectFirst = null;   // first tile picked for the Connect/Disconnect tool, awaiting a second click
 let hoverCell = null;
@@ -1277,9 +1727,13 @@ function toolHint(t){
     mill:`Click the top-left cell for a Steel Mill (${BUILDING_DEFS.mill.footprint.w}x${BUILDING_DEFS.mill.footprint.h}). Turns Ore into Steel — it needs one Station handling Ore (delivery) and one handling Steel (pickup), both touching it.`,
     town:`Click the top-left cell for a Town (${BUILDING_DEFS.town.footprint.w}x${BUILDING_DEFS.town.footprint.h}). Accepts whichever resource is chosen in the dropdown. It doesn't need to touch a road itself — build a Station touching it for trucks to use.`,
     station:`Click a cell touching a Mine, Mill, Town, or another Station (${BUILDING_DEFS.station.footprint.w}x${BUILDING_DEFS.station.footprint.h}). Choose which resource it handles — it will only ever connect to a road on its chosen facing side.`,
-    demolish:'Click a road tile (on the selected layer) or a building to remove it.',
+    demolish:'Click a road or track tile (on the selected layer — rail is checked automatically) or a building to remove it.',
     bulktruck:'Click a ground road tile to buy a Bulk Truck ($200) there. Carries Ore only.',
     flatbedtruck:'Click a ground road tile to buy a Flatbed Truck ($260) there. Carries Steel only.',
+    track:`Click or drag to build rail track ($${RAIL_DEFS.track.costPerTile}/tile). Uncheck auto-connect to place tiles without joining them.`,
+    signal:'Click a track tile, then click an adjacent connected tile — trains will only be allowed to travel from the first to the second. A signal also marks a hard block boundary.',
+    depot:`Click the top-left cell for a Rail Depot (${BUILDING_DEFS.depot.footprint.w}x${BUILDING_DEFS.depot.footprint.h}). Choose which resource it buffers. Build a Station touching it for road access; any touching track tile gives it rail access.`,
+    freighttrain:'Click a rail track tile to buy a Freight Train ($900) there. Its cargo resource isn\'t fixed — it carries whatever its current load order specifies.',
   }[t] || '';
 }
 
@@ -1289,6 +1743,7 @@ function currentFacing(){ return document.getElementById('facingSelect').value; 
 function currentAutoConnect(){ return document.getElementById('autoConnect').checked; }
 function currentTownResource(){ return document.getElementById('townResourceSelect').value; }
 function currentStationResource(){ return document.getElementById('stationResourceSelect').value; }
+function currentDepotResource(){ return document.getElementById('depotResourceSelect').value; }
 
 
 function cellFromEvent(evt){
@@ -1307,7 +1762,9 @@ canvas.addEventListener('mousedown', evt=>{
 });
 canvas.addEventListener('mousemove', evt=>{
   hoverCell = cellFromEvent(evt);
-  if(dragging && currentTool==='road' && hoverCell){ cmdBuildRoad(hoverCell.x, hoverCell.y, currentLayer(), currentAutoConnect()); }
+  if(!dragging || !hoverCell) return;
+  if(currentTool==='road') cmdBuildRoad(hoverCell.x, hoverCell.y, currentLayer(), currentAutoConnect());
+  if(currentTool==='track') cmdBuildTrack(hoverCell.x, hoverCell.y, currentAutoConnect());
 });
 window.addEventListener('mouseup', ()=>{ dragging=false; });
 
@@ -1323,32 +1780,59 @@ function vehicleAt(x,y){
   return null;
 }
 
+// Resolves what clicking `clickedBuilding` while adding a stop for `vehicle`
+// with the player's chosen `action` ('load_full'|'unload_all') actually
+// means — the single place that validates a stop, for both trucks (via a
+// Station, walking its chain to whatever Storage-having building it's
+// linked to) and trains (directly at a Rail Depot, no chain to walk).
+// Returns {nodeId, resource} on success or {error} on failure. Resolving
+// by the player's explicit chosen action (rather than inferring it from
+// which resource the target's out/in slot happens to match) is what makes
+// a Rail Depot addressable at all here — its out and in slots share the
+// same resource by design (§2.1), so there'd be no way to tell "pick up"
+// from "drop off" apart from the player saying which one they meant.
+function resolveStopTarget(vehicle, clickedBuilding, action){
+  const actionNoun = action==='load_full' ? 'output' : 'input';
+  if(isTrainType(vehicle.type)){
+    if(clickedBuilding.type !== 'depot'){
+      return {error:'Trains load/unload at Rail Depots only.'};
+    }
+    const resource = action==='load_full' ? clickedBuilding.outResource : clickedBuilding.inResource;
+    if(resource===undefined) return {error:`Rail Depot #${clickedBuilding.id} has no ${actionNoun} buffer.`};
+    return {nodeId: clickedBuilding.id, resource};
+  }
+  if(clickedBuilding.type !== 'station'){
+    return {error:'Trucks load/unload at Stations, not at the industry itself.'};
+  }
+  if(clickedBuilding.resource !== vehicle.cargoResource){
+    return {error:`This truck only carries ${RESOURCES[vehicle.cargoResource].name}, but Station #${clickedBuilding.id} handles ${RESOURCES[clickedBuilding.resource].name}.`};
+  }
+  const industry = findLinkedIndustry(clickedBuilding);
+  if(!industry) return {error:`Station #${clickedBuilding.id} isn't connected to any industry yet.`};
+  const resource = action==='load_full' ? industry.outResource : industry.inResource;
+  if(resource !== clickedBuilding.resource){
+    return {error:`Station #${clickedBuilding.id} handles ${RESOURCES[clickedBuilding.resource].name}, which doesn't match the linked industry's ${actionNoun}.`};
+  }
+  return {nodeId: clickedBuilding.id, resource};
+}
+
 function handleClick(cell){
   const {x,y} = cell;
 
   // Order-editor "pick a stop" mode takes priority over the active tool.
   if(pickingStopFor){
     const b = buildingAt(x,y);
-    if(b && b.type!=='station'){
-      logEvent('Trucks load/unload at Stations, not at the industry itself.', 'warn');
-    } else if(b && b.type==='station'){
-      const industry = findLinkedIndustry(b);
-      if(!industry){
-        logEvent(`Station #${b.id} isn't connected to any industry yet.`, 'warn');
-      } else if(b.resource !== pickingStopFor.cargoResource){
-        logEvent(`This truck only carries ${RESOURCES[pickingStopFor.cargoResource].name}, but Station #${b.id} handles ${RESOURCES[b.resource].name}.`, 'warn');
+    if(!b){
+      logEvent('Click a building to add it as a stop.', 'warn');
+    } else {
+      const result = resolveStopTarget(pickingStopFor.vehicle, b, pickingStopFor.action);
+      if(result.error){
+        logEvent(result.error, 'warn');
       } else {
-        let action = null;
-        if(industry.outResource === b.resource) action = 'load_full';
-        else if(industry.inResource === b.resource) action = 'unload_all';
-        if(!action){
-          logEvent(`Station #${b.id} handles ${RESOURCES[b.resource].name}, but the linked industry doesn't produce or accept it.`, 'warn');
-        } else {
-          const orders = pickingStopFor.orders.slice();
-          orders.push({nodeId:b.id, action, resource:b.resource});
-          cmdSetOrders(pickingStopFor, orders);
-          renderOrderEditor(pickingStopFor);
-        }
+        const orders = pickingStopFor.vehicle.orders.slice();
+        orders.push({nodeId:result.nodeId, action:pickingStopFor.action, resource:result.resource});
+        cmdSetOrders(pickingStopFor.vehicle, orders);
+        renderOrderEditor(pickingStopFor.vehicle);
       }
     }
     pickingStopFor = null;
@@ -1371,14 +1855,25 @@ function handleClick(cell){
   if(currentTool==='mill'){ cmdBuildBuilding('mill', x, y, currentTier()); return; }
   if(currentTool==='town'){ cmdBuildBuilding('town', x, y, currentTier(), null, currentTownResource()); return; }
   if(currentTool==='station'){ cmdBuildBuilding('station', x, y, 'small', currentFacing(), currentStationResource()); return; }
-  if(currentTool==='demolish'){ cmdDemolish(x,y,currentLayer()); return; }
+  if(currentTool==='demolish'){
+    // Rail isn't reachable through the ground/elevated layer dropdown, so
+    // fall back to it automatically when the selected layer has nothing
+    // to remove at this cell but rail track does.
+    const layer = getCell(x,y).layers[currentLayer()].track ? currentLayer() : 'rail';
+    cmdDemolish(x,y,layer);
+    return;
+  }
   if(currentTool==='bulktruck'){ cmdPurchaseVehicle(x,y,'bulk'); return; }
   if(currentTool==='flatbedtruck'){ cmdPurchaseVehicle(x,y,'flatbed'); return; }
+  if(currentTool==='track'){ cmdBuildTrack(x,y,currentAutoConnect()); return; }
+  if(currentTool==='signal'){ handleOneWayClick(x,y); return; }
+  if(currentTool==='depot'){ cmdBuildBuilding('depot', x, y, currentTier(), null, currentDepotResource()); return; }
+  if(currentTool==='freighttrain'){ cmdPurchaseVehicle(x,y,'freight'); return; }
 }
 
 function handleConnectClick(x,y){
   const layer = currentLayer();
-  if(!getCell(x,y).layers[layer].road){
+  if(!getCell(x,y).layers[layer].track){
     logEvent(`No ${layer} road tile there.`, 'warn');
     connectFirst = null;
     document.getElementById('hint').textContent = toolHint('connect');
@@ -1395,11 +1890,14 @@ function handleConnectClick(x,y){
 }
 
 function handleOneWayClick(x,y){
-  const layer = currentLayer();
-  if(!getCell(x,y).layers[layer].road){
-    logEvent(`No ${layer} road tile there.`, 'warn');
+  // Doubles as rail's "Toggle Signal Direction" (currentTool==='signal') —
+  // same command, same two-click interaction, just always on the rail
+  // layer rather than whichever ground/elevated layer is currently selected.
+  const layer = currentTool==='signal' ? 'rail' : currentLayer();
+  if(!getCell(x,y).layers[layer].track){
+    logEvent(`No ${layer} track there.`, 'warn');
     oneWayFirst = null;
-    document.getElementById('hint').textContent = toolHint('oneway');
+    document.getElementById('hint').textContent = toolHint(currentTool);
     return;
   }
   if(!oneWayFirst){
@@ -1409,7 +1907,7 @@ function handleOneWayClick(x,y){
   }
   cmdToggleOneWay(oneWayFirst.x, oneWayFirst.y, x, y, layer);
   oneWayFirst = null;
-  document.getElementById('hint').textContent = toolHint('oneway');
+  document.getElementById('hint').textContent = toolHint(currentTool);
 }
 
 function renderSelection(){
@@ -1427,6 +1925,27 @@ function renderSelection(){
         : '<span style="color:var(--danger)">Not connected to any industry</span>'}</div>
       <div>Road-facing side: ${selected.facing}${dock ? '' : ' <span style="color:var(--danger)">(no road there)</span>'}</div>
     `;
+    return;
+  }
+
+  if(selected.kind==='building' && selected.type==='depot'){
+    // A Depot is simultaneously a node in two networks — show both links
+    // rather than one, unlike a Station's single road-facing line.
+    const roadStation = findTouchingStation(selected);
+    const railDock = buildingRailAccessCell(selected);
+    let html = `
+      <div><b>${BUILDING_DEFS.depot.label} #${selected.id}</b></div>
+      <div>Buffers: ${RESOURCES[selected.outResource].name}</div>
+      <div>Road side: ${roadStation
+        ? `Station #${roadStation.id}`
+        : '<span style="color:var(--danger)">not connected</span>'}</div>
+      <div>Rail side: ${railDock
+        ? 'connected'
+        : '<span style="color:var(--danger)">not connected</span>'}</div>
+      <div>Buffered: ${selected.outStock.toFixed(1)} / ${selected.outCap}</div>
+      <div class="fill-bar"><div style="width:${(selected.outStock/selected.outCap*100).toFixed(0)}%"></div></div>
+    `;
+    panel.innerHTML = html;
     return;
   }
 
@@ -1463,13 +1982,16 @@ function renderSelection(){
   }
 
   if(selected.kind==='vehicle'){
-    const def = VEHICLE_DEFS[selected.type];
-    const resourceName = RESOURCES[selected.cargoResource].name;
-    const unitWeight = RESOURCES[selected.cargoResource].unitWeight;
+    const def = getVehicleDef(selected.type);
+    const isTrain = isTrainType(selected.type);
+    // A train's cargo resource is null until its first load (§2.5) — every
+    // other vehicle stat is generic across trucks and trains already.
+    const resourceName = selected.cargoResource ? RESOURCES[selected.cargoResource].name : '—';
+    const unitWeight = selected.cargoResource ? RESOURCES[selected.cargoResource].unitWeight : 0;
     const mass = selected.massEmpty + selected.cargoAmount*unitWeight;
     let html = `
       <div><b>${def.label} #${selected.id}</b></div>
-      <div>Carries: ${resourceName} only</div>
+      <div>${isTrain ? 'Currently carrying' : 'Carries'}: ${resourceName}${isTrain ? '' : ' only'}</div>
       <div>Cargo: ${selected.cargoAmount.toFixed(1)} / ${selected.capacity}</div>
       <div>State: ${selected.state}${selected.state==='blocked' ? ' <span style="color:var(--danger)">(waiting)</span>' : ''}</div>
       <div>Speed: ${selected.speed.toFixed(2)} / ${selected.maxSpeed.toFixed(2)} tiles/tick</div>
@@ -1478,13 +2000,19 @@ function renderSelection(){
       <div>Length: ${selected.length.toFixed(2)} tiles</div>
       <div class="section-label">Orders</div>
       <div id="ordersList"></div>
-      <button class="btn" id="addStopBtn">+ Add stop</button>
+      <button class="btn" id="addLoadStopBtn">+ Add stop (Load)</button>
+      <button class="btn" id="addUnloadStopBtn">+ Add stop (Unload)</button>
       <button class="btn secondary" id="sellBtn">Sell ($${Math.round(def.purchaseCost*def.sellFraction)} refund)</button>
     `;
     panel.innerHTML = html;
-    document.getElementById('addStopBtn').addEventListener('click', ()=>{
-      pickingStopFor = selected;
-      document.getElementById('hint').textContent = `Click a Station handling ${resourceName} to add it as a stop.`;
+    const targetNoun = isTrain ? 'Rail Depot' : `Station handling ${resourceName}`;
+    document.getElementById('addLoadStopBtn').addEventListener('click', ()=>{
+      pickingStopFor = {vehicle:selected, action:'load_full'};
+      document.getElementById('hint').textContent = `Click a ${targetNoun} to pick up from.`;
+    });
+    document.getElementById('addUnloadStopBtn').addEventListener('click', ()=>{
+      pickingStopFor = {vehicle:selected, action:'unload_all'};
+      document.getElementById('hint').textContent = `Click a ${targetNoun} to drop off at.`;
     });
     document.getElementById('sellBtn').addEventListener('click', ()=>{
       cmdSellVehicle(selected);
@@ -1522,6 +2050,8 @@ document.getElementById('millCost').textContent = '$' + BUILDING_DEFS.mill.build
 document.getElementById('townCost').textContent = '$' + BUILDING_DEFS.town.buildCost;
 document.getElementById('stationCost').textContent = '$' + BUILDING_DEFS.station.buildCost;
 document.getElementById('rampCost').textContent = '$' + RAMP_COST;
+document.getElementById('trackCost').textContent = '$' + RAIL_DEFS.track.costPerTile + '/tile';
+document.getElementById('depotCost').textContent = '$' + BUILDING_DEFS.depot.buildCost;
 function updateRoadCostLabel(){
   const elevated = currentLayer()==='elevated';
   document.getElementById('roadCost').textContent =
