@@ -44,10 +44,12 @@ section('Test 1 — block mutual exclusion', () => {
 
   // Train A's route (Depot A -> Depot B -> Depot C) crosses Block2 once,
   // then leaves it for good via the Depot C branch — never needing to
-  // backtrack through the junction where Train B will be waiting.
+  // backtrack through the junction where Train B will be waiting. Created
+  // directly via createTrain (not cmdAssembleTrain/a Train Yard) since this
+  // test is about block mechanics, not the assembly command — that has its
+  // own test below.
   const trainAId = run(ctx, `
-    cmdPurchaseVehicle(2, 5, 'freight');
-    const trainA = [...world.entities.values()].find(e=>e.kind==='vehicle' && e.type==='freight');
+    const trainA = createTrain(2, 5, 'diesel', 'ore_wagon', 3);
     cmdSetOrders(trainA, [
       {nodeId: ${depotBId}, action:'unload_all', resource:'ore'},
       {nodeId: ${depotCId}, action:'unload_all', resource:'ore'},
@@ -73,8 +75,7 @@ section('Test 1 — block mutual exclusion', () => {
   // Spawn Train B right at the junction, approaching block2 from the
   // opposite end — it must NOT be able to enter while Train A holds it.
   const trainBId = run(ctx, `
-    cmdPurchaseVehicle(6, 5, 'freight');
-    const trainB = [...world.entities.values()].find(e=>e.kind==='vehicle' && e.type==='freight' && e.x===6 && e.y===5);
+    const trainB = createTrain(6, 5, 'diesel', 'ore_wagon', 3);
     cmdSetOrders(trainB, [{nodeId: ${depotBId}, action:'unload_all', resource:'ore'}]);
     return trainB.id;
   `);
@@ -103,8 +104,13 @@ section('Test 1 — block mutual exclusion', () => {
     if(releasedAtTick!==-1 && bMovedAtTick!==-1) break;
   }
   check('block2 was eventually released by train A', releasedAtTick !== -1);
-  check('train B starts moving within a couple ticks of block2 releasing (no unnecessary extra wait)',
-    bMovedAtTick !== -1 && bMovedAtTick - releasedAtTick <= 3,
+  // Not "the very next tick" the way a single lightweight vehicle would —
+  // an assembled 3-wagon consist has real mass, so Train B needs a few
+  // ticks to build enough speed/frac to complete its first cell crossing
+  // once unblocked. The bound here is "not stalled indefinitely, and not
+  // an obviously-broken multi-hundred-tick stall", not "instant".
+  check('train B starts moving within a bounded number of ticks of block2 releasing (not stalled indefinitely)',
+    bMovedAtTick !== -1 && bMovedAtTick - releasedAtTick <= 40,
     `released@${releasedAtTick} moved@${bMovedAtTick}`);
 });
 
@@ -145,7 +151,55 @@ section('Test 2 — block computation correctness', () => {
     `left=${after.leftStub} right=${after.rightStub}`);
 });
 
-section('Test 3 — cross-mode chain end to end (Mine -> truck -> Depot -> train -> Depot -> truck -> Town)', () => {
+section('Test 3 — Train Yard assembly (engines + wagons, not a fixed train def)', () => {
+  const ctx = newGameContext();
+  run(ctx, `
+    cmdBuildBuilding('trainyard', 0, 0, 'small');
+    cmdBuildTrack(3, 0, true);  // touches the Yard's footprint (0,0)-(2,1) at (2,0)
+    cmdBuildTrack(3, 3, true);  // NOT touching any Yard
+  `);
+
+  const rejected = run(ctx, `
+    const before = world.treasury;
+    cmdAssembleTrain(3, 3, 'diesel', 'ore_wagon', 3); // track exists but doesn't touch a Yard
+    return {trainCount: [...world.entities.values()].filter(e=>e.kind==='vehicle').length, spent: before - world.treasury};
+  `);
+  check('assembling away from a Train Yard is rejected (no train, no charge)',
+    rejected.trainCount === 0 && rejected.spent === 0, JSON.stringify(rejected));
+
+  const assembled = run(ctx, `
+    const before = world.treasury;
+    cmdAssembleTrain(3, 0, 'diesel', 'ore_wagon', 3);
+    const train = [...world.entities.values()].find(e=>e.kind==='vehicle');
+    return train ? {
+      spent: before - world.treasury,
+      expectedCost: ENGINE_DEFS.diesel.purchaseCost + WAGON_DEFS.ore_wagon.purchaseCost*3,
+      capacity: train.capacity,
+      expectedCapacity: WAGON_DEFS.ore_wagon.capacity*3,
+      resource: train.cargoResource,
+      engineForce: train.engineForce, // randomized, but should track the engine's base, not the wagon's (wagons carry no propulsion)
+      consist: train.consist,
+    } : null;
+  `);
+  check('assembling on track touching a Yard creates a train', assembled !== null);
+  check('charges exactly engine + N*wagon cost, nothing else', assembled && assembled.spent === assembled.expectedCost,
+    assembled && `spent=${assembled.spent} expected=${assembled.expectedCost}`);
+  check("the train's capacity is N * the wagon's capacity", assembled && assembled.capacity === assembled.expectedCapacity);
+  check("the train's cargo resource is the wagon's resource, fixed like a truck's", assembled && assembled.resource === 'ore');
+  check('the Consist component records exactly what was assembled', assembled &&
+    assembled.consist.engineType==='diesel' && assembled.consist.wagonType==='ore_wagon' && assembled.consist.wagonCount===3,
+    assembled && JSON.stringify(assembled.consist));
+
+  const invalid = run(ctx, `
+    const before = [...world.entities.values()].filter(e=>e.kind==='vehicle').length;
+    cmdAssembleTrain(3, 0, 'no_such_engine', 'ore_wagon', 3);
+    cmdAssembleTrain(3, 0, 'diesel', 'ore_wagon', 0);
+    return [...world.entities.values()].filter(e=>e.kind==='vehicle').length - before;
+  `);
+  check('an unknown engine or a zero wagon count is rejected, not silently accepted', invalid === 0, `created ${invalid} extra trains`);
+});
+
+section('Test 4 — cross-mode chain end to end (Mine -> truck -> Depot -> train -> Depot -> truck -> Town)', () => {
   const ctx = newGameContext();
   const ids = run(ctx, `
     function roadRun(x, y1, y2){ for(let y=Math.min(y1,y2); y<=Math.max(y1,y2); y++) cmdBuildRoad(x,y,'ground',true); }
@@ -160,9 +214,11 @@ section('Test 3 — cross-mode chain end to end (Mine -> truck -> Depot -> train
     cmdBuildBuilding('depot', 3, 5, 'large', null, 'ore');
     cmdBuildBuilding('station', 2, 5, 'small', 'N', 'ore');   // touches road at (2,4), touches Depot A at (3,5)
 
-    // Rail spine: Depot A -> Depot B
+    // Rail spine: Depot A -> Depot B, with a Train Yard touching the line
+    // partway along (8,7)) so a train can actually be assembled onto it.
     railRun(3, 15, 7); // touches Depot A at (3,6) via (3,7), Depot B at (16,7) via (15,7)
     cmdBuildBuilding('depot', 16, 7, 'large', null, 'ore');
+    cmdBuildBuilding('trainyard', 8, 8, 'small'); // touches the rail spine at (8,7) via (8,8)
 
     // East side (road): Depot B -> Station(facing S) -> road -> Station(facing S) -> Town
     cmdBuildBuilding('station', 18, 8, 'small', 'S', 'ore');  // touches Depot B at (17,8)
@@ -199,8 +255,8 @@ section('Test 3 — cross-mode chain end to end (Mine -> truck -> Depot -> train
       {nodeId: ${ids.townStationId}, action:'unload_all', resource:'ore'},
     ]);
 
-    cmdPurchaseVehicle(8, 7, 'freight');
-    const train = [...world.entities.values()].find(e=>e.kind==='vehicle' && e.type==='freight');
+    cmdAssembleTrain(8, 7, 'diesel', 'ore_wagon', 4); // 4 wagons: capacity comfortably above a truck's, to make the buffering effect visible
+    const train = [...world.entities.values()].find(e=>e.kind==='vehicle' && isTrain(e.id));
     cmdSetOrders(train, [
       {nodeId: ${ids.depotAId}, action:'load_full', resource:'ore'},
       {nodeId: ${ids.depotBId}, action:'unload_all', resource:'ore'},
@@ -220,7 +276,7 @@ section('Test 3 — cross-mode chain end to end (Mine -> truck -> Depot -> train
     const s = run(ctx, `
       const a = world.entities.get(${ids.depotAId});
       const t = world.entities.get(${ids.townId});
-      const train = [...world.entities.values()].find(e=>e.kind==='vehicle' && e.type==='freight');
+      const train = [...world.entities.values()].find(e=>e.kind==='vehicle' && isTrain(e.id));
       return {depotAStock: a.outStock, townStock: t.inStock, trainCargo: train.cargoAmount};
     `);
     if(s.depotAStock > prevDepotA + 3) sawTruckSizedRise = true; // a bulk truck holds up to 10 ore, delivered a few units at a time up to that
@@ -239,26 +295,25 @@ section('Test 3 — cross-mode chain end to end (Mine -> truck -> Depot -> train
   check('a Rail Depot has no Consumer component — it never itself triggers delivery income', !depotAHasConsumer && !depotBHasConsumer);
 });
 
-section('Test 4 — train physics reuse (same F=ma model as trucks, parameterized over TRAIN_DEFS)', () => {
+section('Test 5 — train physics reuse (same F=ma model as trucks, parameterized over an assembled consist)', () => {
   const ctx = newGameContext();
   const out = run(ctx, `
     for(let x=0;x<=15;x++) cmdBuildTrack(x, 0, true);
     cmdBuildBuilding('depot', 16, 0, 'large', null, 'ore');
-    cmdPurchaseVehicle(0, 0, 'freight');
-    const train = [...world.entities.values()].find(e=>e.kind==='vehicle' && e.type==='freight');
+    const train = createTrain(0, 0, 'diesel', 'ore_wagon', 3);
     const depot = [...world.entities.values()].find(e=>e.type==='depot');
     cmdSetOrders(train, [{nodeId: depot.id, action:'unload_all', resource:'ore'}]);
     const speeds = [];
     for(let i=0;i<20;i++){ simTick(); speeds.push(train.speed); }
     return {brakeGtEngine: train.brakeForce > train.engineForce, speeds, maxSpeed: train.maxSpeed};
   `);
-  check('a freight train has brakeForce > engineForce, like trucks (guarantees decel > accel at any mass)', out.brakeGtEngine === true);
-  check('a freight train starts at rest and accelerates under the shared physics model', out.speeds[0] >= 0 && out.speeds[out.speeds.length-1] > out.speeds[0],
+  check('an assembled train has brakeForce > engineForce, like trucks (guarantees decel > accel at any mass)', out.brakeGtEngine === true);
+  check('an assembled train starts at rest and accelerates under the shared physics model', out.speeds[0] >= 0 && out.speeds[out.speeds.length-1] > out.speeds[0],
     JSON.stringify(out.speeds));
   check('speed never exceeds maxSpeed', out.speeds.every(s=>s <= out.maxSpeed + 1e-9));
 });
 
-section('Test 5 — no regressions in the road-only chain (Mine -> truck -> Mill -> truck -> Town)', () => {
+section('Test 6 — no regressions in the road-only chain (Mine -> truck -> Mill -> truck -> Town)', () => {
   // Phase 1's own manual verification scenario (see README), run headlessly
   // as a stand-in for "re-run the existing suites unmodified" — this repo
   // doesn't have Phase 1's suites checked in, so this exercises the same

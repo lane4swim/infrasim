@@ -174,13 +174,33 @@
       <option value="ore">Depot handles: Ore</option>
       <option value="steel">Depot handles: Steel</option>
     </select>
-    <button class="tool-btn" data-tool="freighttrain"><span class="tool-swatch" style="background:#9b6bd6"></span>Buy Freight Train<span class="cost">$900</span></button>
     <div class="hint-text">A Rail Depot has real storage, like a Mill — it's what lets a train drop
-      off 40 units at once while trucks draw it down a few at a time. Build a
-      Station touching it for road access, same as a Mine or Mill; track
-      touching any side gives it rail access, no facing needed. A train's
-      cargo isn't fixed like a truck's — it carries whatever resource its
-      current load order says, one load at a time.</div>
+      off dozens of units at once while trucks draw it down a few at a time.
+      Build a Station touching it for road access, same as a Mine or Mill;
+      track touching any side gives it rail access, no facing needed.</div>
+    <button class="tool-btn" data-tool="trainyard"><span class="tool-swatch" style="background:#4a4a6a"></span>Build Train Yard<span class="cost" id="trainyardCost">$400</span></button>
+    <button class="tool-btn" data-tool="assembletrain"><span class="tool-swatch" style="background:#9b6bd6"></span>Assemble Train</button>
+    <select id="engineSelect">
+      <option value="diesel">Engine: Diesel</option>
+    </select>
+    <select id="wagonSelect">
+      <option value="ore_wagon">Wagon: Ore</option>
+      <option value="steel_wagon">Wagon: Steel</option>
+    </select>
+    <select id="wagonCountSelect">
+      <option value="1">× 1 wagon</option>
+      <option value="2">× 2 wagons</option>
+      <option value="3" selected>× 3 wagons</option>
+      <option value="4">× 4 wagons</option>
+      <option value="5">× 5 wagons</option>
+      <option value="6">× 6 wagons</option>
+    </select>
+    <div class="hint-text">A train isn't bought off the shelf — it's assembled at a Train Yard from
+      one Engine (its physics: speed, mass, engine/brake force) and however
+      many identical Wagons you pick (its cargo: capacity, and the one
+      resource that Wagon type carries — same fixed-per-vehicle rule as a
+      truck). Pick engine/wagon/count, then click a track tile touching a
+      Yard to assemble and pay for the train there.</div>
 
     <div class="section-label">About</div>
     <div class="hint-text">
@@ -218,21 +238,28 @@
 
 <!--
   CONTENT PACK — the game's resources/recipes/buildings/vehicles/rail/
-  trains, as one JSON block instead of inline JS objects (§9/§13's "new
-  resource = new JSON file, no code change" claim). This is a deliberate
-  middle ground, not real data/*.json files: those need either a bundler
-  or fetch() calls, and fetch() fails under file:// without a local server
-  — the exact reason this project stays one self-contained HTML file. This
-  gets almost all of the practical benefit (a modder edits one clearly-
-  delineated JSON block, not JS source) without the CORS/bundler problem.
-  A real data/ directory becomes a later, purely additive step if/when a
-  bundler is adopted for other reasons.
+  engines/wagons, as one JSON block instead of inline JS objects (§9/§13's
+  "new resource = new JSON file, no code change" claim). This is a
+  deliberate middle ground, not real data/*.json files: those need either
+  a bundler or fetch() calls, and fetch() fails under file:// without a
+  local server — the exact reason this project stays one self-contained
+  HTML file. This gets almost all of the practical benefit (a modder edits
+  one clearly-delineated JSON block, not JS source) without the
+  CORS/bundler problem. A real data/ directory becomes a later, purely
+  additive step if/when a bundler is adopted for other reasons.
 
   Parsed once at startup into the RESOURCES/RECIPES/BUILDING_DEFS/
-  VEHICLE_DEFS/RAIL_DEFS/TRAIN_DEFS bindings the rest of the script already
-  uses (see validateContentPack / the parsing block right after this) —
-  zero changes to any system, command, or render code, since they only
-  ever reference the parsed result, never this block directly.
+  VEHICLE_DEFS/RAIL_DEFS/ENGINE_DEFS/WAGON_DEFS bindings the rest of the
+  script already uses (see validateContentPack / the parsing block right
+  after this) — zero changes to any system, command, or render code, since
+  they only ever reference the parsed result, never this block directly.
+
+  Trains are not a single vehicle def the way trucks are: a train is
+  assembled at a Train Yard from one engine (defines physics — speed,
+  mass, engine/brake force) plus N identical wagons (defines the load —
+  capacity and which single resource it carries, exactly like a truck's
+  fixed resource). See the Consist component / getTrainStats in the main
+  script for how engines+wagons combine into one vehicle's stats.
 -->
 <script type="application/json" id="content-pack">
 {
@@ -249,7 +276,8 @@
     "mill":    { "buildCost": 220, "tiers": { "small": { "cap": 20, "add": 0 }, "large": { "cap": 50, "add": 120 } }, "color": "#8a4a3a", "label": "Steel Mill", "footprint": { "w": 3, "h": 2 }, "recipe": "smelt_steel" },
     "town":    { "buildCost": 100, "tiers": { "small": { "cap": 20, "add": 0, "population": 50 }, "large": { "cap": 50, "add": 80, "population": 150 } }, "color": "#3a6ea5", "label": "Town", "footprint": { "w": 3, "h": 2 } },
     "station": { "buildCost": 60,  "tiers": { "small": { "cap": 0, "add": 0 }, "large": { "cap": 0, "add": 0 } }, "color": "#c9a227", "label": "Station", "footprint": { "w": 1, "h": 1 } },
-    "depot":   { "buildCost": 300, "tiers": { "small": { "cap": 30, "add": 0 }, "large": { "cap": 80, "add": 150 } }, "color": "#6b5b95", "label": "Rail Depot", "footprint": { "w": 2, "h": 2 } }
+    "depot":   { "buildCost": 300, "tiers": { "small": { "cap": 30, "add": 0 }, "large": { "cap": 80, "add": 150 } }, "color": "#6b5b95", "label": "Rail Depot", "footprint": { "w": 2, "h": 2 } },
+    "trainyard": { "buildCost": 400, "tiers": { "small": { "cap": 0, "add": 0 }, "large": { "cap": 0, "add": 0 } }, "color": "#4a4a6a", "label": "Train Yard", "footprint": { "w": 3, "h": 2 } }
   },
   "vehicles": {
     "bulk":    { "purchaseCost": 200, "runningCostPerTick": 1,   "capacity": 10, "sellFraction": 0.4, "label": "Bulk Truck",    "resource": "ore",   "color": "#e0a840", "maxSpeedTilesPerTick": 1.2, "massEmpty": 5, "engineForce": 0.6,  "brakeForce": 1.8, "lengthTiles": 1.3 },
@@ -258,8 +286,12 @@
   "rail": {
     "track": { "costPerTile": 25 }
   },
-  "trains": {
-    "freight": { "purchaseCost": 900, "runningCostPerTick": 3, "capacity": 40, "sellFraction": 0.4, "label": "Freight Train", "resource": null, "color": "#9b6bd6", "maxSpeedTilesPerTick": 1.6, "massEmpty": 40, "engineForce": 3.0, "brakeForce": 6.0, "lengthTiles": 4 }
+  "engines": {
+    "diesel": { "purchaseCost": 600, "runningCostPerTick": 2, "sellFraction": 0.4, "label": "Diesel Engine", "color": "#9b6bd6", "maxSpeedTilesPerTick": 1.6, "massEmpty": 30, "engineForce": 3.0, "brakeForce": 6.0, "lengthTiles": 3 }
+  },
+  "wagons": {
+    "ore_wagon":   { "purchaseCost": 150, "capacity": 20, "resource": "ore",   "label": "Ore Wagon",   "color": "#7a5230", "massEmpty": 6, "lengthTiles": 2.5 },
+    "steel_wagon": { "purchaseCost": 180, "capacity": 16, "resource": "steel", "label": "Steel Wagon", "color": "#8a4a3a", "massEmpty": 7, "lengthTiles": 2.5 }
   }
 }
 </script>
@@ -293,7 +325,7 @@
 function validateContentPack(pack){
   const fail = msg => { throw new Error('Content pack invalid: ' + msg); };
   const need = (cond, msg) => { if(!cond) fail(msg); };
-  for(const section of ['resources','recipes','buildings','vehicles','rail','trains']){
+  for(const section of ['resources','recipes','buildings','vehicles','rail','engines','wagons']){
     need(pack && typeof pack[section]==='object' && pack[section]!==null, `missing "${section}" section`);
   }
   for(const [id, r] of Object.entries(pack.resources)){
@@ -315,20 +347,34 @@ function validateContentPack(pack){
     need(b.footprint && typeof b.footprint.w==='number' && typeof b.footprint.h==='number', `building "${id}" is missing a valid footprint {w,h}`);
     if(b.recipe!==undefined) need(pack.recipes[b.recipe], `building "${id}" references undefined recipe "${b.recipe}"`);
   }
-  // Trucks and trains are both vehicle-shaped (§ Rail milestone's
-  // getVehicleDef) — same required fields, same physics invariant.
-  function validateVehicleLike(kind, id, v){
-    need(typeof v.purchaseCost==='number', `${kind} "${id}" is missing a numeric purchaseCost`);
-    need(typeof v.capacity==='number', `${kind} "${id}" is missing a numeric capacity`);
-    need(typeof v.engineForce==='number', `${kind} "${id}" is missing a numeric engineForce`);
-    need(typeof v.brakeForce==='number', `${kind} "${id}" is missing a numeric brakeForce`);
-    need(v.brakeForce > v.engineForce, `${kind} "${id}" has brakeForce (${v.brakeForce}) <= engineForce (${v.engineForce}) — decel must exceed accel at any mass`);
-    need(v.resource===null || pack.resources[v.resource], `${kind} "${id}" references undefined resource "${v.resource}"`);
+  for(const [id, v] of Object.entries(pack.vehicles)){
+    need(typeof v.purchaseCost==='number', `vehicle "${id}" is missing a numeric purchaseCost`);
+    need(typeof v.capacity==='number', `vehicle "${id}" is missing a numeric capacity`);
+    need(typeof v.engineForce==='number', `vehicle "${id}" is missing a numeric engineForce`);
+    need(typeof v.brakeForce==='number', `vehicle "${id}" is missing a numeric brakeForce`);
+    need(v.brakeForce > v.engineForce, `vehicle "${id}" has brakeForce (${v.brakeForce}) <= engineForce (${v.engineForce}) — decel must exceed accel at any mass`);
+    need(pack.resources[v.resource], `vehicle "${id}" references undefined resource "${v.resource}"`);
   }
-  for(const [id, v] of Object.entries(pack.vehicles)) validateVehicleLike('vehicle', id, v);
-  for(const [id, v] of Object.entries(pack.trains)) validateVehicleLike('train', id, v);
   for(const [id, t] of Object.entries(pack.rail)){
     need(typeof t.costPerTile==='number', `rail def "${id}" is missing a numeric costPerTile`);
+  }
+  // A train is assembled from one engine (physics only — no cargo) plus N
+  // identical wagons (cargo only — no propulsion); see getTrainStats.
+  for(const [id, e] of Object.entries(pack.engines)){
+    need(typeof e.purchaseCost==='number', `engine "${id}" is missing a numeric purchaseCost`);
+    need(typeof e.engineForce==='number', `engine "${id}" is missing a numeric engineForce`);
+    need(typeof e.brakeForce==='number', `engine "${id}" is missing a numeric brakeForce`);
+    need(e.brakeForce > e.engineForce, `engine "${id}" has brakeForce (${e.brakeForce}) <= engineForce (${e.engineForce}) — decel must exceed accel at any mass`);
+    need(typeof e.maxSpeedTilesPerTick==='number', `engine "${id}" is missing a numeric maxSpeedTilesPerTick`);
+    need(typeof e.massEmpty==='number', `engine "${id}" is missing a numeric massEmpty`);
+    need(typeof e.lengthTiles==='number', `engine "${id}" is missing a numeric lengthTiles`);
+  }
+  for(const [id, w] of Object.entries(pack.wagons)){
+    need(typeof w.purchaseCost==='number', `wagon "${id}" is missing a numeric purchaseCost`);
+    need(typeof w.capacity==='number', `wagon "${id}" is missing a numeric capacity`);
+    need(pack.resources[w.resource], `wagon "${id}" references undefined resource "${w.resource}"`);
+    need(typeof w.massEmpty==='number', `wagon "${id}" is missing a numeric massEmpty`);
+    need(typeof w.lengthTiles==='number', `wagon "${id}" is missing a numeric lengthTiles`);
   }
 }
 
@@ -340,7 +386,8 @@ const RECIPES = CONTENT_PACK.recipes;
 const BUILDING_DEFS = CONTENT_PACK.buildings;
 const VEHICLE_DEFS = CONTENT_PACK.vehicles;
 const RAIL_DEFS = CONTENT_PACK.rail;
-const TRAIN_DEFS = CONTENT_PACK.trains;
+const ENGINE_DEFS = CONTENT_PACK.engines;
+const WAGON_DEFS = CONTENT_PACK.wagons;
 
 const INITIAL_TREASURY = 5000; // starting cash — bumped up from 1000 now that a Mine->Mill->Town chain needs multiple buildings, stations, and trucks before any income comes in
 const ROAD_COST_PER_TILE = 10;
@@ -354,8 +401,42 @@ const CONSUMPTION_PER_CAPITA = 0.02; // resource drained per tick, per resident 
 // everywhere a truck-or-train's stats/cost/label are needed, so adding a
 // third vehicle family (ship, plane) later only means adding one more def
 // table and one more branch here, not touching every call site.
-function getVehicleDef(type){ return VEHICLE_DEFS[type] || TRAIN_DEFS[type]; }
-function isTrainType(type){ return !!TRAIN_DEFS[type]; }
+function getVehicleDef(type){ return VEHICLE_DEFS[type]; } // trucks only — a train has no single def, see getTrainStats
+// A train is an entity carrying a Consist component (engineType, wagonType,
+// wagonCount) rather than a fixed VEHICLE_DEFS-style type — this is the one
+// place that distinction is made, so every other system/render/command call
+// site asks "does this vehicle have a Consist" instead of comparing type
+// strings against a table that no longer exists for trains.
+function isTrain(id){ return hasComponent(id, 'Consist'); }
+// Combines one engine (physics: speed/mass/engine+brake force) with N
+// identical wagons (cargo: capacity + the one resource they carry) into the
+// same shape getVehicleDef returns for a truck — every call site that reads
+// a vehicle's stats (rendering, upkeep, sell, inspector) can stay a single
+// dispatcher (getVehicleStats below) instead of branching everywhere.
+function getTrainStats(consist){
+  const engine = ENGINE_DEFS[consist.engineType];
+  const wagon = WAGON_DEFS[consist.wagonType];
+  const n = consist.wagonCount;
+  return {
+    label: `${engine.label} + ${n}× ${wagon.label}`,
+    color: engine.color,
+    purchaseCost: engine.purchaseCost + wagon.purchaseCost * n,
+    runningCostPerTick: engine.runningCostPerTick,
+    sellFraction: engine.sellFraction,
+    capacity: wagon.capacity * n,
+    resource: wagon.resource,
+    maxSpeedTilesPerTick: engine.maxSpeedTilesPerTick,
+    massEmpty: engine.massEmpty + wagon.massEmpty * n,
+    engineForce: engine.engineForce,
+    brakeForce: engine.brakeForce,
+    lengthTiles: engine.lengthTiles + wagon.lengthTiles * n,
+  };
+}
+// Single lookup point for "what are this vehicle's stats" regardless of
+// whether it's a truck (one VEHICLE_DEFS entry) or a train (derived from
+// its Consist) — the general-purpose successor to the old getVehicleDef(type)
+// call sites now that a train's type isn't a table key.
+function getVehicleStats(v){ return isTrain(v.id) ? getTrainStats(v.consist) : getVehicleDef(v.type); }
 
 // ---------------------------------------------------------------------
 // WORLD STATE
@@ -424,8 +505,10 @@ const COMPONENT_TYPES = [
   'Movement',   // {speed,maxSpeed,massEmpty,engineForce,brakeForce,length,path,pathIndex,frac,trail,currentBlock} — vehicles only; currentBlock is rail-only (see tickTrainMovement)
   'Status',     // {state} — vehicles only (idle|moving|loading|unloading|blocked)
   'Orders',     // {list,index} — vehicles only, player-authored (§6.6)
-  'Cargo',      // {amount,capacity,resource} — vehicles only; fixed per vehicle for trucks, settable per-trip for trains (§2.5)
+  'Cargo',      // {amount,capacity,resource} — vehicles only; capacity/resource are fixed at creation (a truck's own def, or a train's wagons — see Consist)
   'RailNode',   // {} — marks a building (Rail Depot) as a valid rail-network endpoint, full-perimeter access
+  'TrainYard',  // {} — marks a building (Train Yard) as a train-assembly/spawn point, full-perimeter rail access, no road side
+  'Consist',    // {engineType,wagonType,wagonCount} — trains only; what getTrainStats derives a train's Movement/Cargo stats from
 ];
 for(const name of COMPONENT_TYPES) world.components[name] = new Map();
 
@@ -475,6 +558,7 @@ const FIELD_MAP = {
   state:['Status','state'],
   orders:['Orders','list'], ordersIndex:['Orders','index'],
   cargoAmount:['Cargo','amount'], capacity:['Cargo','capacity'], cargoResource:['Cargo','resource'],
+  consist:['Consist', null], // {engineType,wagonType,wagonCount} — trains only, see getTrainStats
 };
 // Storage is a resource-typed pair of slots — {out, in} — rather than one
 // flat stock/cap: `out` is what a building offers for pickup (a Mine's ore,
@@ -768,15 +852,28 @@ function railCellHasSignal(x,y){
   for(const {dir} of ROAD_DIRS) if(track.edges[dir] && track.oneWayBlocked[dir]) return true;
   return false;
 }
-function railCellTouchesDepot(x,y){
+// Any building with real rail engagement — a Depot (RailNode) or a Train
+// Yard (TrainYard) — is a natural block boundary: a train's approach to
+// either is always its own segment, never shared with unrelated
+// through-traffic. Depot and Yard stay separate components (different
+// things touching them means different things — a truck chain vs. an
+// assembly command), but both count here.
+function railCellTouchesRailEndpoint(x,y){
   for(const [nx,ny] of neighbors4(x,y)){
     const buildingId = getCell(nx,ny).buildingId;
-    if(buildingId!=null && hasComponent(buildingId,'RailNode')) return true;
+    if(buildingId!=null && (hasComponent(buildingId,'RailNode') || hasComponent(buildingId,'TrainYard'))) return true;
+  }
+  return false;
+}
+function railCellTouchesYard(x,y){
+  for(const [nx,ny] of neighbors4(x,y)){
+    const buildingId = getCell(nx,ny).buildingId;
+    if(buildingId!=null && hasComponent(buildingId,'TrainYard')) return true;
   }
   return false;
 }
 function railCellIsHub(x,y){
-  return railCellDegree(x,y) !== 2 || railCellHasSignal(x,y) || railCellTouchesDepot(x,y);
+  return railCellDegree(x,y) !== 2 || railCellHasSignal(x,y) || railCellTouchesRailEndpoint(x,y);
 }
 
 function computeRailBlocks(){
@@ -955,38 +1052,66 @@ function createBuilding(type, x, y, tier, facing, resource){
     addComponent(id, 'Storage', {out: slot, in: slot});
     addComponent(id, 'RailNode', {});
   }
+  if(type==='trainyard'){
+    // No Storage, no road side, no Station requirement to touch anything —
+    // a Yard doesn't move cargo at all, it's purely where a train's parts
+    // (paid for directly, not physically delivered) get assembled into one
+    // vehicle. Full-perimeter rail access, same as a Depot's rail side.
+    addComponent(id, 'TrainYard', {});
+  }
   const handle = makeEntityHandle(id);
   world.entities.set(id, handle);
   for(const cell of footprintCells(handle)) getCell(cell.x, cell.y).buildingId = id;
   return handle;
 }
-function createVehicle(x,y,vehicleType){
-  vehicleType = vehicleType || 'bulk'; // back-compat: old call sites / tests that omit this get a bulk (ore) truck
-  const def = getVehicleDef(vehicleType);
-  const isTrain = isTrainType(vehicleType);
-  const id = world.nextId++;
-  addComponent(id, 'Identity', {kind:'vehicle', type:vehicleType});
-  addComponent(id, 'Transform', {x, y, layer: isTrain ? 'rail' : 'ground'});
-  // Individual, fractional per-vehicle values — not a shared constant. Two
-  // vehicles bought back to back will normally end up with slightly
-  // different top speeds/mass/engine/brake force/lengths, the same way
-  // real vehicles of the same model aren't perfectly identical.
-  addComponent(id, 'Movement', {
-    speed: 0,             // current velocity, tiles/tick — starts at rest and accelerates (see tickVehicles/tickTrainMovement)
-    maxSpeed: def.maxSpeedTilesPerTick * (0.85 + Math.random()*0.3),
-    massEmpty: def.massEmpty * (0.9 + Math.random()*0.2),
-    engineForce: def.engineForce * (0.85 + Math.random()*0.3),
-    brakeForce: def.brakeForce * (0.85 + Math.random()*0.3), // always > engineForce by construction (base brakeForce > base engineForce)
-    length: def.lengthTiles * (0.9 + Math.random()*0.2),     // tile-units this vehicle's body occupies
+// Shared by createTruck/createTrain: the individual, fractional per-vehicle
+// Movement values (not shared constants) that make two vehicles of the same
+// spec end up slightly different, the same way real vehicles of the same
+// model aren't perfectly identical.
+function randomizedMovement(spec){
+  return {
+    speed: 0, // current velocity, tiles/tick — starts at rest and accelerates (see tickVehicles/tickTrainMovement)
+    maxSpeed: spec.maxSpeedTilesPerTick * (0.85 + Math.random()*0.3),
+    massEmpty: spec.massEmpty * (0.9 + Math.random()*0.2),
+    engineForce: spec.engineForce * (0.85 + Math.random()*0.3),
+    brakeForce: spec.brakeForce * (0.85 + Math.random()*0.3), // always > engineForce by construction (base brakeForce > base engineForce)
+    length: spec.lengthTiles * (0.9 + Math.random()*0.2),     // tile-units this vehicle's body occupies
     path:null, pathIndex:0,
     frac:0,                // 0..1 progress from path[pathIndex] toward path[pathIndex+1]
     trail:[],               // recently-occupied {x,y,layer} cells, most recent first — the physical
                              // basis for this vehicle's trailing-length reservation (see tickVehicles)
     currentBlock: null,     // rail-only: the Block id this train currently holds (see tickTrainMovement)
-  });
+  };
+}
+function createTruck(x,y,vehicleType){
+  vehicleType = vehicleType || 'bulk'; // back-compat: old call sites / tests that omit this get a bulk (ore) truck
+  const def = getVehicleDef(vehicleType);
+  const id = world.nextId++;
+  addComponent(id, 'Identity', {kind:'vehicle', type:vehicleType});
+  addComponent(id, 'Transform', {x, y, layer:'ground'});
+  addComponent(id, 'Movement', randomizedMovement(def));
   addComponent(id, 'Status', {state:'idle'}); // idle|moving|loading|unloading|blocked
   addComponent(id, 'Orders', {list:[], index:0}); // [{nodeId, action, resource}] — player authored, §6.6
-  addComponent(id, 'Cargo', {amount:0, capacity:def.capacity, resource:def.resource}); // fixed per truck's life; null for a train until its first load (§2.5)
+  addComponent(id, 'Cargo', {amount:0, capacity:def.capacity, resource:def.resource}); // fixed for this truck's life
+  const handle = makeEntityHandle(id);
+  world.entities.set(id, handle);
+  return handle;
+}
+// A train is assembled, not bought off a fixed def — one engine (physics)
+// plus N identical wagons (cargo capacity + resource). getTrainStats derives
+// the same shape a truck's def has, so randomizedMovement/Cargo below don't
+// need to know or care that the numbers came from a Yard assembly instead
+// of a single VEHICLE_DEFS entry.
+function createTrain(x,y,engineType,wagonType,wagonCount){
+  const stats = getTrainStats({engineType, wagonType, wagonCount});
+  const id = world.nextId++;
+  addComponent(id, 'Identity', {kind:'vehicle', type:'train'});
+  addComponent(id, 'Consist', {engineType, wagonType, wagonCount});
+  addComponent(id, 'Transform', {x, y, layer:'rail'});
+  addComponent(id, 'Movement', randomizedMovement(stats));
+  addComponent(id, 'Status', {state:'idle'});
+  addComponent(id, 'Orders', {list:[], index:0});
+  addComponent(id, 'Cargo', {amount:0, capacity:stats.capacity, resource:stats.resource}); // fixed by wagon type, like a truck
   const handle = makeEntityHandle(id);
   world.entities.set(id, handle);
   return handle;
@@ -1147,21 +1272,32 @@ function cmdDemolish(x,y,layer){
 function cmdPurchaseVehicle(x,y,vehicleType){
   vehicleType = vehicleType || 'bulk';
   const cell = getCell(x,y);
-  const isTrain = isTrainType(vehicleType);
-  if(isTrain){
-    if(!cell.layers.rail.track){ logEvent('Trains must be placed on a rail track tile.', 'warn'); return; }
-  } else if(!cell.layers.ground.track){
-    logEvent('Trucks must be placed on a ground road tile.', 'warn'); return;
-  }
+  if(!cell.layers.ground.track){ logEvent('Trucks must be placed on a ground road tile.', 'warn'); return; }
   const def = getVehicleDef(vehicleType);
   if(!canAfford(def.purchaseCost)){ logEvent(`Insufficient funds for ${def.label.toLowerCase()}.`, 'warn'); return; }
   charge(def.purchaseCost, `${def.label.toLowerCase()} purchase`);
-  createVehicle(x,y,vehicleType);
+  createTruck(x,y,vehicleType);
+}
+// Trains aren't purchased off a fixed def — they're assembled at a Train
+// Yard from an engine and N wagons, and must depart from track that
+// actually touches a Yard (railCellTouchesYard), not just any track tile.
+function cmdAssembleTrain(x,y,engineType,wagonType,wagonCount){
+  const cell = getCell(x,y);
+  if(!cell.layers.rail.track){ logEvent('Trains must be assembled on a rail track tile.', 'warn'); return; }
+  if(!railCellTouchesYard(x,y)){ logEvent('That track doesn\'t touch a Train Yard.', 'warn'); return; }
+  const engine = ENGINE_DEFS[engineType], wagon = WAGON_DEFS[wagonType];
+  if(!engine || !wagon || !Number.isInteger(wagonCount) || wagonCount < 1){
+    logEvent('Invalid train configuration.', 'warn'); return;
+  }
+  const stats = getTrainStats({engineType, wagonType, wagonCount});
+  if(!canAfford(stats.purchaseCost)){ logEvent(`Insufficient funds for ${stats.label}.`, 'warn'); return; }
+  charge(stats.purchaseCost, `${stats.label} assembled`);
+  createTrain(x,y,engineType,wagonType,wagonCount);
 }
 function cmdSellVehicle(vehicle){
-  const def = getVehicleDef(vehicle.type);
-  const refund = Math.round(def.purchaseCost * def.sellFraction);
-  credit(refund, `${def.label.toLowerCase()} sold`);
+  const stats = getVehicleStats(vehicle);
+  const refund = Math.round(stats.purchaseCost * stats.sellFraction);
+  credit(refund, `${stats.label.toLowerCase()} sold`);
   destroyEntity(vehicle.id);
 }
 function cmdSetOrders(vehicle, orders){
@@ -1356,10 +1492,10 @@ function advanceAlongPath(v, occupied, canEnter, onEnter){
 }
 
 function tickVehicles(){
-  const occupied = buildOccupancyMap(queryEntities('Movement').filter(id=>!isTrainType(getComponent(id,'Identity').type)));
+  const occupied = buildOccupancyMap(queryEntities('Movement').filter(id=>!isTrain(id)));
 
   for(const id of queryEntities('Movement','Orders','Cargo','Status')){
-    if(isTrainType(getComponent(id,'Identity').type)) continue; // trains run their own tickTrainMovement below
+    if(isTrain(id)) continue; // trains run their own tickTrainMovement below
     const v = world.entities.get(id);
 
     const order = currentOrder(v);
@@ -1447,10 +1583,10 @@ function startMovingToRail(train, building){
 }
 
 function tickTrainMovement(){
-  const occupied = buildOccupancyMap(queryEntities('Movement').filter(id=>isTrainType(getComponent(id,'Identity').type)));
+  const occupied = buildOccupancyMap(queryEntities('Movement').filter(isTrain));
 
   for(const id of queryEntities('Movement','Orders','Cargo','Status')){
-    if(!isTrainType(getComponent(id,'Identity').type)) continue;
+    if(!isTrain(id)) continue;
     const v = world.entities.get(id);
 
     const order = currentOrder(v);
@@ -1511,7 +1647,6 @@ function tickTrainMovement(){
       if(target.outStock <= 0){ v.state='blocked'; continue; }
       const room = v.capacity - v.cargoAmount;
       if(room <= 0){ advanceOrder(v); v.state='idle'; continue; }
-      if(v.cargoAmount<=0) v.cargoResource = order.resource; // §2.5: a train's cargo resource is set per-trip, at the point of loading
       const amt = Math.min(TRANSFER_RATE, target.outStock, room);
       target.outStock -= amt;
       v.cargoAmount += amt;
@@ -1542,7 +1677,7 @@ function tickUpkeep(){
   for(const id of queryEntities('Movement','Orders')){
     const v = world.entities.get(id);
     if(v.orders.length===0) continue; // parked/unassigned vehicles don't burn cash
-    world.treasury -= getVehicleDef(v.type).runningCostPerTick;
+    world.treasury -= getVehicleStats(v).runningCostPerTick;
   }
 }
 
@@ -1712,18 +1847,23 @@ function render(){
       drawX = a.x + (b.x-a.x)*v.frac;
       drawY = a.y + (b.y-a.y)*v.frac;
     }
-    ctx.fillStyle = v.state==='blocked' ? getCss('--danger') : getVehicleDef(v.type).color;
+    ctx.fillStyle = v.state==='blocked' ? getCss('--danger') : getVehicleStats(v).color;
     const cx = drawX*CELL+CELL/2, cy = drawY*CELL+CELL/2;
-    if(isTrainType(v.type)){
+    if(isTrain(v.id)){
       // A train is a much bigger commitment than a truck — drawn as a
       // rectangle rather than a dot so it reads as visually distinct on
-      // the rail layer, oriented along its direction of travel.
+      // the rail layer, oriented along its direction of travel. Sized by
+      // v.length (which already reflects the whole consist — engine plus
+      // every wagon — since randomizedMovement derived it from
+      // getTrainStats), so a longer train visibly reads as longer.
       const horizontal = v.path && v.pathIndex < v.path.length-1
         ? v.path[v.pathIndex+1].x !== v.path[v.pathIndex].x
         : true;
       ctx.save();
       ctx.translate(cx,cy);
-      const w = horizontal ? CELL*0.9 : CELL*0.5, h = horizontal ? CELL*0.5 : CELL*0.9;
+      const longSide = CELL * Math.max(0.6, Math.min(v.length/5, 2.5)); // consist length varies a lot now (1 wagon vs. 6) — scale within reason, don't let it swallow the grid
+      const w = horizontal ? longSide : CELL*0.5;
+      const h = horizontal ? CELL*0.5 : longSide;
       ctx.fillRect(-w/2, -h/2, w, h);
       ctx.restore();
     } else {
@@ -1738,10 +1878,10 @@ function render(){
   if(hoverCell){
     ctx.strokeStyle = getCss('--teal');
     ctx.lineWidth = 2;
-    if(currentTool==='mine' || currentTool==='mill' || currentTool==='town' || currentTool==='station' || currentTool==='depot'){
+    if(currentTool==='mine' || currentTool==='mill' || currentTool==='town' || currentTool==='station' || currentTool==='depot' || currentTool==='trainyard'){
       const fp = BUILDING_DEFS[currentTool].footprint;
       ctx.strokeRect(hoverCell.x*CELL+1, hoverCell.y*CELL+1, fp.w*CELL-2, fp.h*CELL-2);
-    } else if(currentTool==='road' || currentTool==='track' || currentTool==='bulktruck' || currentTool==='flatbedtruck' || currentTool==='freighttrain'){
+    } else if(currentTool==='road' || currentTool==='track' || currentTool==='bulktruck' || currentTool==='flatbedtruck' || currentTool==='assembletrain'){
       ctx.strokeRect(hoverCell.x*CELL+1, hoverCell.y*CELL+1, CELL-2, CELL-2);
     }
   }
@@ -1792,7 +1932,8 @@ function toolHint(t){
     track:`Click or drag to build rail track ($${RAIL_DEFS.track.costPerTile}/tile). Uncheck auto-connect to place tiles without joining them.`,
     signal:'Click a track tile, then click an adjacent connected tile — trains will only be allowed to travel from the first to the second. A signal also marks a hard block boundary.',
     depot:`Click the top-left cell for a Rail Depot (${BUILDING_DEFS.depot.footprint.w}x${BUILDING_DEFS.depot.footprint.h}). Choose which resource it buffers. Build a Station touching it for road access; any touching track tile gives it rail access.`,
-    freighttrain:'Click a rail track tile to buy a Freight Train ($900) there. Its cargo resource isn\'t fixed — it carries whatever its current load order specifies.',
+    trainyard:`Click the top-left cell for a Train Yard (${BUILDING_DEFS.trainyard.footprint.w}x${BUILDING_DEFS.trainyard.footprint.h}). This is where trains get assembled — it doesn't move cargo itself. Any touching track tile gives it rail access.`,
+    assembletrain:'Pick an engine, a wagon type, and a wagon count, then click a rail track tile touching a Train Yard to assemble and pay for the train there.',
   }[t] || '';
 }
 
@@ -1803,6 +1944,9 @@ function currentAutoConnect(){ return document.getElementById('autoConnect').che
 function currentTownResource(){ return document.getElementById('townResourceSelect').value; }
 function currentStationResource(){ return document.getElementById('stationResourceSelect').value; }
 function currentDepotResource(){ return document.getElementById('depotResourceSelect').value; }
+function currentEngine(){ return document.getElementById('engineSelect').value; }
+function currentWagon(){ return document.getElementById('wagonSelect').value; }
+function currentWagonCount(){ return parseInt(document.getElementById('wagonCountSelect').value, 10); }
 
 
 function cellFromEvent(evt){
@@ -1852,7 +1996,7 @@ function vehicleAt(x,y){
 // from "drop off" apart from the player saying which one they meant.
 function resolveStopTarget(vehicle, clickedBuilding, action){
   const actionNoun = action==='load_full' ? 'output' : 'input';
-  if(isTrainType(vehicle.type)){
+  if(isTrain(vehicle.id)){
     if(clickedBuilding.type !== 'depot'){
       return {error:'Trains load/unload at Rail Depots only.'};
     }
@@ -1927,7 +2071,8 @@ function handleClick(cell){
   if(currentTool==='track'){ cmdBuildTrack(x,y,currentAutoConnect()); return; }
   if(currentTool==='signal'){ handleOneWayClick(x,y); return; }
   if(currentTool==='depot'){ cmdBuildBuilding('depot', x, y, currentTier(), null, currentDepotResource()); return; }
-  if(currentTool==='freighttrain'){ cmdPurchaseVehicle(x,y,'freight'); return; }
+  if(currentTool==='trainyard'){ cmdBuildBuilding('trainyard', x, y, 'small'); return; }
+  if(currentTool==='assembletrain'){ cmdAssembleTrain(x, y, currentEngine(), currentWagon(), currentWagonCount()); return; }
 }
 
 function handleConnectClick(x,y){
@@ -2008,6 +2153,18 @@ function renderSelection(){
     return;
   }
 
+  if(selected.kind==='building' && selected.type==='trainyard'){
+    const railDock = buildingRailAccessCell(selected);
+    panel.innerHTML = `
+      <div><b>${BUILDING_DEFS.trainyard.label} #${selected.id}</b></div>
+      <div>Rail side: ${railDock
+        ? 'connected'
+        : '<span style="color:var(--danger)">not connected</span>'}</div>
+      <div style="margin-top:6px;color:var(--text-dim);font-size:11px;">Pick an engine/wagon/count in the toolbar, then click a track tile touching this Yard with the Assemble Train tool.</div>
+    `;
+    return;
+  }
+
   if(selected.kind==='building'){
     const def = BUILDING_DEFS[selected.type];
     const halted = producerHalted(selected);
@@ -2041,16 +2198,17 @@ function renderSelection(){
   }
 
   if(selected.kind==='vehicle'){
-    const def = getVehicleDef(selected.type);
-    const isTrain = isTrainType(selected.type);
-    // A train's cargo resource is null until its first load (§2.5) — every
-    // other vehicle stat is generic across trucks and trains already.
-    const resourceName = selected.cargoResource ? RESOURCES[selected.cargoResource].name : '—';
-    const unitWeight = selected.cargoResource ? RESOURCES[selected.cargoResource].unitWeight : 0;
+    const stats = getVehicleStats(selected);
+    const isTrainVehicle = isTrain(selected.id);
+    // A wagon's resource is fixed at assembly, exactly like a truck's —
+    // cargoResource is never null here (§ Train Yard: this replaced the
+    // earlier per-trip-resource design once wagons became resource-typed).
+    const resourceName = RESOURCES[selected.cargoResource].name;
+    const unitWeight = RESOURCES[selected.cargoResource].unitWeight;
     const mass = selected.massEmpty + selected.cargoAmount*unitWeight;
     let html = `
-      <div><b>${def.label} #${selected.id}</b></div>
-      <div>${isTrain ? 'Currently carrying' : 'Carries'}: ${resourceName}${isTrain ? '' : ' only'}</div>
+      <div><b>${stats.label} #${selected.id}</b></div>
+      <div>Carries: ${resourceName} only</div>
       <div>Cargo: ${selected.cargoAmount.toFixed(1)} / ${selected.capacity}</div>
       <div>State: ${selected.state}${selected.state==='blocked' ? ' <span style="color:var(--danger)">(waiting)</span>' : ''}</div>
       <div>Speed: ${selected.speed.toFixed(2)} / ${selected.maxSpeed.toFixed(2)} tiles/tick</div>
@@ -2061,10 +2219,10 @@ function renderSelection(){
       <div id="ordersList"></div>
       <button class="btn" id="addLoadStopBtn">+ Add stop (Load)</button>
       <button class="btn" id="addUnloadStopBtn">+ Add stop (Unload)</button>
-      <button class="btn secondary" id="sellBtn">Sell ($${Math.round(def.purchaseCost*def.sellFraction)} refund)</button>
+      <button class="btn secondary" id="sellBtn">Sell ($${Math.round(stats.purchaseCost*stats.sellFraction)} refund)</button>
     `;
     panel.innerHTML = html;
-    const targetNoun = isTrain ? 'Rail Depot' : `Station handling ${resourceName}`;
+    const targetNoun = isTrainVehicle ? 'Rail Depot' : `Station handling ${resourceName}`;
     document.getElementById('addLoadStopBtn').addEventListener('click', ()=>{
       pickingStopFor = {vehicle:selected, action:'load_full'};
       document.getElementById('hint').textContent = `Click a ${targetNoun} to pick up from.`;
@@ -2111,6 +2269,7 @@ document.getElementById('stationCost').textContent = '$' + BUILDING_DEFS.station
 document.getElementById('rampCost').textContent = '$' + RAMP_COST;
 document.getElementById('trackCost').textContent = '$' + RAIL_DEFS.track.costPerTile + '/tile';
 document.getElementById('depotCost').textContent = '$' + BUILDING_DEFS.depot.buildCost;
+document.getElementById('trainyardCost').textContent = '$' + BUILDING_DEFS.trainyard.buildCost;
 function updateRoadCostLabel(){
   const elevated = currentLayer()==='elevated';
   document.getElementById('roadCost').textContent =

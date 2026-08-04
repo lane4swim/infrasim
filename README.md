@@ -360,14 +360,10 @@ Phase 1's original suites checked in to literally re-run.
 - **`findRailPath`**, a near-copy of `findRoadPath`'s BFS for the rail
   layer (uniform edge cost, so still BFS, no A*) — one flat layer, no
   ramp/vertical-move concept the way ground/elevated roads have.
-- **A train's cargo resource isn't fixed at creation, unlike a truck's.**
-  `TRAIN_DEFS.freight.resource` is `null`; `Cargo.resource` is set at the
-  point of loading, from whichever `load` order is executing
-  (`v.cargoResource = order.resource` in `tickTrainMovement`'s loading
-  branch) — a small, type-gated exception rather than a redesign of
-  `Cargo`. Rationale: a 40-capacity freight train is a much bigger
-  commitment than a $200 truck, and "one expensive asset serving several
-  parts of the network" is part of rail's identity versus roads.
+- **Trains are assembled at a Train Yard from an Engine and N Wagons, not
+  bought off a fixed def.** *(This superseded an earlier, simpler
+  single-vehicle "Freight Train" design — see the Content-Pack Refactor
+  and Train Yard sections below for the reasoning and what replaced it.)*
 - **Explicit Load/Unload stop buttons**, replacing the single "+ Add stop"
   button. A Depot's `out` and `in` sharing one resource made the old
   resource-match inference (which slot has this resource?) ambiguous for
@@ -380,11 +376,10 @@ Phase 1's original suites checked in to literally re-run.
   action before, never the other.
 - **Rail tool group**: Build Track, Toggle Signal Direction (mechanically
   identical to Toggle One-Way — a signal *is* a one-way restriction, and
-  additionally a block boundary), Build Rail Depot, Buy Freight Train.
-  Depot inspector shows both links ("Road side: Station #N" / "Rail side:
-  connected/not") instead of a Station's single line. Train inspector
-  shows the same physics readout trucks have, plus "Currently carrying: —"
-  until its first load.
+  additionally a block boundary), Build Rail Depot. (Train purchase moved
+  to the Train Yard tool group — see below.) Depot inspector shows both
+  links ("Road side: Station #N" / "Rail side: connected/not") instead of
+  a Station's single line.
 
 ## Deliberately deferred
 
@@ -448,17 +443,19 @@ didn't change any behavior, only where the data lives.
 - **The content is now one `<script type="application/json"
   id="content-pack">` block**, sitting above the main `<script>` in
   `index.html`, containing a single JSON object keyed by category
-  (`resources`, `recipes`, `buildings`, `vehicles`, `rail`, `trains`). A
+  (`resources`, `recipes`, `buildings`, `vehicles`, `rail`, `engines`,
+  `wagons` — the last two added by the Train Yard redesign, see below). A
   modder edits one clearly-delineated JSON block, not JS source — and the
   game still opens by double-clicking the file, since this sidesteps the
   `fetch()`-under-`file://` CORS problem a real `data/*.json` directory
   would hit without a local server (the same reason this project is one
   self-contained HTML file in the first place).
 - **Parsed once at startup** into the exact same `RESOURCES`/`RECIPES`/
-  `BUILDING_DEFS`/`VEHICLE_DEFS`/`RAIL_DEFS`/`TRAIN_DEFS` bindings every
-  system, command, and render function already referenced — genuinely
-  zero changes anywhere else in the script, since none of that code ever
-  cared whether the object it was handed came from a literal or a parse.
+  `BUILDING_DEFS`/`VEHICLE_DEFS`/`RAIL_DEFS`/`ENGINE_DEFS`/`WAGON_DEFS`
+  bindings every system, command, and render function already referenced
+  — genuinely zero changes anywhere else in the script, since none of that
+  code ever cared whether the object it was handed came from a literal or
+  a parse.
 - **`validateContentPack`**, a lightweight schema check (not real JSON
   Schema — cheap to write, and enough to catch the actual failure mode: a
   hand-edited content block with a typo or a dangling reference) that runs
@@ -467,9 +464,9 @@ didn't change any behavior, only where the data lives.
   the first time something reads the bad value. Checks structural
   requirements (required fields, correct types) and cross-references
   (a recipe's resource ids exist, a building's `recipe` id exists, a
-  vehicle/train's `resource` exists or is explicitly `null`) plus the
-  physics invariant Phase 1 established (`brakeForce > engineForce`,
-  which is what guarantees decel > accel at any mass).
+  vehicle/wagon's `resource` exists) plus the physics invariant Phase 1
+  established (`brakeForce > engineForce`, checked for both vehicles and
+  engines, which is what guarantees decel > accel at any mass).
 - **`test/harness.js`** now stubs `document.getElementById('content-pack')`
   with the real extracted JSON text by default, and accepts a
   `contentPackJson` override — which is what lets `test-content-pack.js`
@@ -486,3 +483,111 @@ didn't change any behavior, only where the data lives.
 - Real JSON Schema validation, or a validation library — `validateContentPack`
   stays a small hand-written function; revisit only if the schema outgrows
   what a dozen `need(...)` checks can cover clearly.
+
+---
+
+# Phase 2 — Train Yard
+
+A redesign of how trains come into being, landing on top of the Rail
+milestone and Content-Pack Refactor above: instead of buying a single
+fixed "Freight Train" vehicle def, a train is **assembled at a Train Yard
+from one Engine (physics) plus N identical Wagons (cargo)** — much closer
+to how real trains work, and closer to trucks' resource-fixed model than
+the earlier "any resource per trip" design was.
+
+## Running the tests
+
+Both existing suites cover this — no new test file, since this changed how
+trains are *created*, not the rail mechanics or content-pack loading that
+`test-rail.js` and `test-content-pack.js` already exercise:
+
+```
+node test/test-rail.js
+node test/test-content-pack.js
+```
+
+`test-rail.js`'s "Test 3 — Train Yard assembly" is the dedicated coverage:
+confirms assembling away from a Yard is rejected (no train, no charge),
+assembling on track touching a Yard works and charges exactly
+`engine.purchaseCost + wagonCount * wagon.purchaseCost`, capacity is
+`wagonCount * wagon.capacity`, the cargo resource is the wagon's (fixed,
+like a truck's), the `Consist` component records exactly what was
+assembled, and an unknown engine or a zero wagon count is rejected rather
+than silently accepted. The other rail tests (block exclusion, physics
+reuse, the cross-mode chain) were updated to create trains via
+`createTrain`/`cmdAssembleTrain` instead of the retired
+`cmdPurchaseVehicle(x, y, 'freight')`. `test-content-pack.js`'s modder-pack
+test now also adds a new Wagon type end-to-end, alongside the existing new
+resource/recipe/vehicle.
+
+## What's implemented
+
+- **`ENGINE_DEFS`/`WAGON_DEFS`** replace `TRAIN_DEFS` in the content pack.
+  An engine def is physics-only (`maxSpeedTilesPerTick`, `massEmpty`,
+  `engineForce`, `brakeForce`, `lengthTiles` — no capacity, no resource,
+  it carries nothing itself). A wagon def is cargo-only (`capacity`, a
+  fixed `resource` — like a truck's, not settable per-trip anymore — plus
+  `massEmpty`/`lengthTiles` — no propulsion of its own).
+- **`Consist`**, a new component (`{engineType, wagonType, wagonCount}`)
+  replacing a train's old fixed `Identity.type` lookup. `getTrainStats`
+  combines one engine with N identical wagons into the same shape
+  `getVehicleDef` returns for a truck (label, cost, capacity, resource,
+  physics), so every call site that reads a vehicle's stats (rendering,
+  upkeep, sell, inspector) stays one dispatcher — `getVehicleStats(v)` —
+  instead of branching between trucks and trains everywhere. `isTrain(id)`
+  (checks `hasComponent(id, 'Consist')`) replaced the old
+  `isTrainType(type)` string-table check as the one place that
+  distinction is made.
+- **Train Yard**, a new building (`TrainYard` component) that's purely a
+  rail-side assembly/spawn point — no `Storage`, no road side, no Station
+  requirement to touch anything. Full-perimeter rail access, same as a
+  Depot's rail side, and it's a block hub for the same reason a Depot is
+  (a train's approach to either is always its own segment) —
+  `railCellTouchesDepot` was generalized to `railCellTouchesRailEndpoint`
+  (checks for a Depot's `RailNode` *or* a Yard's `TrainYard`) for block
+  computation, while `railCellTouchesYard` stays Yard-specific for
+  assembly validation, since "does this segment end at a hub" and "can I
+  assemble a train here" are different questions that happen to often
+  overlap.
+- **`cmdAssembleTrain(x, y, engineType, wagonType, wagonCount)`** — the
+  replacement for the old `cmdPurchaseVehicle(x, y, 'freight')`. Requires
+  the target rail tile to actually touch a Yard (not just any track),
+  charges the combined cost, and calls `createTrain`, which is to
+  `cmdAssembleTrain` what `createVehicle`(now `createTruck`) already was
+  to `cmdPurchaseVehicle` — a plain entity factory, no validation, matching
+  the existing Command/factory split (§7).
+- **A wagon's resource is fixed at assembly, like a truck's** — this
+  retires the earlier "a train's cargo resource is set per-trip, at the
+  point of loading" design (§2.5 of the Rail plan). A single train can
+  still serve "several parts of the network" the way that design intended
+  — just by carrying more of one resource per trip (`wagonCount *
+  wagon.capacity` can be much larger than any truck) rather than switching
+  resources between trips.
+- **UI**: "Buy Freight Train" replaced by "Build Train Yard" + "Assemble
+  Train" (engine/wagon/count selects, then click track touching a Yard).
+  Depot's inspector and rendering are unchanged; Yard gets its own
+  inspector (rail-side link status only, since it has no Storage) and
+  falls through the generic building bars code as an empty-bars building,
+  same as a Station.
+
+## Deliberately deferred
+
+- **Mixed-resource consists.** A train's wagons must all be the same
+  type/resource for now — `Cargo` stays the single `{amount, capacity,
+  resource}` shape every other vehicle already uses, rather than becoming
+  a per-wagon list. A train wanting to carry both Ore and Steel
+  simultaneously would need Cargo (and the load/unload state machine, and
+  Orders) to become wagon-aware; cheap to add later since it's additive to
+  the Consist model, not a redesign of it — just isn't needed to satisfy
+  "assembled from engines and wagons" on its own.
+- **Multiple engine types, more than two wagon types.** The content pack
+  ships one engine (Diesel) and two wagons (Ore, Steel) — enough to prove
+  the mechanic; more of each is a pure data addition, no code change (see
+  the Content-Pack Refactor section's own extensibility test, now
+  extended to cover a modded wagon too).
+- **Multi-segment train rendering.** A train still draws as one rectangle
+  sized loosely by its total `length` (now genuinely variable — 1 wagon
+  vs. 6 reads differently) rather than one segment per car.
+- **Reconfiguring an existing train** (swap wagons, add/remove cars) at a
+  Yard after assembly. Currently a train's consist is fixed for its life,
+  same as a truck's type; you sell it and assemble a new one instead.

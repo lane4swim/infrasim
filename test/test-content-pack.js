@@ -65,11 +65,15 @@ section('Test 2 — validateContentPack rejects deliberately-broken fixtures', (
     'no_such_recipe');
 
   expectThrow('a missing top-level section is rejected',
-    pack => { delete pack.trains; },
-    'trains');
+    pack => { delete pack.engines; },
+    'engines');
 
-  expectThrow('a train referencing an undefined resource is rejected (null is still allowed)',
-    pack => { pack.trains.freight.resource = 'unobtanium'; },
+  expectThrow('an engine with brakeForce <= engineForce is rejected',
+    pack => { pack.engines.diesel.brakeForce = pack.engines.diesel.engineForce; },
+    'brakeForce');
+
+  expectThrow('a wagon referencing an undefined resource is rejected',
+    pack => { pack.wagons.ore_wagon.resource = 'unobtanium'; },
     'unobtanium');
 });
 
@@ -92,6 +96,11 @@ section('Test 3 — a modder-authored content pack works with zero code changes'
     label:'Coal Truck', resource:'coal', color:'#444444',
     maxSpeedTilesPerTick:1.2, massEmpty:5, engineForce:0.6, brakeForce:1.8, lengthTiles:1.3,
   };
+  // A new wagon type too — the Train Yard content sections should be just
+  // as extensible as the older ones, not a special case.
+  moddedPack.wagons.coal_wagon = {
+    purchaseCost:140, capacity:18, resource:'coal', label:'Coal Wagon', color:'#333333', massEmpty:6, lengthTiles:2.5,
+  };
 
   const ctx = newGameContext({contentPackJson: JSON.stringify(moddedPack)});
 
@@ -101,29 +110,40 @@ section('Test 3 — a modder-authored content pack works with zero code changes'
       coalRecipe: RECIPES.extract_coal,
       mineRecipe: BUILDING_DEFS.mine.recipe,
       coalTruckDef: VEHICLE_DEFS.coaltruck,
+      coalWagonDef: WAGON_DEFS.coal_wagon,
     };
   `);
   check('the modded resource is live as RESOURCES.coal', loaded.coalResource && loaded.coalResource.baseValue === 9);
   check('the modded recipe is live as RECIPES.extract_coal', loaded.coalRecipe && loaded.coalRecipe.durationTicks === 4);
   check("the Mine's recipe now points at the modded recipe", loaded.mineRecipe === 'extract_coal');
   check('the modded vehicle type is live as VEHICLE_DEFS.coaltruck', loaded.coalTruckDef && loaded.coalTruckDef.label === 'Coal Truck');
+  check('the modded wagon type is live as WAGON_DEFS.coal_wagon', loaded.coalWagonDef && loaded.coalWagonDef.label === 'Coal Wagon');
 
   // End-to-end: build a Mine (now extracting coal via the swapped recipe),
-  // a Station, and a Coal Truck, and confirm coal actually accumulates —
+  // a Station, a Coal Truck, and a train assembled with the modded Coal
+  // Wagon — confirm coal actually accumulates and the train picks it up,
   // not just that the defs parsed, but that every system (tickProduction,
-  // Storage, vehicle purchase/cargo) operates on the new content
-  // correctly with the exact same code that runs the shipped resources.
+  // Storage, vehicle purchase/cargo, getTrainStats) operates on the new
+  // content correctly with the exact same code that runs the shipped
+  // resources.
   const result = run(ctx, `
     cmdBuildBuilding('mine', 0, 0, 'large');
     cmdBuildBuilding('station', 0, 2, 'small', 'N', 'coal');
     cmdBuildRoad(0, 3, 'ground', true);
     cmdPurchaseVehicle(0, 3, 'coaltruck');
+    cmdBuildTrack(2, 3, true);
+    const train = createTrain(2, 3, 'diesel', 'coal_wagon', 2);
     const mine = [...world.entities.values()].find(e=>e.kind==='building' && e.type==='mine');
     for(let i=0;i<50;i++) simTick();
-    return {mineOutStock: mine.outStock, mineOutResource: mine.outResource};
+    return {
+      mineOutStock: mine.outStock, mineOutResource: mine.outResource,
+      trainCapacity: train.capacity, trainResource: train.cargoResource,
+    };
   `);
   check('a Mine using the modded recipe actually produces the modded resource',
     result.mineOutResource === 'coal' && result.mineOutStock > 0, JSON.stringify(result));
+  check('a train assembled with the modded wagon carries the modded resource at the modded capacity',
+    result.trainResource === 'coal' && result.trainCapacity === 36, JSON.stringify(result));
 });
 
 console.log(failures===0 ? `\nAll checks passed.` : `\n${failures} check(s) FAILED.`);
