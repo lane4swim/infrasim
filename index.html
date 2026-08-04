@@ -1,0 +1,1536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Logistics — Phase 1</title>
+<style>
+  :root{
+    --bg:#0b1420;
+    --bg-panel:#101d2b;
+    --grid-line:#1c3346;
+    --road:#4a5568;
+    --road-edge:#6b7a8d;
+    --teal:#2ea6a1;
+    --amber:#e0a840;
+    --amber-dim:#8a6a2e;
+    --danger:#c0524a;
+    --text:#d7e2ea;
+    --text-dim:#7f95a6;
+    --mono: 'Consolas', 'SF Mono', 'Menlo', monospace;
+    --sans: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);}
+  #app{display:flex;height:100%;}
+
+  /* ---------- left toolbar ---------- */
+  #toolbar{
+    width:200px; flex:0 0 200px; background:var(--bg-panel);
+    border-right:1px solid var(--grid-line); padding:14px 12px; overflow-y:auto;
+  }
+  #toolbar h1{
+    font-size:13px; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--amber); margin:0 0 4px; font-weight:700;
+  }
+  #toolbar .sub{font-size:11px;color:var(--text-dim);margin-bottom:16px;}
+  .tool-btn{
+    display:flex; align-items:center; gap:8px; width:100%; text-align:left;
+    background:transparent; border:1px solid transparent; color:var(--text);
+    padding:8px 10px; margin-bottom:4px; border-radius:4px; cursor:pointer;
+    font-size:13px; font-family:var(--sans);
+  }
+  .tool-btn:hover{background:rgba(255,255,255,.04);}
+  .tool-btn.active{background:rgba(46,166,161,.15); border-color:var(--teal); color:#eafffb;}
+  .tool-btn .cost{margin-left:auto; font-family:var(--mono); font-size:11px; color:var(--text-dim);}
+  .tool-swatch{width:10px;height:10px;border-radius:2px;flex:0 0 auto;}
+  .section-label{
+    font-size:10px; text-transform:uppercase; letter-spacing:.1em;
+    color:var(--text-dim); margin:16px 0 6px;
+  }
+  #toolbar select{
+    width:100%; background:var(--bg); color:var(--text); border:1px solid var(--grid-line);
+    padding:6px; border-radius:4px; font-size:12px; margin-bottom:4px;
+  }
+  .hint-text{font-size:10px;color:var(--text-dim);margin-bottom:8px;}
+
+  /* ---------- center stage ---------- */
+  #stage{flex:1; display:flex; flex-direction:column; min-width:0;}
+  #hud{
+    height:44px; flex:0 0 44px; background:var(--bg-panel);
+    border-bottom:1px solid var(--grid-line); display:flex; align-items:center;
+    padding:0 16px; gap:24px;
+  }
+  #treasury{font-family:var(--mono); font-size:18px; color:var(--amber); font-weight:700;}
+  #treasury.negative{color:var(--danger);}
+  #tickInfo{font-family:var(--mono); font-size:11px; color:var(--text-dim);}
+  #hint{font-size:12px;color:var(--text-dim); margin-left:auto;}
+  #canvasWrap{flex:1; overflow:auto; background:var(--bg); display:flex; align-items:center; justify-content:center;}
+  canvas{background:#0d1926; image-rendering:pixelated; cursor:crosshair;}
+
+  /* ---------- right panel ---------- */
+  #sidepanel{
+    width:260px; flex:0 0 260px; background:var(--bg-panel);
+    border-left:1px solid var(--grid-line); padding:14px 12px; overflow-y:auto;
+  }
+  #sidepanel h2{font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--teal); margin:0 0 10px;}
+  #selectionInfo{font-size:12px; line-height:1.6; color:var(--text-dim);}
+  #selectionInfo b{color:var(--text);}
+  .order-row{
+    display:flex; align-items:center; gap:6px; background:var(--bg);
+    border:1px solid var(--grid-line); border-radius:4px; padding:6px 8px; margin-bottom:5px; font-size:12px;
+  }
+  .order-row .idx{color:var(--text-dim); font-family:var(--mono); width:14px;}
+  .order-row .act{color:var(--amber); font-family:var(--mono); font-size:11px;}
+  .order-row .rm{margin-left:auto; cursor:pointer; color:var(--danger); font-weight:700;}
+  .btn{
+    background:var(--teal); color:#032523; border:none; border-radius:4px;
+    padding:7px 10px; font-size:12px; cursor:pointer; font-weight:600; width:100%;
+    margin-top:6px;
+  }
+  .btn.secondary{background:transparent; border:1px solid var(--road-edge); color:var(--text);}
+  .btn.danger{background:var(--danger); color:#2a0d0a;}
+  .fill-bar{height:6px;border-radius:3px;background:var(--grid-line);overflow:hidden;margin:4px 0 8px;}
+  .fill-bar > div{height:100%; background:var(--teal);}
+
+  #log{
+    position:fixed; left:212px; bottom:0; right:270px; max-height:120px; overflow-y:auto;
+    background:rgba(9,16,24,.92); border-top:1px solid var(--grid-line); font-family:var(--mono);
+    font-size:11px; padding:6px 10px; pointer-events:none;
+  }
+  #log div{color:var(--text-dim); padding:1px 0;}
+  #log div.money{color:var(--amber);}
+  #log div.warn{color:var(--danger);}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="toolbar">
+    <h1>Logistics</h1>
+    <div class="sub">Phase 1 — ground roads &amp; trucks</div>
+
+    <div class="section-label">Tools</div>
+    <button class="tool-btn active" data-tool="select"><span class="tool-swatch" style="background:var(--road-edge)"></span>Select / Inspect</button>
+    <button class="tool-btn" data-tool="demolish"><span class="tool-swatch" style="background:var(--danger)"></span>Demolish</button>
+
+    <div class="section-label">Industry</div>
+    <button class="tool-btn" data-tool="mine"><span class="tool-swatch" style="background:#7a5230"></span>Build Mine<span class="cost" id="mineCost">$150</span></button>
+    <button class="tool-btn" data-tool="mill"><span class="tool-swatch" style="background:#8a4a3a"></span>Build Steel Mill<span class="cost" id="millCost">$220</span></button>
+    <button class="tool-btn" data-tool="town"><span class="tool-swatch" style="background:#3a6ea5"></span>Build Town<span class="cost" id="townCost">$100</span></button>
+    <select id="tierSelect">
+      <option value="small">Small — +$0, cap 20</option>
+      <option value="large">Large — +$100, cap 50</option>
+    </select>
+    <select id="townResourceSelect">
+      <option value="ore">Town accepts: Ore</option>
+      <option value="steel" selected>Town accepts: Steel</option>
+    </select>
+    <div id="tierHint" class="hint-text">Storage tier for the next Mine/Mill/Town. Can't be resized later in Phase 1. A Mine always makes Ore; a Mill always turns Ore into Steel.</div>
+
+    <div class="section-label">Network</div>
+    <select id="layerSelect">
+      <option value="ground">Ground layer</option>
+      <option value="elevated">Elevated layer (bridge, x2 cost)</option>
+    </select>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-dim);margin:2px 0 8px;">
+      <input type="checkbox" id="autoConnect" checked style="margin:0;">
+      Auto-connect new road tiles
+    </label>
+    <button class="tool-btn" data-tool="road"><span class="tool-swatch" style="background:var(--road)"></span>Build Road<span class="cost" id="roadCost">$10/tile</span></button>
+    <button class="tool-btn" data-tool="ramp"><span class="tool-swatch" style="background:#7fb8c9"></span>Build Ramp<span class="cost" id="rampCost">$40</span></button>
+    <button class="tool-btn" data-tool="connect"><span class="tool-swatch" style="background:var(--teal)"></span>Connect / Disconnect</button>
+    <button class="tool-btn" data-tool="oneway"><span class="tool-swatch" style="background:var(--amber)"></span>Toggle One-Way</button>
+    <button class="tool-btn" data-tool="station"><span class="tool-swatch" style="background:#c9a227"></span>Build Station<span class="cost" id="stationCost">$60</span></button>
+    <select id="facingSelect">
+      <option value="N">Facing North</option>
+      <option value="E">Facing East</option>
+      <option value="S" selected>Facing South</option>
+      <option value="W">Facing West</option>
+    </select>
+    <select id="stationResourceSelect">
+      <option value="ore">Station handles: Ore</option>
+      <option value="steel">Station handles: Steel</option>
+    </select>
+    <div class="hint-text">Ground/Elevated applies to Road, Ramp, Connect, One-Way and Demolish. Uncheck
+      auto-connect to lay road tiles side by side without joining them —
+      handy for parallel one-way streets — then use Connect / Disconnect to
+      wire up (or sever) specific edges by hand. Facing sets the single side
+      of the next Station that can ever touch a road; a Mill needs two
+      Stations — one handling Ore for delivery, one handling Steel for
+      pickup.</div>
+
+    <div class="section-label">Vehicles</div>
+    <button class="tool-btn" data-tool="bulktruck"><span class="tool-swatch" style="background:#e0a840"></span>Buy Bulk Truck (Ore)<span class="cost">$200</span></button>
+    <button class="tool-btn" data-tool="flatbedtruck"><span class="tool-swatch" style="background:#c96f3a"></span>Buy Flatbed (Steel)<span class="cost">$260</span></button>
+    <div class="hint-text">A Bulk Truck can only ever be given Ore-handling Stations as stops; a
+      Flatbed can only be given Steel-handling ones. The order editor
+      enforces this — a mismatched stop is rejected.</div>
+
+    <div class="section-label">About</div>
+    <div class="hint-text">
+      Trucks load and unload at Stations, never at a Mine, Mill, or Town
+      directly. A Station must touch a Mine, Mill, Town, or another Station
+      — chain Stations together to reach a road from an industry that isn't
+      right next to one.
+      An elevated road never connects to a ground road at the same cell —
+      only a Ramp links the two layers.
+    </div>
+  </div>
+
+  <div id="stage">
+    <div id="hud">
+      <div id="treasury">$0</div>
+      <div id="tickInfo">tick 0</div>
+      <div id="hint">Click a tool, then click the grid.</div>
+    </div>
+    <div id="canvasWrap">
+      <canvas id="c" width="880" height="560"></canvas>
+    </div>
+  </div>
+
+  <div id="sidepanel">
+    <h2>Inspector</h2>
+    <div id="selectionInfo">Nothing selected. Click a building or a truck.</div>
+  </div>
+
+</div>
+<div id="log"></div>
+
+<script>
+/* =====================================================================
+   PHASE 1 PROTOTYPE
+   Implements, on the main thread for now (see README for the Worker
+   split noted in the architecture spec §2/§8 as a fast-follow):
+     - single ground layer, road network + trucks (§6.2)
+     - ECS-ish entities: buildings (Producer/Consumer/Storage), vehicles
+     - fixed-timestep simulation loop decoupled from rendering (§8)
+     - player-authored Orders lists — no auto-routing (§6.6)
+     - player-chosen storage capacity at build time (§6.6)
+     - backpressure: halted production / waiting vehicles (§6.6)
+     - Treasury, construction costs, vehicle purchase+running cost,
+       delivery income (§16)
+   ===================================================================== */
+
+// ---------------------------------------------------------------------
+// DATA DEFINITIONS  (stand-in for /data/*.json content packs, §9 / §16)
+// ---------------------------------------------------------------------
+const RESOURCES = {
+  ore:   { id:'ore',   name:'Ore',   baseValue:6,  unitWeight:0.4 }, // weight per unit — feeds vehicle mass while loaded
+  steel: { id:'steel', name:'Steel', baseValue:14, unitWeight:0.6 },
+};
+const RESOURCE = RESOURCES.ore; // back-compat alias: code/data written for the single-resource era still works
+const RECIPES = {
+  extract_ore: { inputs:[], outputs:[{resource:'ore', amount:1}], durationTicks:4 },
+  smelt_steel: { inputs:[{resource:'ore', amount:2}], outputs:[{resource:'steel', amount:1}], durationTicks:6 },
+};
+const INITIAL_TREASURY = 5000; // starting cash — bumped up from 1000 now that a Mine->Mill->Town chain needs multiple buildings, stations, and trucks before any income comes in
+const ROAD_COST_PER_TILE = 10;
+const ELEVATED_COST_MULTIPLIER = 2; // bridges cost more per tile (§16.2-style layer multiplier)
+const RAMP_COST = 40;               // one-time cost to link ground<->elevated at a single cell
+const TRANSFER_RATE = 4;           // units moved per tick during load/unload
+const TICK_MS = 300;               // fixed simulation timestep
+const CONSUMPTION_PER_CAPITA = 0.02; // resource drained per tick, per resident (§16-style: data-defined rate)
+
+const BUILDING_DEFS = {
+  mine:    { buildCost: 150, tiers: { small:{cap:20, add:0}, large:{cap:50, add:100} }, color:'#7a5230', label:'Mine', footprint:{w:2,h:2}, recipe:'extract_ore' },
+  mill:    { buildCost: 220, tiers: { small:{cap:20, add:0}, large:{cap:50, add:120} }, color:'#8a4a3a', label:'Steel Mill', footprint:{w:3,h:2}, recipe:'smelt_steel' },
+  town:    { buildCost: 100, tiers: { small:{cap:20, add:0, population:50}, large:{cap:50, add:80, population:150} }, color:'#3a6ea5', label:'Town', footprint:{w:3,h:2} },
+  station: { buildCost: 60,  tiers: { small:{cap:0, add:0}, large:{cap:0, add:0} }, color:'#c9a227', label:'Station', footprint:{w:1,h:1} },
+};
+const VEHICLE_DEFS = {
+  // Bulk trucks haul raw ore; flatbeds haul finished steel. A vehicle's
+  // `resource` is fixed for its whole life — it's what makes "different
+  // vehicles transport different resources" an enforced rule rather than
+  // just a naming convention: a bulk truck can't be given a steel stop.
+  bulk: { purchaseCost:200, runningCostPerTick:1, capacity:10, sellFraction:0.4, label:'Bulk Truck', resource:'ore', color:'#e0a840',
+    maxSpeedTilesPerTick: 1.2, massEmpty: 5, engineForce: 0.6, brakeForce: 1.8, lengthTiles: 1.3,
+  },
+  flatbed: { purchaseCost:260, runningCostPerTick:1.2, capacity:8, sellFraction:0.4, label:'Flatbed Truck', resource:'steel', color:'#c96f3a',
+    maxSpeedTilesPerTick: 1.1, massEmpty: 6, engineForce: 0.55, brakeForce: 1.7, lengthTiles: 1.5,
+  },
+};
+
+// ---------------------------------------------------------------------
+// WORLD STATE
+// ---------------------------------------------------------------------
+const GRID_W = 22, GRID_H = 14, CELL = 40;
+const world = {
+  treasury: INITIAL_TREASURY,
+  tick: 0,
+  grid: new Map(),          // "x,y" -> { buildingId, ramp, layers:{ground,elevated} }
+  entities: new Map(),      // id -> entity handle (see makeEntityHandle below)
+  components: {},           // componentName -> Map<entityId, componentData> — the real storage
+  nextId: 1,
+};
+
+function cellKey(x,y){ return x+','+y; }
+function newTrack(){ return { road:false, edges:{N:false,S:false,E:false,W:false}, oneWayBlocked:{N:false,S:false,E:false,W:false} }; }
+function getCell(x,y){
+  const k = cellKey(x,y);
+  if(!world.grid.has(k)) world.grid.set(k,{
+    buildingId: null,
+    ramp: false,             // true if ground and elevated tracks are linked vertically here
+    layers: { ground:newTrack(), elevated:newTrack() },
+  });
+  return world.grid.get(k);
+}
+function inBounds(x,y){ return x>=0 && y>=0 && x<GRID_W && y<GRID_H; }
+
+// ---------------------------------------------------------------------
+// ECS CORE  (§5 — an entity is just an id; components are per-type data
+// tables keyed by that id; systems iterate whichever entities have a given
+// set of components, rather than switching on a hardcoded "kind"/"type").
+// ---------------------------------------------------------------------
+const COMPONENT_TYPES = [
+  'Transform',  // {x,y,layer} — every entity, building or vehicle
+  'Footprint',  // {w,h} — buildings only
+  'Facing',     // 'N'|'E'|'S'|'W' — Stations only, the single road-facing side
+  'StationResource', // resource id — Stations only, which single resource this Station handles
+  'Storage',    // {out:{resource,stock,cap}|null, in:{resource,stock,cap}|null} — Mines/Mills/Towns
+  'Producer',   // {recipeId,ticksRemaining} — Mines and Mills
+  'Consumer',   // {population,consumptionPerTick,priceMultiplier} — Towns only
+  'Identity',   // {kind:'building'|'vehicle', type} — every entity
+  'Movement',   // {speed,maxSpeed,massEmpty,engineForce,brakeForce,length,path,pathIndex,frac,trail} — vehicles only
+  'Status',     // {state} — vehicles only (idle|moving|loading|unloading|blocked)
+  'Orders',     // {list,index} — vehicles only, player-authored (§6.6)
+  'Cargo',      // {amount,capacity,resource} — vehicles only; resource is fixed per vehicle (§ vehicle types)
+];
+for(const name of COMPONENT_TYPES) world.components[name] = new Map();
+
+function addComponent(id, name, data){ world.components[name].set(id, data); }
+function removeComponent(id, name){ world.components[name].delete(id); }
+function getComponent(id, name){ return world.components[name].get(id); }
+function hasComponent(id, name){ return world.components[name].has(id); }
+
+// Entities that currently have every one of the given components (and are
+// still alive). Systems use this instead of checking a `.kind`/`.type`
+// field, so e.g. tickProduction() finds "anything with Producer+Storage"
+// rather than hardcoding "buildings of type mine".
+function queryEntities(...names){
+  if(names.length===0) return [...world.entities.keys()];
+  // scan the smallest table first — cheap win, and correct regardless of order
+  let smallest = names[0];
+  for(const n of names) if(world.components[n].size < world.components[smallest].size) smallest = n;
+  const others = names.filter(n=>n!==smallest);
+  const result = [];
+  for(const id of world.components[smallest].keys()){
+    if(!world.entities.has(id)) continue;
+    if(others.every(n => world.components[n].has(id))) result.push(id);
+  }
+  return result;
+}
+
+function destroyEntity(id){
+  world.entities.delete(id);
+  for(const name of COMPONENT_TYPES) world.components[name].delete(id);
+}
+
+// property name -> [componentName, fieldInComponent] (null field = the
+// component's value itself, for components that aren't multi-field records)
+const FIELD_MAP = {
+  x:['Transform','x'], y:['Transform','y'], layer:['Transform','layer'],
+  footprint:['Footprint', null],
+  facing:['Facing', null],
+  resource:['StationResource', null],
+  ticksRemaining:['Producer','ticksRemaining'], recipeId:['Producer','recipeId'],
+  population:['Consumer','population'], consumptionPerTick:['Consumer','consumptionPerTick'], priceMultiplier:['Consumer','priceMultiplier'],
+  kind:['Identity','kind'], type:['Identity','type'],
+  speed:['Movement','speed'], maxSpeed:['Movement','maxSpeed'], massEmpty:['Movement','massEmpty'],
+  engineForce:['Movement','engineForce'], brakeForce:['Movement','brakeForce'], length:['Movement','length'],
+  path:['Movement','path'], pathIndex:['Movement','pathIndex'], frac:['Movement','frac'], trail:['Movement','trail'],
+  state:['Status','state'],
+  orders:['Orders','list'], ordersIndex:['Orders','index'],
+  cargoAmount:['Cargo','amount'], capacity:['Cargo','capacity'], cargoResource:['Cargo','resource'],
+};
+// Storage is a resource-typed pair of slots — {out, in} — rather than one
+// flat stock/cap: `out` is what a building offers for pickup (a Mine's ore,
+// a Mill's steel), `in` is what it accepts for drop-off (a Mill's ore
+// input, a Town's demand). A building only has whichever slot(s) it
+// actually needs — a Mine has no `in`, a Town has no `out`, a Mill has both.
+const STORAGE_SLOT_FIELDS = {
+  outStock:['out','stock'], outCap:['out','cap'], outResource:['out','resource'],
+  inStock:['in','stock'], inCap:['in','cap'], inResource:['in','resource'],
+};
+
+// A thin, ergonomic handle over an entity's components. The rest of the
+// codebase reads/writes plain properties (`building.stock`, `vehicle.speed`)
+// exactly as it would on a plain object — but every read/write actually
+// goes through the component tables above, so the data is genuinely
+// queryable/iterable independently per component, not just renamed fields
+// on a monolithic object. `producer`/`consumer` are derived booleans (does
+// this entity have a Producer/Consumer component at all?) rather than
+// separate stored flags, since the component's presence already means that.
+// `stock`/`storageCap` remain as a convenience for buildings with exactly
+// ONE storage slot (Mine: out only; Town: in only) — ambiguous for a
+// dual-slot building like a Mill, which must use outStock/inStock etc.
+function makeEntityHandle(id){
+  return new Proxy({id}, {
+    get(target, prop){
+      if(prop==='id') return target.id;
+      if(prop==='producer') return world.components.Producer.has(target.id);
+      if(prop==='consumer') return world.components.Consumer.has(target.id);
+      if(prop==='stock' || prop==='storageCap'){
+        const storage = world.components.Storage.get(target.id);
+        if(!storage) return undefined;
+        const slot = storage.out && !storage.in ? storage.out : (storage.in && !storage.out ? storage.in : null);
+        if(!slot) return undefined; // ambiguous (has both) — use outStock/inStock explicitly
+        return prop==='stock' ? slot.stock : slot.cap;
+      }
+      if(STORAGE_SLOT_FIELDS[prop]){
+        const [slotName, field] = STORAGE_SLOT_FIELDS[prop];
+        const storage = world.components.Storage.get(target.id);
+        const slot = storage && storage[slotName];
+        return slot ? slot[field] : undefined;
+      }
+      const mapping = FIELD_MAP[prop];
+      if(!mapping) return undefined;
+      const [compName, field] = mapping;
+      const comp = world.components[compName].get(target.id);
+      if(comp===undefined) return undefined;
+      return field===null ? comp : comp[field];
+    },
+    set(target, prop, value){
+      if(prop==='id' || prop==='producer' || prop==='consumer') return false; // derived/immutable
+      if(prop==='stock' || prop==='storageCap'){
+        const storage = world.components.Storage.get(target.id);
+        if(!storage) return false;
+        const slot = storage.out && !storage.in ? storage.out : (storage.in && !storage.out ? storage.in : null);
+        if(!slot) return false;
+        if(prop==='stock') slot.stock = value; else slot.cap = value;
+        return true;
+      }
+      if(STORAGE_SLOT_FIELDS[prop]){
+        const [slotName, field] = STORAGE_SLOT_FIELDS[prop];
+        const storage = world.components.Storage.get(target.id);
+        if(!storage || !storage[slotName]) return false;
+        storage[slotName][field] = value;
+        return true;
+      }
+      const mapping = FIELD_MAP[prop];
+      if(!mapping) return false;
+      const [compName, field] = mapping;
+      if(field===null){
+        world.components[compName].set(target.id, value);
+      } else {
+        let comp = world.components[compName].get(target.id);
+        if(!comp){ comp = {}; world.components[compName].set(target.id, comp); }
+        comp[field] = value;
+      }
+      return true;
+    },
+    has(target, prop){
+      if(prop==='id' || prop==='producer' || prop==='consumer') return true;
+      if(prop==='stock' || prop==='storageCap' || STORAGE_SLOT_FIELDS[prop]) return true;
+      const mapping = FIELD_MAP[prop];
+      return !!mapping && world.components[mapping[0]].has(target.id);
+    },
+  });
+}
+
+
+// ---------------------------------------------------------------------
+// EVENTS / LOG  (stand-in for the Event stream in §7/§16)
+// ---------------------------------------------------------------------
+const logEl = document.getElementById('log');
+function logEvent(msg, cls){
+  const d = document.createElement('div');
+  if(cls) d.className = cls;
+  d.textContent = msg;
+  logEl.appendChild(d);
+  while(logEl.children.length > 40) logEl.removeChild(logEl.firstChild);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ---------------------------------------------------------------------
+// ECONOMY  (§16 — EconomySystem: the only thing that touches Treasury)
+// ---------------------------------------------------------------------
+function canAfford(cost){ return world.treasury >= cost; }
+function charge(cost, reason){
+  world.treasury -= cost;
+  logEvent(`-$${cost} ${reason}`, 'money');
+}
+function credit(amount, reason){
+  world.treasury += amount;
+  logEvent(`+$${amount} ${reason}`, 'money');
+}
+
+// ---------------------------------------------------------------------
+// ROAD NETWORK + PATHFINDING (§6.2, §10 — BFS since edges are uniform cost)
+// ---------------------------------------------------------------------
+// Roads (and, in later phases, rail/pipe/etc.) connect on individual tile
+// edges, not "any two adjacent same-type cells are automatically linked."
+// Each road cell stores which of its 4 sides actually has an established
+// connection. This is what a new road tile updates when it's built next to
+// an existing one — connectivity is real per-edge state, not something
+// recomputed from scratch by checking neighbor type at query time. That
+// distinction is what will let later transport modes model things like a
+// one-way edge or an elevated crossing that doesn't connect to what's
+// directly below it, without changing how pathfinding itself works.
+const ROAD_DIRS = [
+  {dir:'N', dx:0,  dy:-1, opp:'S'},
+  {dir:'S', dx:0,  dy:1,  opp:'N'},
+  {dir:'E', dx:1,  dy:0,  opp:'W'},
+  {dir:'W', dx:-1, dy:0,  opp:'E'},
+];
+function neighbors4(x,y){
+  return [[x+1,y],[x-1,y],[x,y+1],[x,y-1]].filter(([nx,ny])=>inBounds(nx,ny));
+}
+function isRoad(x,y,layer){ return getCell(x,y).layers[layer||'ground'].road; }
+
+// Every cell a building occupies, derived from its anchor (x,y) + footprint.
+function footprintCells(building){
+  const cells = [];
+  for(let dx=0; dx<building.footprint.w; dx++){
+    for(let dy=0; dy<building.footprint.h; dy++){
+      cells.push({x:building.x+dx, y:building.y+dy});
+    }
+  }
+  return cells;
+}
+
+// A building's road dock. If it has a `facing` (Stations do — chosen by the
+// player at build time), it connects through that single side only, even if
+// a road happens to touch another side too. Buildings without a facing fall
+// back to scanning every side (kept for generality; nothing currently uses
+// this path since only Stations touch roads).
+function buildingRoadAccessCell(building){
+  if(building.facing){
+    const d = ROAD_DIRS.find(r=>r.dir===building.facing);
+    const nx = building.x+d.dx, ny = building.y+d.dy;
+    return isRoad(nx,ny,'ground') ? {x:nx,y:ny,layer:'ground'} : null;
+  }
+  const own = new Set(footprintCells(building).map(c=>c.x+','+c.y));
+  for(const cell of footprintCells(building)){
+    for(const [nx,ny] of neighbors4(cell.x,cell.y)){
+      if(own.has(nx+','+ny)) continue; // don't count a neighbor that's part of the same building
+      if(isRoad(nx,ny,'ground')) return {x:nx,y:ny,layer:'ground'};
+    }
+  }
+  return null;
+}
+
+// BFS over {x,y,layer} nodes: lateral moves follow only established,
+// direction-allowed edges within a layer (respecting one-way blocks); a
+// vertical move between ground and elevated is only possible at a Ramp
+// cell. Returns an array of nodes from start to end (inclusive), or null.
+function findRoadPath(start, end){
+  const nodeKey = n => n.x+','+n.y+','+n.layer;
+  if(start.x===end.x && start.y===end.y && start.layer===end.layer) return [start];
+  const visited = new Set([nodeKey(start)]);
+  const queue = [start];
+  const cameFrom = new Map();
+  function tryVisit(node, cur){
+    const k = nodeKey(node);
+    if(visited.has(k)) return null;
+    visited.add(k);
+    cameFrom.set(k, cur);
+    if(node.x===end.x && node.y===end.y && node.layer===end.layer){
+      let path = [node]; let c = cur;
+      while(c){ path.unshift(c); c = cameFrom.get(nodeKey(c)); }
+      return path;
+    }
+    queue.push(node);
+    return undefined; // not found yet, but queued
+  }
+  while(queue.length){
+    const cur = queue.shift();
+    const cell = getCell(cur.x, cur.y);
+    const track = cell.layers[cur.layer];
+    for(const {dir,dx,dy} of ROAD_DIRS){
+      if(!track.edges[dir]) continue;          // no connection this way
+      if(track.oneWayBlocked[dir]) continue;   // one-way: can't depart via this side
+      const found = tryVisit({x:cur.x+dx, y:cur.y+dy, layer:cur.layer}, cur);
+      if(found) return found;
+    }
+    if(cell.ramp){
+      const otherLayer = cur.layer==='ground' ? 'elevated' : 'ground';
+      const found = tryVisit({x:cur.x, y:cur.y, layer:otherLayer}, cur);
+      if(found) return found;
+    }
+  }
+  return null;
+}
+// Vehicles always live on road cells (they dock next to a building rather
+// than entering its footprint), so a vehicle's own path is simply the road
+// route from where it stands to the target building's dock cell.
+
+// A Station has no storage of its own. It's only a physical access point:
+// vehicles load/unload there, and the Station forwards that transfer to
+// whichever industry (Mine/Town) it's touching — directly, or through a
+// chain of other Stations that all touch each other. This walks that chain
+// and returns the first Mine/Town it finds, or null if the station isn't
+// connected to any industry right now.
+function findLinkedIndustry(station){
+  const visited = new Set([station.id]);
+  const queue = [station];
+  while(queue.length){
+    const s = queue.shift();
+    for(const cell of footprintCells(s)){
+      for(const [nx,ny] of neighbors4(cell.x,cell.y)){
+        const nCell = getCell(nx,ny);
+        if(!nCell.buildingId) continue;
+        const nb = world.entities.get(nCell.buildingId);
+        if(!nb || nb.id===s.id) continue;
+        if(nb.type==='station'){
+          if(!visited.has(nb.id)){ visited.add(nb.id); queue.push(nb); }
+        } else if(nb.producer || nb.consumer){
+          return nb;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// Does this footprint (for a building about to be placed) touch at least
+// one Mine, Town, or Station? Used to require Stations to actually connect
+// to something before they can be built (§6.6-style: don't let the player
+// build something structurally useless without at least a warning).
+function touchesIndustryOrStation(x, y, footprint){
+  const own = new Set();
+  for(let dx=0; dx<footprint.w; dx++) for(let dy=0; dy<footprint.h; dy++) own.add((x+dx)+','+(y+dy));
+  for(let dx=0; dx<footprint.w; dx++){
+    for(let dy=0; dy<footprint.h; dy++){
+      for(const [nx,ny] of neighbors4(x+dx, y+dy)){
+        if(own.has(nx+','+ny)) continue;
+        const nb = getCell(nx,ny).buildingId ? world.entities.get(getCell(nx,ny).buildingId) : null;
+        if(nb && (nb.type==='mine' || nb.type==='mill' || nb.type==='town' || nb.type==='station')) return true;
+      }
+    }
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------
+// ENTITY FACTORIES
+// ---------------------------------------------------------------------
+function createBuilding(type, x, y, tier, facing, resource){
+  const def = BUILDING_DEFS[type];
+  const id = world.nextId++;
+  addComponent(id, 'Identity', {kind:'building', type});
+  addComponent(id, 'Transform', {x, y, layer:'ground'});
+  addComponent(id, 'Footprint', {w:def.footprint.w, h:def.footprint.h}); // cells occupied, anchored at (x,y)
+  if(type==='station'){
+    addComponent(id, 'Facing', facing); // which single side can ever touch a road (Stations only)
+    addComponent(id, 'StationResource', resource || 'ore'); // which single resource this Station handles
+  }
+  if(type==='mine' || type==='mill'){
+    // Producer covers both extraction (no inputs) and processing (has
+    // inputs) — the recipe is what tells tickProduction which applies.
+    const recipe = RECIPES[def.recipe];
+    addComponent(id, 'Producer', {recipeId: def.recipe, ticksRemaining: recipe.durationTicks});
+    const cap = def.tiers[tier].cap;
+    addComponent(id, 'Storage', {
+      out: recipe.outputs.length ? {resource: recipe.outputs[0].resource, stock:0, cap} : null,
+      in: recipe.inputs.length ? {resource: recipe.inputs[0].resource, stock:0, cap} : null,
+    });
+  }
+  if(type==='town'){
+    const population = def.tiers[tier].population;
+    addComponent(id, 'Consumer', {population, consumptionPerTick: population*CONSUMPTION_PER_CAPITA, priceMultiplier:1.0});
+    // A Town's accepted resource is configurable at build time (defaults to
+    // ore for back-compat); it's whatever its population actually wants
+    // delivered, and what its Storage.in buffer/consumption operate on.
+    addComponent(id, 'Storage', {out:null, in:{resource: resource || 'ore', stock:0, cap: def.tiers[tier].cap}});
+  }
+  const handle = makeEntityHandle(id);
+  world.entities.set(id, handle);
+  for(const cell of footprintCells(handle)) getCell(cell.x, cell.y).buildingId = id;
+  return handle;
+}
+function createVehicle(x,y,vehicleType){
+  vehicleType = vehicleType || 'bulk'; // back-compat: old call sites / tests that omit this get a bulk (ore) truck
+  const def = VEHICLE_DEFS[vehicleType];
+  const id = world.nextId++;
+  addComponent(id, 'Identity', {kind:'vehicle', type:vehicleType});
+  addComponent(id, 'Transform', {x, y, layer:'ground'});
+  // Individual, fractional per-vehicle values — not a shared constant. Two
+  // trucks bought back to back will normally end up with slightly
+  // different top speeds/mass/engine/brake force/lengths, the same way
+  // real vehicles of the same model aren't perfectly identical.
+  addComponent(id, 'Movement', {
+    speed: 0,             // current velocity, tiles/tick — starts at rest and accelerates (see tickVehicles)
+    maxSpeed: def.maxSpeedTilesPerTick * (0.85 + Math.random()*0.3),
+    massEmpty: def.massEmpty * (0.9 + Math.random()*0.2),
+    engineForce: def.engineForce * (0.85 + Math.random()*0.3),
+    brakeForce: def.brakeForce * (0.85 + Math.random()*0.3), // always > engineForce by construction (base brakeForce > base engineForce)
+    length: def.lengthTiles * (0.9 + Math.random()*0.2),     // tile-units this vehicle's body occupies
+    path:null, pathIndex:0,
+    frac:0,                // 0..1 progress from path[pathIndex] toward path[pathIndex+1]
+    trail:[],               // recently-occupied {x,y,layer} cells, most recent first — the physical
+                             // basis for this vehicle's trailing-length reservation (see tickVehicles)
+  });
+  addComponent(id, 'Status', {state:'idle'}); // idle|moving|loading|unloading|blocked
+  addComponent(id, 'Orders', {list:[], index:0}); // [{nodeId, action, resource}] — player authored, §6.6
+  addComponent(id, 'Cargo', {amount:0, capacity:def.capacity, resource:def.resource}); // resource is fixed for this vehicle's life
+  const handle = makeEntityHandle(id);
+  world.entities.set(id, handle);
+  return handle;
+}
+
+// ---------------------------------------------------------------------
+// COMMANDS  (§7 — the only way the world is mutated by the player)
+// ---------------------------------------------------------------------
+function cmdBuildRoad(x,y,layer,autoConnect){
+  layer = layer || 'ground';
+  if(autoConnect === undefined) autoConnect = true;
+  const cell = getCell(x,y);
+  const track = cell.layers[layer];
+  if(track.road) return;
+  if(layer==='ground' && cell.buildingId) return; // can't lay ground road under a building
+  const cost = ROAD_COST_PER_TILE * (layer==='elevated' ? ELEVATED_COST_MULTIPLIER : 1);
+  if(!canAfford(cost)){ logEvent('Insufficient funds for road.', 'warn'); return; }
+  charge(cost, layer==='elevated' ? 'elevated road tile' : 'road tile');
+  track.road = true;
+  if(!autoConnect) return; // placed isolated — wire it up later with Connect / Disconnect
+  // Connect only the specific edges that actually border an existing road
+  // tile on the SAME layer — a ground tile and an elevated tile at the same
+  // (x,y) never connect to each other just by overlapping; that's what lets
+  // an elevated road cross a ground road without joining it. A dedicated
+  // Ramp is the only thing that links the two layers at a cell.
+  for(const {dir,dx,dy,opp} of ROAD_DIRS){
+    const nx = x+dx, ny = y+dy;
+    const nTrack = getCell(nx,ny).layers[layer];
+    if(nTrack.road){ track.edges[dir] = true; nTrack.edges[opp] = true; }
+  }
+}
+function cmdToggleConnection(x1,y1,x2,y2,layer){
+  // Manually connect or sever the specific edge between two adjacent road
+  // tiles — the counterpart to auto-connect, and what lets two parallel
+  // one-way streets sit side by side without joining across the middle.
+  const d = ROAD_DIRS.find(r => x1+r.dx===x2 && y1+r.dy===y2);
+  if(!d){ logEvent('Connect only works between two orthogonally adjacent tiles.', 'warn'); return; }
+  const aTrack = getCell(x1,y1).layers[layer];
+  const bTrack = getCell(x2,y2).layers[layer];
+  if(!aTrack.road || !bTrack.road){ logEvent(`Both tiles need a ${layer} road to connect.`, 'warn'); return; }
+  if(aTrack.edges[d.dir]){
+    // currently connected — sever it, and clear any one-way state on what
+    // is now not an edge at all (a stale block would otherwise linger and
+    // silently reapply if the same two tiles are ever reconnected later)
+    aTrack.edges[d.dir] = false; bTrack.edges[d.opp] = false;
+    aTrack.oneWayBlocked[d.dir] = false; bTrack.oneWayBlocked[d.opp] = false;
+    logEvent('Road connection removed.');
+  } else {
+    aTrack.edges[d.dir] = true; bTrack.edges[d.opp] = true; // new connections start two-way
+    logEvent('Road connection made.');
+  }
+}
+function cmdBuildRamp(x,y){
+  const cell = getCell(x,y);
+  if(!cell.layers.ground.road || !cell.layers.elevated.road){
+    logEvent('A Ramp needs both a ground and an elevated road tile at the same cell.', 'warn');
+    return;
+  }
+  if(cell.ramp){ logEvent('There is already a Ramp here.', 'warn'); return; }
+  if(!canAfford(RAMP_COST)){ logEvent('Insufficient funds for ramp.', 'warn'); return; }
+  charge(RAMP_COST, 'ramp');
+  cell.ramp = true;
+}
+function cmdToggleOneWay(x1,y1,x2,y2,layer){
+  const d = ROAD_DIRS.find(r => x1+r.dx===x2 && y1+r.dy===y2);
+  if(!d){ logEvent('One-Way only applies between two orthogonally adjacent tiles.', 'warn'); return; }
+  const aTrack = getCell(x1,y1).layers[layer];
+  const bTrack = getCell(x2,y2).layers[layer];
+  if(!aTrack.edges[d.dir]){ logEvent(`Those tiles aren't connected on the ${layer} layer.`, 'warn'); return; }
+  if(bTrack.oneWayBlocked[d.opp]){
+    // currently one-way (first -> second) only; revert to two-way
+    bTrack.oneWayBlocked[d.opp] = false;
+    logEvent('Edge set back to two-way.');
+  } else {
+    aTrack.oneWayBlocked[d.dir] = false; // make sure the forward direction stays open
+    bTrack.oneWayBlocked[d.opp] = true;  // block the reverse
+    logEvent('Edge set to one-way.');
+  }
+}
+function cmdBuildBuilding(type, x, y, tier, facing, resource){
+  const def = BUILDING_DEFS[type];
+  const {w,h} = def.footprint;
+  for(let dx=0; dx<w; dx++){
+    for(let dy=0; dy<h; dy++){
+      const cx = x+dx, cy = y+dy;
+      if(!inBounds(cx,cy)){ logEvent(`${def.label} footprint (${w}x${h}) doesn't fit on the grid there.`, 'warn'); return; }
+      const cell = getCell(cx,cy);
+      if(cell.layers.ground.road || cell.buildingId){ logEvent(`${def.label} footprint overlaps something at (${cx},${cy}).`, 'warn'); return; }
+    }
+  }
+  if(type==='station'){
+    // Stations don't touch roads directly here — they touch an industry, or
+    // another station, forming the access chain vehicles actually use.
+    if(!touchesIndustryOrStation(x, y, {w,h})){
+      logEvent('A Station must touch a Mine, Town, or another Station.', 'warn');
+      return;
+    }
+  }
+  const cost = def.buildCost + def.tiers[tier].add;
+  if(!canAfford(cost)){ logEvent('Insufficient funds for construction.', 'warn'); return; }
+  charge(cost, `${def.label} (${tier})`);
+  createBuilding(type, x, y, tier, facing, resource);
+}
+function cmdDemolish(x,y,layer){
+  layer = layer || 'ground';
+  const cell = getCell(x,y);
+  if(cell.buildingId){
+    const buildingId = cell.buildingId; // capture before the footprint loop clears this very cell's buildingId
+    const building = world.entities.get(buildingId);
+    if(building){ for(const c of footprintCells(building)) getCell(c.x,c.y).buildingId = null; }
+    destroyEntity(buildingId);
+    return;
+  }
+  const track = cell.layers[layer];
+  if(track.road){
+    // Sever this tile's edges from whichever neighbors it was connected to,
+    // so they don't retain a connection to a road that no longer exists.
+    for(const {dir,dx,dy,opp} of ROAD_DIRS){
+      if(track.edges[dir]) getCell(x+dx, y+dy).layers[layer].edges[opp] = false;
+    }
+    track.road = false;
+    track.edges = {N:false, S:false, E:false, W:false};
+    track.oneWayBlocked = {N:false, S:false, E:false, W:false};
+    if(cell.ramp) cell.ramp = false; // a Ramp needs both layers present
+  }
+}
+function cmdPurchaseVehicle(x,y,vehicleType){
+  vehicleType = vehicleType || 'bulk';
+  const cell = getCell(x,y);
+  if(!cell.layers.ground.road){ logEvent('Trucks must be placed on a ground road tile.', 'warn'); return; }
+  const def = VEHICLE_DEFS[vehicleType];
+  if(!canAfford(def.purchaseCost)){ logEvent(`Insufficient funds for ${def.label.toLowerCase()}.`, 'warn'); return; }
+  charge(def.purchaseCost, `${def.label.toLowerCase()} purchase`);
+  createVehicle(x,y,vehicleType);
+}
+function cmdSellVehicle(vehicle){
+  const def = VEHICLE_DEFS[vehicle.type];
+  const refund = Math.round(def.purchaseCost * def.sellFraction);
+  credit(refund, `${def.label.toLowerCase()} sold`);
+  destroyEntity(vehicle.id);
+}
+function cmdSetOrders(vehicle, orders){
+  vehicle.orders = orders;
+  vehicle.ordersIndex = Math.min(vehicle.ordersIndex, Math.max(0, orders.length-1));
+  vehicle.path = null; // force a fresh path toward the (possibly new) target
+}
+
+// ---------------------------------------------------------------------
+// SIMULATION SYSTEMS — run once per fixed tick (§5, §8)
+// ---------------------------------------------------------------------
+function producerHalted(e){
+  if(!e.producer) return false;
+  const recipe = RECIPES[e.recipeId];
+  const need = recipe.inputs[0], make = recipe.outputs[0];
+  if(need && e.inStock < need.amount) return true;
+  if(make && e.outStock + make.amount > e.outCap) return true;
+  return false;
+}
+
+function tickProduction(){
+  // Covers both extraction (Mine: no inputs) and processing (Mill: consumes
+  // its `in` slot to produce its `out` slot) — the recipe determines which.
+  // Halts if the required input isn't available yet, or if there's no room
+  // for the output (§6.6) — either way, production just waits.
+  for(const id of queryEntities('Producer','Storage')){
+    const e = world.entities.get(id);
+    const recipe = RECIPES[e.recipeId];
+    const need = recipe.inputs[0]; // Phase 1 simplification: at most one input resource per recipe
+    const make = recipe.outputs[0]; // and exactly one output resource
+    if(need && e.inStock < need.amount) continue;      // halted: missing input
+    if(make && e.outStock + make.amount > e.outCap) continue; // halted: no room (§6.6)
+    e.ticksRemaining--;
+    if(e.ticksRemaining <= 0){
+      if(need) e.inStock -= need.amount;
+      if(make) e.outStock += make.amount;
+      e.ticksRemaining = recipe.durationTicks;
+    }
+  }
+}
+
+function tickConsumption(){
+  // Towns eat into their own Storage.in every tick, independent of
+  // deliveries — a town with no incoming trucks will run its storage down
+  // to zero even though nothing is being loaded/unloaded there.
+  for(const id of queryEntities('Consumer','Storage')){
+    const e = world.entities.get(id);
+    if(e.inStock===undefined) continue;
+    e.inStock = Math.max(0, e.inStock - e.consumptionPerTick);
+  }
+}
+
+function startMovingTo(vehicle, building){
+  const dock = buildingRoadAccessCell(building);
+  if(!dock){ vehicle.state='blocked'; return false; } // no road touches this building right now
+  const path = findRoadPath({x:vehicle.x, y:vehicle.y, layer:vehicle.layer}, dock);
+  if(!path){ vehicle.state='blocked'; return false; }
+  vehicle.path = path;
+  vehicle.pathIndex = 0;
+  vehicle.frac = 0;
+  vehicle.speed = 0; // a fresh leg starts from a stop, not carrying over prior velocity
+  vehicle.state = 'moving';
+  return true;
+}
+
+function currentOrder(vehicle){
+  if(!vehicle.orders.length) return null;
+  return vehicle.orders[vehicle.ordersIndex % vehicle.orders.length];
+}
+function advanceOrder(vehicle){
+  if(!vehicle.orders.length) return;
+  vehicle.ordersIndex = (vehicle.ordersIndex + 1) % vehicle.orders.length;
+}
+
+function tickVehicles(){
+  // Track which (x,y,layer) cells are currently reserved, and by whom, so a
+  // vehicle queues behind another instead of overlapping it. A vehicle
+  // reserves not just its current cell but a trailing footprint sized to
+  // its own `length` (in tile-units) — this is what makes a longer vehicle
+  // need a bigger following gap, the same way it would in real traffic.
+  // Reservations are seeded from positions before anyone moves this tick,
+  // then kept in sync as vehicles commit steps below, so a whole queue can
+  // advance together in one tick when there's room.
+  const occupied = new Map(); // "x,y,layer" -> vehicleId
+  const posKey = (x,y,layer) => x+','+y+','+layer;
+  function footprintKeys(v){
+    // The cell it's currently in, plus enough cells from its actual recent
+    // trail to cover its length. Using the physical trail (not the current
+    // path array) matters right when a vehicle starts a fresh path leg —
+    // pathIndex resets to 0 then, but the vehicle still has real cells
+    // behind it that its body occupies. A vehicle with length 1.3 reserves
+    // 2 cells (ceil(1.3)); length 1 reserves just its own cell.
+    const cellsNeeded = Math.max(1, Math.ceil(v.length));
+    const keys = [posKey(v.x, v.y, v.layer)];
+    for(let i=0; i<v.trail.length && keys.length<cellsNeeded; i++){
+      const c = v.trail[i];
+      keys.push(posKey(c.x, c.y, c.layer));
+    }
+    return keys;
+  }
+  // Distance (in tile-units) from a vehicle's current continuous position
+  // to the nearest thing ahead of it on its path — another vehicle's
+  // reserved footprint, or the path's own end (so it brakes smoothly into
+  // its stop instead of arriving at full speed). Capped at LOOKAHEAD tiles;
+  // beyond that we just treat the road as clear. Also returns the safety
+  // buffer to require beyond pure stopping distance: 0 when the "obstacle"
+  // is just the vehicle's own destination (fully closing that gap to zero
+  // is the correct, safe outcome — arriving), but a small positive cushion
+  // when it's another vehicle (don't plan to stop exactly touching it).
+  const LOOKAHEAD = 15;
+  function gapAheadFor(v){
+    if(!v.path) return {gap:Infinity, buffer:0.5};
+    const currentPos = v.pathIndex + v.frac;
+    for(let i=1; i<=LOOKAHEAD; i++){
+      const idx = v.pathIndex + i;
+      if(idx >= v.path.length) return {gap:(v.path.length-1) - currentPos, buffer:0};
+      const node = v.path[idx];
+      const occupant = occupied.get(posKey(node.x, node.y, node.layer));
+      if(occupant !== undefined && occupant !== v.id) return {gap: idx - currentPos, buffer:0.5};
+    }
+    return {gap: LOOKAHEAD - v.frac, buffer:0.5};
+  }
+  for(const id of queryEntities('Movement')){
+    const v = world.entities.get(id);
+    for(const k of footprintKeys(v)) occupied.set(k, v.id);
+  }
+
+  for(const id of queryEntities('Movement','Orders','Cargo','Status')){
+    const v = world.entities.get(id);
+
+    const order = currentOrder(v);
+    if(!order){ v.state='idle'; v.path=null; continue; }
+    const target = world.entities.get(order.nodeId);
+    if(!target){ advanceOrder(v); v.path=null; continue; } // stop was demolished
+
+    if(v.state==='idle' || v.state==='blocked'){
+      // (Re)try to reach, or act on, the current order's target. 'blocked'
+      // retries every tick until the resource/space it's waiting on frees up.
+      const dock = buildingRoadAccessCell(target);
+      if(!dock){ v.state='blocked'; continue; } // building has no road access right now
+      if(v.x===dock.x && v.y===dock.y && v.layer===dock.layer){
+        v.state = order.action==='load_full' ? 'loading' : 'unloading';
+      } else {
+        startMovingTo(v, target); // -> 'moving', or 'blocked' if unreachable
+      }
+      continue;
+    }
+
+    if(v.state==='moving'){
+      if(!v.path){ startMovingTo(v, target); continue; }
+      if(v.pathIndex >= v.path.length-1){
+        // Fully arrived — settle into the stop's action next tick.
+        v.state = order.action==='load_full' ? 'loading' : 'unloading';
+        v.path = null; v.frac = 0;
+        continue;
+      }
+      // Adjust current speed before moving. Accel/decel aren't fixed per
+      // vehicle — they're derived every tick from F = ma: a heavier vehicle
+      // (more cargo currently loaded, since mass = massEmpty + cargo weight)
+      // gets less acceleration AND less deceleration out of the same
+      // engine/brake force, exactly like a real loaded truck. The
+      // decel > accel property still holds at any mass, since both divide
+      // by the same current mass in a given tick — only the *ratio* of
+      // brakeForce to engineForce matters for that, not the mass itself.
+      const mass = v.massEmpty + v.cargoAmount * RESOURCES[v.cargoResource].unitWeight;
+      const accel = v.engineForce / mass;
+      const decel = v.brakeForce / mass;
+      // Decelerate if the gap ahead isn't enough room to stop from the
+      // current speed (using the same physics as real braking distance —
+      // d = v² / 2a — plus a small buffer), otherwise accelerate toward
+      // this vehicle's own max speed. Because required stopping distance
+      // grows with the SQUARE of speed, a faster-moving (or heavier, since
+      // that lowers decel) vehicle needs a disproportionately bigger gap
+      // ahead, which is what makes the enforced gap genuinely
+      // velocity-dependent (and now, load-dependent too).
+      const {gap, buffer} = gapAheadFor(v);
+      const requiredGap = (v.speed*v.speed) / (2*decel) + buffer;
+      if(gap < requiredGap){
+        v.speed = Math.max(0, v.speed - decel);
+      } else {
+        v.speed = Math.min(v.maxSpeed, v.speed + accel);
+      }
+      // Advance by the (now-adjusted) current speed. A slow-moving vehicle
+      // needs several ticks to cross one cell; a fast one can cross more
+      // than one cell in a single tick — each individual cell boundary it
+      // crosses is still checked against other vehicles' reservations below
+      // as a hard safety net, independent of the soft speed regulation above.
+      v.frac += v.speed;
+      while(v.frac >= 1 && v.pathIndex < v.path.length-1){
+        const next = v.path[v.pathIndex+1];
+        const nextKey = posKey(next.x, next.y, next.layer);
+        const occupant = occupied.get(nextKey);
+        if(occupant !== undefined && occupant !== v.id){
+          // Someone else's body (front or trailing length) is there — queue
+          // right at this cell's boundary rather than overshooting into it.
+          v.frac = Math.min(v.frac, 0.999);
+          break;
+        }
+        const oldFootprint = footprintKeys(v);
+        v.trail.unshift({x:v.x, y:v.y, layer:v.layer});
+        if(v.trail.length > 6) v.trail.length = 6; // generous cap — no vehicle in this build needs more
+        v.pathIndex++;
+        v.x = next.x; v.y = next.y; v.layer = next.layer;
+        v.frac -= 1;
+        const newFootprint = footprintKeys(v);
+        const newSet = new Set(newFootprint);
+        for(const k of oldFootprint) if(!newSet.has(k)) occupied.delete(k);
+        for(const k of newFootprint) occupied.set(k, v.id);
+      }
+      if(v.pathIndex >= v.path.length-1) v.frac = 0; // discard any leftover speed at the very end
+      continue;
+    }
+
+    if(v.state==='loading'){
+      // Vehicle is docked at a Station; the Station forwards to whichever
+      // industry it (or its chain of touching Stations) connects to (§ Stations).
+      // Always pulls from the industry's OUTPUT slot — what it offers for pickup.
+      const industry = findLinkedIndustry(target);
+      if(!industry || industry.outStock===undefined){ v.state='blocked'; continue; } // wait: nothing to pick up here
+      if(industry.outStock <= 0){ v.state='blocked'; continue; } // wait: source empty
+      const room = v.capacity - v.cargoAmount;
+      if(room <= 0){ advanceOrder(v); v.state='idle'; continue; } // full, move on
+      const amt = Math.min(TRANSFER_RATE, industry.outStock, room);
+      industry.outStock -= amt;
+      v.cargoAmount += amt;
+      if(v.cargoAmount >= v.capacity){ advanceOrder(v); v.state='idle'; }
+      continue;
+    }
+
+    if(v.state==='unloading'){
+      // Always pushes into the industry's INPUT slot — what it accepts for
+      // drop-off (a Mill's ore input, or a Town's demand).
+      const industry = findLinkedIndustry(target);
+      if(!industry || industry.inStock===undefined){ v.state='blocked'; continue; } // wait: nothing accepts this here
+      if(v.cargoAmount<=0){ advanceOrder(v); v.state='idle'; continue; }
+      const room = industry.inCap - industry.inStock;
+      if(room <= 0){ v.state='blocked'; continue; } // wait: destination full (§6.6)
+      const amt = Math.min(TRANSFER_RATE, v.cargoAmount, room);
+      industry.inStock += amt;
+      v.cargoAmount -= amt;
+      if(industry.consumer){
+        // Only a true final Consumer (a Town) pays for what it receives —
+        // an intermediate industrial input (e.g. a Mill's ore) doesn't.
+        const resource = order.resource || v.cargoResource || industry.inResource;
+        const income = Math.round(amt * RESOURCES[resource].baseValue * industry.priceMultiplier);
+        credit(income, `delivery to ${BUILDING_DEFS[industry.type].label} #${industry.id}`);
+      }
+      if(v.cargoAmount<=0){ advanceOrder(v); v.state='idle'; }
+      continue;
+    }
+  }
+}
+
+function tickUpkeep(){
+  for(const id of queryEntities('Movement','Orders')){
+    const v = world.entities.get(id);
+    if(v.orders.length===0) continue; // parked/unassigned trucks don't burn cash
+    world.treasury -= VEHICLE_DEFS[v.type].runningCostPerTick;
+  }
+}
+
+function simTick(){
+  tickProduction();
+  tickVehicles();
+  tickConsumption();
+  tickUpkeep();
+  world.tick++;
+}
+
+// ---------------------------------------------------------------------
+// FIXED-TIMESTEP LOOP  (§8 — decoupled from render framerate)
+// ---------------------------------------------------------------------
+let acc = 0, lastT = performance.now();
+function frame(now){
+  const dt = now - lastT; lastT = now;
+  acc += dt;
+  while(acc >= TICK_MS){ simTick(); acc -= TICK_MS; }
+  render();
+  requestAnimationFrame(frame);
+}
+
+// ---------------------------------------------------------------------
+// RENDERING
+// ---------------------------------------------------------------------
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+function render(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  // grid lines
+  ctx.strokeStyle = getCss('--grid-line');
+  ctx.lineWidth = 1;
+  for(let x=0;x<=GRID_W;x++){ ctx.beginPath(); ctx.moveTo(x*CELL+.5,0); ctx.lineTo(x*CELL+.5,GRID_H*CELL); ctx.stroke(); }
+  for(let y=0;y<=GRID_H;y++){ ctx.beginPath(); ctx.moveTo(0,y*CELL+.5); ctx.lineTo(GRID_W*CELL,y*CELL+.5); ctx.stroke(); }
+
+  // roads — a core square plus a stub toward each side with an established
+  // edge connection, so an isolated tile visibly reads as disconnected and
+  // a through-route reads as a continuous line, instead of every road tile
+  // looking identical regardless of what it actually connects to. Ground is
+  // drawn first, elevated on top in a distinct color so a crossing (both
+  // layers occupying the same cell without connecting) is visible as two
+  // independent lines rather than one merged road.
+  drawRoadLayer('ground', getCss('--road'), 8);
+  drawRoadLayer('elevated', '#7fb8c9', 12);
+
+  // ramps — a small diamond marking a cell where ground and elevated are
+  // deliberately linked (the only place a vehicle can change layer)
+  for(const [k,cell] of world.grid){
+    if(!cell.ramp) continue;
+    const [x,y] = k.split(',').map(Number);
+    const cx = x*CELL+CELL/2, cy = y*CELL+CELL/2;
+    ctx.save();
+    ctx.translate(cx,cy); ctx.rotate(Math.PI/4);
+    ctx.fillStyle = '#7fb8c9';
+    ctx.fillRect(-5,-5,10,10);
+    ctx.restore();
+  }
+
+  function drawRoadLayer(layerName, color, margin){
+    ctx.fillStyle = color;
+    for(const [k,cell] of world.grid){
+      const track = cell.layers[layerName];
+      if(!track.road) continue;
+      const [x,y] = k.split(',').map(Number);
+      ctx.fillStyle = color;
+      ctx.fillRect(x*CELL+margin, y*CELL+margin, CELL-margin*2, CELL-margin*2); // core
+      for(const {dir,dx,dy,opp} of ROAD_DIRS){
+        if(!track.edges[dir]) continue;
+        ctx.fillStyle = color;
+        if(dir==='N') ctx.fillRect(x*CELL+margin, y*CELL, CELL-margin*2, margin);
+        if(dir==='S') ctx.fillRect(x*CELL+margin, y*CELL+CELL-margin, CELL-margin*2, margin);
+        if(dir==='E') ctx.fillRect(x*CELL+CELL-margin, y*CELL+margin, margin, CELL-margin*2);
+        if(dir==='W') ctx.fillRect(x*CELL, y*CELL+margin, margin, CELL-margin*2);
+        // One-way arrow: drawn only from the side that's still allowed to
+        // depart, so each physical one-way edge gets exactly one arrow.
+        const nTrack = getCell(x+dx, y+dy).layers[layerName];
+        const thisBlocked = track.oneWayBlocked[dir];
+        const otherBlocked = nTrack.oneWayBlocked[opp];
+        if(!thisBlocked && otherBlocked) drawOneWayArrow(x, y, dir, margin);
+      }
+    }
+  }
+  function drawOneWayArrow(x, y, dir, margin){
+    const cx = x*CELL+CELL/2, cy = y*CELL+CELL/2;
+    const rot = {N:-Math.PI/2, S:Math.PI/2, E:0, W:Math.PI}[dir];
+    ctx.save();
+    ctx.translate(cx,cy); ctx.rotate(rot);
+    ctx.fillStyle = getCss('--amber');
+    const tip = CELL/2 - margin - 2, size = 5;
+    ctx.beginPath();
+    ctx.moveTo(tip, 0);
+    ctx.lineTo(tip-size, -size);
+    ctx.lineTo(tip-size, size);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // buildings
+  for(const id of queryEntities('Footprint')){
+    const e = world.entities.get(id);
+    const def = BUILDING_DEFS[e.type];
+    const px = e.x*CELL, py = e.y*CELL;
+    const pw = e.footprint.w*CELL, ph = e.footprint.h*CELL;
+    ctx.fillStyle = def.color;
+    const halted = producerHalted(e);
+    ctx.fillRect(px+2, py+2, pw-4, ph-4);
+    if(halted){ ctx.strokeStyle = getCss('--danger'); ctx.lineWidth=2; ctx.strokeRect(px+3, py+3, pw-6, ph-6); }
+    if(e===selected){ ctx.strokeStyle = getCss('--amber'); ctx.lineWidth=2; ctx.strokeRect(px+1, py+1, pw-2, ph-2); }
+    ctx.fillStyle = '#fff';
+    ctx.font = '10px monospace';
+    ctx.fillText(`${def.label} #${e.id}`, px+5, py+13);
+    // Fill bar(s) span the building's full footprint width (Stations have
+    // no storage of their own — show a linked/unlinked indicator dot
+    // instead). A building with only one slot (Mine: out; Town: in) gets
+    // one bar; a dual-slot building (Mill: both) gets two stacked bars —
+    // output on top in teal, input below in a distinct color — so you can
+    // see both buffers at a glance instead of just one ambiguous number.
+    if(e.type==='station'){
+      const linked = !!findLinkedIndustry(e);
+      ctx.fillStyle = linked ? getCss('--teal') : getCss('--danger');
+      ctx.beginPath(); ctx.arc(px+pw-8, py+ph-8, 4, 0, Math.PI*2); ctx.fill();
+      // notch on the facing side — the only side that can ever touch a road
+      if(e.facing){
+        const d = ROAD_DIRS.find(r=>r.dir===e.facing);
+        const nx = px+pw/2 + d.dx*(pw/2-2), ny = py+ph/2 + d.dy*(ph/2-2);
+        ctx.fillStyle = getCss('--amber');
+        ctx.beginPath(); ctx.arc(nx, ny, 4, 0, Math.PI*2); ctx.fill();
+      }
+    } else {
+      const bars = [];
+      if(e.outStock!==undefined) bars.push({stock:e.outStock, cap:e.outCap, color:getCss('--teal')});
+      if(e.inStock!==undefined) bars.push({stock:e.inStock, cap:e.inCap, color:'#7fb8c9'});
+      const barH = 4, gap = 1;
+      bars.forEach((bar, i)=>{
+        const y = py+ph-9-(bars.length-1-i)*(barH+gap);
+        const pct = bar.cap>0 ? bar.stock/bar.cap : 0;
+        ctx.fillStyle = 'rgba(0,0,0,.5)';
+        ctx.fillRect(px+4, y, pw-8, barH);
+        ctx.fillStyle = bar.color;
+        ctx.fillRect(px+4, y, (pw-8)*pct, barH);
+      });
+    }
+  }
+
+  // vehicles — drawn at their interpolated sub-tile position so fractional
+  // speeds actually read as smooth motion instead of a jump once per cell
+  for(const id of queryEntities('Movement')){
+    const v = world.entities.get(id);
+    let drawX = v.x, drawY = v.y;
+    if(v.path && v.pathIndex < v.path.length-1 && v.frac > 0){
+      const a = v.path[v.pathIndex], b = v.path[v.pathIndex+1];
+      drawX = a.x + (b.x-a.x)*v.frac;
+      drawY = a.y + (b.y-a.y)*v.frac;
+    }
+    ctx.fillStyle = v.state==='blocked' ? getCss('--danger') : VEHICLE_DEFS[v.type].color;
+    const cx = drawX*CELL+CELL/2, cy = drawY*CELL+CELL/2;
+    const r = v.layer==='elevated' ? 6 : 8;
+    ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+    if(v.layer==='elevated'){ ctx.strokeStyle='#7fb8c9'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(cx,cy,r+2,0,Math.PI*2); ctx.stroke(); }
+    if(v===selected){ ctx.strokeStyle='#fff'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(cx,cy,r+3,0,Math.PI*2); ctx.stroke(); }
+  }
+
+  // hover ghost for build tools — sized to the building's footprint where relevant
+  if(hoverCell){
+    ctx.strokeStyle = getCss('--teal');
+    ctx.lineWidth = 2;
+    if(currentTool==='mine' || currentTool==='mill' || currentTool==='town' || currentTool==='station'){
+      const fp = BUILDING_DEFS[currentTool].footprint;
+      ctx.strokeRect(hoverCell.x*CELL+1, hoverCell.y*CELL+1, fp.w*CELL-2, fp.h*CELL-2);
+    } else if(currentTool==='road' || currentTool==='bulktruck' || currentTool==='flatbedtruck'){
+      ctx.strokeRect(hoverCell.x*CELL+1, hoverCell.y*CELL+1, CELL-2, CELL-2);
+    }
+  }
+
+  // HUD
+  const treasuryEl = document.getElementById('treasury');
+  treasuryEl.textContent = '$' + world.treasury;
+  treasuryEl.classList.toggle('negative', world.treasury < 0);
+  document.getElementById('tickInfo').textContent = 'tick ' + world.tick;
+}
+function getCss(varName){ return getComputedStyle(document.documentElement).getPropertyValue(varName).trim(); }
+
+// ---------------------------------------------------------------------
+// UI WIRING (tools, selection, order editor)
+// ---------------------------------------------------------------------
+let currentTool = 'select';
+let selected = null;       // selected building or vehicle
+let pickingStopFor = null; // vehicle awaiting a click on a building to add a stop
+let oneWayFirst = null;    // first tile picked for the One-Way tool, awaiting a second click
+let connectFirst = null;   // first tile picked for the Connect/Disconnect tool, awaiting a second click
+let hoverCell = null;
+
+document.querySelectorAll('.tool-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.tool-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    currentTool = btn.dataset.tool;
+    pickingStopFor = null;
+    oneWayFirst = null;
+    connectFirst = null;
+    document.getElementById('hint').textContent = toolHint(currentTool);
+  });
+});
+function toolHint(t){
+  return {
+    select:'Click a building or truck to inspect it.',
+    road:'Click or drag to build road on the selected layer ($10/tile, x2 elevated). Uncheck auto-connect to place tiles without joining them.',
+    ramp:'Click a cell that already has both a ground and an elevated road tile to link them ($40).',
+    connect:'Click a road tile, then click an adjacent road tile on the same layer — connects them if not joined, disconnects them if they are.',
+    oneway:'Click a road tile, then click an adjacent connected tile — traffic will only be allowed from the first to the second.',
+    mine:`Click the top-left cell for a Mine (${BUILDING_DEFS.mine.footprint.w}x${BUILDING_DEFS.mine.footprint.h}). Always produces Ore. It doesn't need to touch a road itself — build a Station touching it for trucks to use.`,
+    mill:`Click the top-left cell for a Steel Mill (${BUILDING_DEFS.mill.footprint.w}x${BUILDING_DEFS.mill.footprint.h}). Turns Ore into Steel — it needs one Station handling Ore (delivery) and one handling Steel (pickup), both touching it.`,
+    town:`Click the top-left cell for a Town (${BUILDING_DEFS.town.footprint.w}x${BUILDING_DEFS.town.footprint.h}). Accepts whichever resource is chosen in the dropdown. It doesn't need to touch a road itself — build a Station touching it for trucks to use.`,
+    station:`Click a cell touching a Mine, Mill, Town, or another Station (${BUILDING_DEFS.station.footprint.w}x${BUILDING_DEFS.station.footprint.h}). Choose which resource it handles — it will only ever connect to a road on its chosen facing side.`,
+    demolish:'Click a road tile (on the selected layer) or a building to remove it.',
+    bulktruck:'Click a ground road tile to buy a Bulk Truck ($200) there. Carries Ore only.',
+    flatbedtruck:'Click a ground road tile to buy a Flatbed Truck ($260) there. Carries Steel only.',
+  }[t] || '';
+}
+
+function currentTier(){ return document.getElementById('tierSelect').value; }
+function currentLayer(){ return document.getElementById('layerSelect').value; }
+function currentFacing(){ return document.getElementById('facingSelect').value; }
+function currentAutoConnect(){ return document.getElementById('autoConnect').checked; }
+function currentTownResource(){ return document.getElementById('townResourceSelect').value; }
+function currentStationResource(){ return document.getElementById('stationResourceSelect').value; }
+
+
+function cellFromEvent(evt){
+  const rect = canvas.getBoundingClientRect();
+  const x = Math.floor((evt.clientX-rect.left)/CELL);
+  const y = Math.floor((evt.clientY-rect.top)/CELL);
+  if(!inBounds(x,y)) return null;
+  return {x,y};
+}
+
+let dragging = false;
+canvas.addEventListener('mousedown', evt=>{
+  const cell = cellFromEvent(evt); if(!cell) return;
+  dragging = true;
+  handleClick(cell);
+});
+canvas.addEventListener('mousemove', evt=>{
+  hoverCell = cellFromEvent(evt);
+  if(dragging && currentTool==='road' && hoverCell){ cmdBuildRoad(hoverCell.x, hoverCell.y, currentLayer(), currentAutoConnect()); }
+});
+window.addEventListener('mouseup', ()=>{ dragging=false; });
+
+function buildingAt(x,y){
+  const cell = getCell(x,y);
+  return cell.buildingId ? world.entities.get(cell.buildingId) : null;
+}
+function vehicleAt(x,y){
+  for(const id of queryEntities('Movement')){
+    const v = world.entities.get(id);
+    if(v.x===x && v.y===y) return v;
+  }
+  return null;
+}
+
+function handleClick(cell){
+  const {x,y} = cell;
+
+  // Order-editor "pick a stop" mode takes priority over the active tool.
+  if(pickingStopFor){
+    const b = buildingAt(x,y);
+    if(b && b.type!=='station'){
+      logEvent('Trucks load/unload at Stations, not at the industry itself.', 'warn');
+    } else if(b && b.type==='station'){
+      const industry = findLinkedIndustry(b);
+      if(!industry){
+        logEvent(`Station #${b.id} isn't connected to any industry yet.`, 'warn');
+      } else if(b.resource !== pickingStopFor.cargoResource){
+        logEvent(`This truck only carries ${RESOURCES[pickingStopFor.cargoResource].name}, but Station #${b.id} handles ${RESOURCES[b.resource].name}.`, 'warn');
+      } else {
+        let action = null;
+        if(industry.outResource === b.resource) action = 'load_full';
+        else if(industry.inResource === b.resource) action = 'unload_all';
+        if(!action){
+          logEvent(`Station #${b.id} handles ${RESOURCES[b.resource].name}, but the linked industry doesn't produce or accept it.`, 'warn');
+        } else {
+          const orders = pickingStopFor.orders.slice();
+          orders.push({nodeId:b.id, action, resource:b.resource});
+          cmdSetOrders(pickingStopFor, orders);
+          renderOrderEditor(pickingStopFor);
+        }
+      }
+    }
+    pickingStopFor = null;
+    document.getElementById('hint').textContent = toolHint(currentTool);
+    return;
+  }
+
+  if(currentTool==='select'){
+    const v = vehicleAt(x,y);
+    const b = buildingAt(x,y);
+    selected = v || b || null;
+    renderSelection();
+    return;
+  }
+  if(currentTool==='road'){ cmdBuildRoad(x,y,currentLayer(),currentAutoConnect()); return; }
+  if(currentTool==='ramp'){ cmdBuildRamp(x,y); return; }
+  if(currentTool==='connect'){ handleConnectClick(x,y); return; }
+  if(currentTool==='oneway'){ handleOneWayClick(x,y); return; }
+  if(currentTool==='mine'){ cmdBuildBuilding('mine', x, y, currentTier()); return; }
+  if(currentTool==='mill'){ cmdBuildBuilding('mill', x, y, currentTier()); return; }
+  if(currentTool==='town'){ cmdBuildBuilding('town', x, y, currentTier(), null, currentTownResource()); return; }
+  if(currentTool==='station'){ cmdBuildBuilding('station', x, y, 'small', currentFacing(), currentStationResource()); return; }
+  if(currentTool==='demolish'){ cmdDemolish(x,y,currentLayer()); return; }
+  if(currentTool==='bulktruck'){ cmdPurchaseVehicle(x,y,'bulk'); return; }
+  if(currentTool==='flatbedtruck'){ cmdPurchaseVehicle(x,y,'flatbed'); return; }
+}
+
+function handleConnectClick(x,y){
+  const layer = currentLayer();
+  if(!getCell(x,y).layers[layer].road){
+    logEvent(`No ${layer} road tile there.`, 'warn');
+    connectFirst = null;
+    document.getElementById('hint').textContent = toolHint('connect');
+    return;
+  }
+  if(!connectFirst){
+    connectFirst = {x,y};
+    document.getElementById('hint').textContent = 'Now click an adjacent road tile to connect or disconnect it.';
+    return;
+  }
+  cmdToggleConnection(connectFirst.x, connectFirst.y, x, y, layer);
+  connectFirst = null;
+  document.getElementById('hint').textContent = toolHint('connect');
+}
+
+function handleOneWayClick(x,y){
+  const layer = currentLayer();
+  if(!getCell(x,y).layers[layer].road){
+    logEvent(`No ${layer} road tile there.`, 'warn');
+    oneWayFirst = null;
+    document.getElementById('hint').textContent = toolHint('oneway');
+    return;
+  }
+  if(!oneWayFirst){
+    oneWayFirst = {x,y};
+    document.getElementById('hint').textContent = 'Now click the adjacent, connected tile traffic should be allowed to reach.';
+    return;
+  }
+  cmdToggleOneWay(oneWayFirst.x, oneWayFirst.y, x, y, layer);
+  oneWayFirst = null;
+  document.getElementById('hint').textContent = toolHint('oneway');
+}
+
+function renderSelection(){
+  const panel = document.getElementById('selectionInfo');
+  if(!selected){ panel.innerHTML = 'Nothing selected. Click a building or a truck.'; return; }
+
+  if(selected.kind==='building' && selected.type==='station'){
+    const industry = findLinkedIndustry(selected);
+    const dock = buildingRoadAccessCell(selected);
+    panel.innerHTML = `
+      <div><b>${BUILDING_DEFS.station.label} #${selected.id}</b></div>
+      <div>Handles: ${RESOURCES[selected.resource].name}</div>
+      <div>${industry
+        ? `Linked to: ${BUILDING_DEFS[industry.type].label} #${industry.id}`
+        : '<span style="color:var(--danger)">Not connected to any industry</span>'}</div>
+      <div>Road-facing side: ${selected.facing}${dock ? '' : ' <span style="color:var(--danger)">(no road there)</span>'}</div>
+    `;
+    return;
+  }
+
+  if(selected.kind==='building'){
+    const def = BUILDING_DEFS[selected.type];
+    const halted = producerHalted(selected);
+    let html = `<div><b>${def.label} #${selected.id}</b></div>`;
+    if(selected.outStock!==undefined){
+      html += `
+        <div>${RESOURCES[selected.outResource].name} (out): ${selected.outStock.toFixed(1)} / ${selected.outCap}</div>
+        <div class="fill-bar"><div style="width:${(selected.outStock/selected.outCap*100).toFixed(0)}%"></div></div>
+      `;
+    }
+    if(selected.inStock!==undefined){
+      html += `
+        <div>${RESOURCES[selected.inResource].name} (in): ${selected.inStock.toFixed(1)} / ${selected.inCap}</div>
+        <div class="fill-bar"><div style="width:${(selected.inStock/selected.inCap*100).toFixed(0)}%"></div></div>
+      `;
+    }
+    if(selected.producer){
+      html += `<div>${halted ? '<span style="color:var(--danger)">Halted — missing input or output full</span>' : 'Producing…'}</div>`;
+    }
+    if(selected.consumer){
+      html += `
+        <div>Population: ${selected.population}</div>
+        <div>Consuming: ${selected.consumptionPerTick.toFixed(2)}/tick</div>
+        ${selected.inStock<=0 ? '<div style="color:var(--danger)">Out of stock — nothing to consume</div>' : ''}
+        <div>Pays $${RESOURCES[selected.inResource].baseValue}/unit delivered</div>
+      `;
+    }
+    html += `<div style="margin-top:6px;color:var(--text-dim);font-size:11px;">Trucks can't load/unload here directly — build a Station touching this building.</div>`;
+    panel.innerHTML = html;
+    return;
+  }
+
+  if(selected.kind==='vehicle'){
+    const def = VEHICLE_DEFS[selected.type];
+    const resourceName = RESOURCES[selected.cargoResource].name;
+    const unitWeight = RESOURCES[selected.cargoResource].unitWeight;
+    const mass = selected.massEmpty + selected.cargoAmount*unitWeight;
+    let html = `
+      <div><b>${def.label} #${selected.id}</b></div>
+      <div>Carries: ${resourceName} only</div>
+      <div>Cargo: ${selected.cargoAmount.toFixed(1)} / ${selected.capacity}</div>
+      <div>State: ${selected.state}${selected.state==='blocked' ? ' <span style="color:var(--danger)">(waiting)</span>' : ''}</div>
+      <div>Speed: ${selected.speed.toFixed(2)} / ${selected.maxSpeed.toFixed(2)} tiles/tick</div>
+      <div>Mass: ${mass.toFixed(1)} (empty ${selected.massEmpty.toFixed(1)} + cargo ${(selected.cargoAmount*unitWeight).toFixed(1)})</div>
+      <div>Accel/Decel now: ${(selected.engineForce/mass).toFixed(2)} / ${(selected.brakeForce/mass).toFixed(2)} tiles/tick²</div>
+      <div>Length: ${selected.length.toFixed(2)} tiles</div>
+      <div class="section-label">Orders</div>
+      <div id="ordersList"></div>
+      <button class="btn" id="addStopBtn">+ Add stop</button>
+      <button class="btn secondary" id="sellBtn">Sell ($${Math.round(def.purchaseCost*def.sellFraction)} refund)</button>
+    `;
+    panel.innerHTML = html;
+    document.getElementById('addStopBtn').addEventListener('click', ()=>{
+      pickingStopFor = selected;
+      document.getElementById('hint').textContent = `Click a Station handling ${resourceName} to add it as a stop.`;
+    });
+    document.getElementById('sellBtn').addEventListener('click', ()=>{
+      cmdSellVehicle(selected);
+      selected = null;
+      renderSelection();
+    });
+    renderOrderEditor(selected);
+  }
+}
+
+function renderOrderEditor(vehicle){
+  const list = document.getElementById('ordersList');
+  if(!list) return;
+  list.innerHTML = '';
+  vehicle.orders.forEach((o, i)=>{
+    const b = world.entities.get(o.nodeId);
+    const row = document.createElement('div');
+    row.className = 'order-row';
+    row.innerHTML = `<span class="idx">${i+1}</span><span>${b ? BUILDING_DEFS[b.type].label+' #'+b.id : '(removed)'}</span><span class="act">${o.action}</span><span class="rm">✕</span>`;
+    row.querySelector('.rm').addEventListener('click', ()=>{
+      const orders = vehicle.orders.slice();
+      orders.splice(i,1);
+      cmdSetOrders(vehicle, orders);
+      renderOrderEditor(vehicle);
+    });
+    list.appendChild(row);
+  });
+}
+
+// keep the side panel numbers live even when nothing changed selection-wise
+setInterval(()=>{ if(selected) renderSelection(); }, 500);
+
+document.getElementById('mineCost').textContent = '$' + BUILDING_DEFS.mine.buildCost;
+document.getElementById('millCost').textContent = '$' + BUILDING_DEFS.mill.buildCost;
+document.getElementById('townCost').textContent = '$' + BUILDING_DEFS.town.buildCost;
+document.getElementById('stationCost').textContent = '$' + BUILDING_DEFS.station.buildCost;
+document.getElementById('rampCost').textContent = '$' + RAMP_COST;
+function updateRoadCostLabel(){
+  const elevated = currentLayer()==='elevated';
+  document.getElementById('roadCost').textContent =
+    '$' + (ROAD_COST_PER_TILE * (elevated ? ELEVATED_COST_MULTIPLIER : 1)) + '/tile';
+}
+document.getElementById('layerSelect').addEventListener('change', updateRoadCostLabel);
+updateRoadCostLabel();
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
