@@ -27,6 +27,16 @@ function extractScript(htmlPath){
   return m[1];
 }
 
+// The content-pack <script> tag has a type/id attribute, so it never
+// matches extractScript's bare `<script>` pattern above — this pulls it
+// separately, the same way a real browser's document.getElementById would.
+function extractContentPackJson(htmlPath){
+  const html = fs.readFileSync(htmlPath, 'utf8');
+  const m = html.match(/<script type="application\/json" id="content-pack">([\s\S]*?)<\/script>/);
+  if(!m) throw new Error(`No content-pack <script> block found in ${htmlPath}`);
+  return m[1];
+}
+
 function makeFakeElement(){
   const store = {};
   return new Proxy(store, {
@@ -50,11 +60,18 @@ function makeFakeElement(){
 // it. Returns the context — pass it to run() for every subsequent snippet
 // in the same test so they share world state; create a new context per
 // test for a clean world.
-function newGameContext(){
+//
+// `contentPackJson`, if given, replaces the content-pack text index.html
+// itself ships — this is what lets a test prove the extensibility claim
+// directly (§3.3.3): swap in a different pack, zero changes to the script,
+// and confirm the swapped-in content is what the game actually uses.
+function newGameContext({contentPackJson} = {}){
+  const htmlPath = path.join(__dirname, '..', 'index.html');
+  const contentPackText = contentPackJson !== undefined ? contentPackJson : extractContentPackJson(htmlPath);
   const sandbox = {
     console,
     document: {
-      getElementById: () => makeFakeElement(),
+      getElementById: (id) => id==='content-pack' ? {textContent: contentPackText} : makeFakeElement(),
       querySelectorAll: () => [],
       documentElement: makeFakeElement(),
       createElement: () => makeFakeElement(),
@@ -66,7 +83,7 @@ function newGameContext(){
     getComputedStyle: () => ({getPropertyValue: () => ''}),
   };
   const context = vm.createContext(sandbox);
-  const script = extractScript(path.join(__dirname, '..', 'index.html'));
+  const script = extractScript(htmlPath);
   vm.runInContext(script, context, {filename: 'index.html'});
   return context;
 }
@@ -82,4 +99,4 @@ function run(context, code){
   return context.__out;
 }
 
-module.exports = {newGameContext, run};
+module.exports = {newGameContext, run, extractContentPackJson};

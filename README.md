@@ -393,9 +393,11 @@ Phase 1's original suites checked in to literally re-run.
 - Block computation cost at scale. Recomputing all blocks from scratch on
   every track edit is fine at this grid size; flagged for the later
   performance pass, not solved here.
-- The content-pack refactor, Worker split, and persistence workstreams
-  that the implementation plan schedules after Rail — not part of this
-  milestone.
+- The Worker split and persistence workstreams that the implementation
+  plan schedules after Rail — not part of this milestone. (The
+  content-pack refactor, also scheduled after Rail, is no longer deferred
+  — see [Phase 2 — Content-Pack Refactor](#phase-2--content-pack-refactor)
+  below.)
 
 ## Known rough edges
 
@@ -410,3 +412,77 @@ Phase 1's original suites checked in to literally re-run.
   physically overlapping it. Real block signaling would reserve the whole
   block for a parked train too; this is a simplification, same spirit as
   Phase 1's vehicle-`trail` rough edge.
+
+---
+
+# Phase 2 — Content-Pack Refactor
+
+The second workstream of Phase 2 (§3): move `RESOURCES`, `RECIPES`,
+`BUILDING_DEFS`, `VEHICLE_DEFS`, `RAIL_DEFS`, and `TRAIN_DEFS` out of
+inline JS objects into genuine external-ish data, closing the gap between
+§9/§13's "new resource = new JSON file, no code change" claim and what was
+actually true before this (the defs were data-*shaped*, but still JS
+literals baked into the file, requiring an edit of the whole game to add
+anything).
+
+## Running the tests
+
+```
+node test/test-content-pack.js
+```
+
+Covers: the real content pack still loads and validates cleanly; each of
+several deliberately-broken fixtures (missing `baseValue`, a recipe
+referencing an undefined resource, a vehicle with `brakeForce <=
+engineForce`, …) is rejected with a specific, correctly-worded error, not
+a generic failure or a silent pass; and a small modder-authored pack (one
+new resource, one new recipe reusing the existing Mine building, one new
+vehicle type) works end-to-end — including actually producing and
+transporting the new resource through a live simulation — with zero
+changes to `index.html`'s script beyond the JSON block itself.
+`test/test-rail.js` still passes unmodified too, confirming this refactor
+didn't change any behavior, only where the data lives.
+
+## What's implemented (maps to the Content-Pack Refactor plan)
+
+- **The content is now one `<script type="application/json"
+  id="content-pack">` block**, sitting above the main `<script>` in
+  `index.html`, containing a single JSON object keyed by category
+  (`resources`, `recipes`, `buildings`, `vehicles`, `rail`, `trains`). A
+  modder edits one clearly-delineated JSON block, not JS source — and the
+  game still opens by double-clicking the file, since this sidesteps the
+  `fetch()`-under-`file://` CORS problem a real `data/*.json` directory
+  would hit without a local server (the same reason this project is one
+  self-contained HTML file in the first place).
+- **Parsed once at startup** into the exact same `RESOURCES`/`RECIPES`/
+  `BUILDING_DEFS`/`VEHICLE_DEFS`/`RAIL_DEFS`/`TRAIN_DEFS` bindings every
+  system, command, and render function already referenced — genuinely
+  zero changes anywhere else in the script, since none of that code ever
+  cared whether the object it was handed came from a literal or a parse.
+- **`validateContentPack`**, a lightweight schema check (not real JSON
+  Schema — cheap to write, and enough to catch the actual failure mode: a
+  hand-edited content block with a typo or a dangling reference) that runs
+  immediately after parsing and throws a clear error naming the exact
+  missing/malformed field, rather than an obscure crash three systems away
+  the first time something reads the bad value. Checks structural
+  requirements (required fields, correct types) and cross-references
+  (a recipe's resource ids exist, a building's `recipe` id exists, a
+  vehicle/train's `resource` exists or is explicitly `null`) plus the
+  physics invariant Phase 1 established (`brakeForce > engineForce`,
+  which is what guarantees decel > accel at any mass).
+- **`test/harness.js`** now stubs `document.getElementById('content-pack')`
+  with the real extracted JSON text by default, and accepts a
+  `contentPackJson` override — which is what lets `test-content-pack.js`
+  prove the extensibility claim by actually swapping in different content,
+  not just asserting the mechanism should work.
+
+## Deliberately deferred
+
+- A real `data/` directory with a build step remains a later, purely
+  additive step if/when a bundler is adopted for other reasons (most
+  likely the Worker split wanting real `import`s) — migrating from "one
+  JSON blob" to "a `data/` directory" is mechanical at that point, not a
+  redesign of the validation or loading logic.
+- Real JSON Schema validation, or a validation library — `validateContentPack`
+  stays a small hand-written function; revisit only if the schema outgrows
+  what a dozen `need(...)` checks can cover clearly.

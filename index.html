@@ -216,6 +216,54 @@
 </div>
 <div id="log"></div>
 
+<!--
+  CONTENT PACK — the game's resources/recipes/buildings/vehicles/rail/
+  trains, as one JSON block instead of inline JS objects (§9/§13's "new
+  resource = new JSON file, no code change" claim). This is a deliberate
+  middle ground, not real data/*.json files: those need either a bundler
+  or fetch() calls, and fetch() fails under file:// without a local server
+  — the exact reason this project stays one self-contained HTML file. This
+  gets almost all of the practical benefit (a modder edits one clearly-
+  delineated JSON block, not JS source) without the CORS/bundler problem.
+  A real data/ directory becomes a later, purely additive step if/when a
+  bundler is adopted for other reasons.
+
+  Parsed once at startup into the RESOURCES/RECIPES/BUILDING_DEFS/
+  VEHICLE_DEFS/RAIL_DEFS/TRAIN_DEFS bindings the rest of the script already
+  uses (see validateContentPack / the parsing block right after this) —
+  zero changes to any system, command, or render code, since they only
+  ever reference the parsed result, never this block directly.
+-->
+<script type="application/json" id="content-pack">
+{
+  "resources": {
+    "ore":   { "id": "ore",   "name": "Ore",   "baseValue": 6,  "unitWeight": 0.4 },
+    "steel": { "id": "steel", "name": "Steel", "baseValue": 14, "unitWeight": 0.6 }
+  },
+  "recipes": {
+    "extract_ore": { "inputs": [], "outputs": [{ "resource": "ore", "amount": 1 }], "durationTicks": 4 },
+    "smelt_steel": { "inputs": [{ "resource": "ore", "amount": 2 }], "outputs": [{ "resource": "steel", "amount": 1 }], "durationTicks": 6 }
+  },
+  "buildings": {
+    "mine":    { "buildCost": 150, "tiers": { "small": { "cap": 20, "add": 0 }, "large": { "cap": 50, "add": 100 } }, "color": "#7a5230", "label": "Mine", "footprint": { "w": 2, "h": 2 }, "recipe": "extract_ore" },
+    "mill":    { "buildCost": 220, "tiers": { "small": { "cap": 20, "add": 0 }, "large": { "cap": 50, "add": 120 } }, "color": "#8a4a3a", "label": "Steel Mill", "footprint": { "w": 3, "h": 2 }, "recipe": "smelt_steel" },
+    "town":    { "buildCost": 100, "tiers": { "small": { "cap": 20, "add": 0, "population": 50 }, "large": { "cap": 50, "add": 80, "population": 150 } }, "color": "#3a6ea5", "label": "Town", "footprint": { "w": 3, "h": 2 } },
+    "station": { "buildCost": 60,  "tiers": { "small": { "cap": 0, "add": 0 }, "large": { "cap": 0, "add": 0 } }, "color": "#c9a227", "label": "Station", "footprint": { "w": 1, "h": 1 } },
+    "depot":   { "buildCost": 300, "tiers": { "small": { "cap": 30, "add": 0 }, "large": { "cap": 80, "add": 150 } }, "color": "#6b5b95", "label": "Rail Depot", "footprint": { "w": 2, "h": 2 } }
+  },
+  "vehicles": {
+    "bulk":    { "purchaseCost": 200, "runningCostPerTick": 1,   "capacity": 10, "sellFraction": 0.4, "label": "Bulk Truck",    "resource": "ore",   "color": "#e0a840", "maxSpeedTilesPerTick": 1.2, "massEmpty": 5, "engineForce": 0.6,  "brakeForce": 1.8, "lengthTiles": 1.3 },
+    "flatbed": { "purchaseCost": 260, "runningCostPerTick": 1.2, "capacity": 8,  "sellFraction": 0.4, "label": "Flatbed Truck", "resource": "steel", "color": "#c96f3a", "maxSpeedTilesPerTick": 1.1, "massEmpty": 6, "engineForce": 0.55, "brakeForce": 1.7, "lengthTiles": 1.5 }
+  },
+  "rail": {
+    "track": { "costPerTile": 25 }
+  },
+  "trains": {
+    "freight": { "purchaseCost": 900, "runningCostPerTick": 3, "capacity": 40, "sellFraction": 0.4, "label": "Freight Train", "resource": null, "color": "#9b6bd6", "maxSpeedTilesPerTick": 1.6, "massEmpty": 40, "engineForce": 3.0, "brakeForce": 6.0, "lengthTiles": 4 }
+  }
+}
+</script>
+
 <script>
 /* =====================================================================
    PHASE 1 PROTOTYPE
@@ -232,17 +280,68 @@
    ===================================================================== */
 
 // ---------------------------------------------------------------------
-// DATA DEFINITIONS  (stand-in for /data/*.json content packs, §9 / §16)
+// DATA DEFINITIONS  (§9 / §16 content pack — parsed from the
+// application/json <script id="content-pack"> block above the page markup,
+// not inline JS objects. See that block's own comment for why this is a
+// JSON-block-in-the-page rather than real data/*.json files.)
 // ---------------------------------------------------------------------
-const RESOURCES = {
-  ore:   { id:'ore',   name:'Ore',   baseValue:6,  unitWeight:0.4 }, // weight per unit — feeds vehicle mass while loaded
-  steel: { id:'steel', name:'Steel', baseValue:14, unitWeight:0.6 },
-};
+// Lightweight schema check, not real JSON Schema validation (§9) — cheap
+// to write, and enough to catch the actual failure mode (a hand-edited
+// content block with a typo or a dangling reference) with a clear error
+// naming the exact field, instead of an obscure crash three systems away
+// the first time something reads the missing/malformed value.
+function validateContentPack(pack){
+  const fail = msg => { throw new Error('Content pack invalid: ' + msg); };
+  const need = (cond, msg) => { if(!cond) fail(msg); };
+  for(const section of ['resources','recipes','buildings','vehicles','rail','trains']){
+    need(pack && typeof pack[section]==='object' && pack[section]!==null, `missing "${section}" section`);
+  }
+  for(const [id, r] of Object.entries(pack.resources)){
+    need(typeof r.name==='string', `resource "${id}" is missing a name`);
+    need(typeof r.baseValue==='number', `resource "${id}" is missing a numeric baseValue`);
+    need(typeof r.unitWeight==='number', `resource "${id}" is missing a numeric unitWeight`);
+  }
+  for(const [id, r] of Object.entries(pack.recipes)){
+    need(Array.isArray(r.inputs), `recipe "${id}" is missing an inputs array`);
+    need(Array.isArray(r.outputs), `recipe "${id}" is missing an outputs array`);
+    need(typeof r.durationTicks==='number', `recipe "${id}" is missing a numeric durationTicks`);
+    for(const io of [...r.inputs, ...r.outputs]){
+      need(pack.resources[io.resource], `recipe "${id}" references undefined resource "${io.resource}"`);
+    }
+  }
+  for(const [id, b] of Object.entries(pack.buildings)){
+    need(typeof b.buildCost==='number', `building "${id}" is missing a numeric buildCost`);
+    need(b.tiers && typeof b.tiers==='object', `building "${id}" is missing a tiers object`);
+    need(b.footprint && typeof b.footprint.w==='number' && typeof b.footprint.h==='number', `building "${id}" is missing a valid footprint {w,h}`);
+    if(b.recipe!==undefined) need(pack.recipes[b.recipe], `building "${id}" references undefined recipe "${b.recipe}"`);
+  }
+  // Trucks and trains are both vehicle-shaped (§ Rail milestone's
+  // getVehicleDef) — same required fields, same physics invariant.
+  function validateVehicleLike(kind, id, v){
+    need(typeof v.purchaseCost==='number', `${kind} "${id}" is missing a numeric purchaseCost`);
+    need(typeof v.capacity==='number', `${kind} "${id}" is missing a numeric capacity`);
+    need(typeof v.engineForce==='number', `${kind} "${id}" is missing a numeric engineForce`);
+    need(typeof v.brakeForce==='number', `${kind} "${id}" is missing a numeric brakeForce`);
+    need(v.brakeForce > v.engineForce, `${kind} "${id}" has brakeForce (${v.brakeForce}) <= engineForce (${v.engineForce}) — decel must exceed accel at any mass`);
+    need(v.resource===null || pack.resources[v.resource], `${kind} "${id}" references undefined resource "${v.resource}"`);
+  }
+  for(const [id, v] of Object.entries(pack.vehicles)) validateVehicleLike('vehicle', id, v);
+  for(const [id, v] of Object.entries(pack.trains)) validateVehicleLike('train', id, v);
+  for(const [id, t] of Object.entries(pack.rail)){
+    need(typeof t.costPerTile==='number', `rail def "${id}" is missing a numeric costPerTile`);
+  }
+}
+
+const CONTENT_PACK = JSON.parse(document.getElementById('content-pack').textContent);
+validateContentPack(CONTENT_PACK);
+const RESOURCES = CONTENT_PACK.resources;
 const RESOURCE = RESOURCES.ore; // back-compat alias: code/data written for the single-resource era still works
-const RECIPES = {
-  extract_ore: { inputs:[], outputs:[{resource:'ore', amount:1}], durationTicks:4 },
-  smelt_steel: { inputs:[{resource:'ore', amount:2}], outputs:[{resource:'steel', amount:1}], durationTicks:6 },
-};
+const RECIPES = CONTENT_PACK.recipes;
+const BUILDING_DEFS = CONTENT_PACK.buildings;
+const VEHICLE_DEFS = CONTENT_PACK.vehicles;
+const RAIL_DEFS = CONTENT_PACK.rail;
+const TRAIN_DEFS = CONTENT_PACK.trains;
+
 const INITIAL_TREASURY = 5000; // starting cash — bumped up from 1000 now that a Mine->Mill->Town chain needs multiple buildings, stations, and trucks before any income comes in
 const ROAD_COST_PER_TILE = 10;
 const ELEVATED_COST_MULTIPLIER = 2; // bridges cost more per tile (§16.2-style layer multiplier)
@@ -251,46 +350,6 @@ const TRANSFER_RATE = 4;           // units moved per tick during load/unload
 const TICK_MS = 300;               // fixed simulation timestep
 const CONSUMPTION_PER_CAPITA = 0.02; // resource drained per tick, per resident (§16-style: data-defined rate)
 
-const BUILDING_DEFS = {
-  mine:    { buildCost: 150, tiers: { small:{cap:20, add:0}, large:{cap:50, add:100} }, color:'#7a5230', label:'Mine', footprint:{w:2,h:2}, recipe:'extract_ore' },
-  mill:    { buildCost: 220, tiers: { small:{cap:20, add:0}, large:{cap:50, add:120} }, color:'#8a4a3a', label:'Steel Mill', footprint:{w:3,h:2}, recipe:'smelt_steel' },
-  town:    { buildCost: 100, tiers: { small:{cap:20, add:0, population:50}, large:{cap:50, add:80, population:150} }, color:'#3a6ea5', label:'Town', footprint:{w:3,h:2} },
-  station: { buildCost: 60,  tiers: { small:{cap:0, add:0}, large:{cap:0, add:0} }, color:'#c9a227', label:'Station', footprint:{w:1,h:1} },
-  // A Rail Depot is a true cross-mode transfer node: it has real Storage
-  // (unlike a Station) so it can absorb the rate mismatch between a train
-  // dropping off dozens of units at once and trucks drawing it down a few
-  // at a time. Road access works exactly like a Mine/Mill/Town — a Station
-  // built touching it does the docking — and it separately has full-
-  // perimeter rail access (any touching rail tile), so no facing UI is
-  // needed on either side.
-  depot:   { buildCost: 300, tiers: { small:{cap:30, add:0}, large:{cap:80, add:150} }, color:'#6b5b95', label:'Rail Depot', footprint:{w:2,h:2} },
-};
-const VEHICLE_DEFS = {
-  // Bulk trucks haul raw ore; flatbeds haul finished steel. A vehicle's
-  // `resource` is fixed for its whole life — it's what makes "different
-  // vehicles transport different resources" an enforced rule rather than
-  // just a naming convention: a bulk truck can't be given a steel stop.
-  bulk: { purchaseCost:200, runningCostPerTick:1, capacity:10, sellFraction:0.4, label:'Bulk Truck', resource:'ore', color:'#e0a840',
-    maxSpeedTilesPerTick: 1.2, massEmpty: 5, engineForce: 0.6, brakeForce: 1.8, lengthTiles: 1.3,
-  },
-  flatbed: { purchaseCost:260, runningCostPerTick:1.2, capacity:8, sellFraction:0.4, label:'Flatbed Truck', resource:'steel', color:'#c96f3a',
-    maxSpeedTilesPerTick: 1.1, massEmpty: 6, engineForce: 0.55, brakeForce: 1.7, lengthTiles: 1.5,
-  },
-};
-const RAIL_DEFS = {
-  track: { costPerTile: 25 }, // pricier than road, matching §16.2's layer-multiplier spirit
-};
-const TRAIN_DEFS = {
-  // Unlike trucks, a train's cargo resource is NOT fixed at creation — it's
-  // set per-trip by whichever `load` order it executes (Cargo.resource
-  // starts null and is assigned at the point of loading; see tickTrainMovement).
-  // That's a deliberate divergence from trucks: a train is a much bigger
-  // capital commitment, and part of rail's identity is "one expensive asset
-  // serving several parts of the network" rather than "buy one train per resource."
-  freight: { purchaseCost:900, runningCostPerTick:3, capacity:40, sellFraction:0.4, label:'Freight Train', resource:null, color:'#9b6bd6',
-    maxSpeedTilesPerTick: 1.6, massEmpty: 40, engineForce: 3.0, brakeForce: 6.0, lengthTiles: 4,
-  },
-};
 // Single lookup point for "what def table is this vehicle type in" — used
 // everywhere a truck-or-train's stats/cost/label are needed, so adding a
 // third vehicle family (ship, plane) later only means adding one more def
