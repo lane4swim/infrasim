@@ -17,6 +17,52 @@ function frame(){
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 
+// Edge midpoint for one side of cell (x,y) — where a connection to that
+// neighbor actually crosses the tile boundary.
+const PORT_OFFSET = {N:[0.5,0], S:[0.5,1], E:[1,0.5], W:[0,0.5]};
+function trackPort(x, y, dir){
+  const [ox,oy] = PORT_OFFSET[dir];
+  return [x*CELL + ox*CELL, y*CELL + oy*CELL];
+}
+// Exactly 2 connected sides is the only case with one obvious, unambiguous
+// line to draw — straight through for an opposite pair (N-S/E-W), a clean
+// 45° diagonal cutting the corner for an adjacent pair (e.g. N-W) — so
+// that's the only case drawn as a direct port-to-port line. Everything
+// else has no single pair to prefer: 0 connections (isolated tile) or 1
+// (dead end) draws a core with at most one spoke, same as multiple
+// directions (a T- or 4-way junction) draws a core with one spoke per
+// side, all meeting at the tile's center — unchanged from before this
+// scheme, since a junction genuinely has multiple lines converging here,
+// not one to straighten out.
+function drawTrackCell(x, y, dirs, color, margin){
+  const width = CELL - margin*2;
+  const cx = x*CELL+CELL/2, cy = y*CELL+CELL/2;
+  if(dirs.length === 2){
+    const [a,b] = dirs.map(d => trackPort(x,y,d));
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.lineCap = 'butt';
+    ctx.beginPath();
+    ctx.moveTo(a[0], a[1]);
+    ctx.lineTo(b[0], b[1]);
+    ctx.stroke();
+    return;
+  }
+  ctx.fillStyle = color;
+  ctx.fillRect(cx-width/2, cy-width/2, width, width); // core — also what a lone spoke's flat end blends into
+  if(dirs.length === 0) return; // isolated tile: core only, reads as disconnected
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineCap = 'butt';
+  for(const dir of dirs){
+    const [px,py] = trackPort(x,y,dir);
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(px, py);
+    ctx.stroke();
+  }
+}
+
 function render(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
   // grid lines
@@ -25,13 +71,16 @@ function render(){
   for(let x=0;x<=GRID_W;x++){ ctx.beginPath(); ctx.moveTo(x*CELL+.5,0); ctx.lineTo(x*CELL+.5,GRID_H*CELL); ctx.stroke(); }
   for(let y=0;y<=GRID_H;y++){ ctx.beginPath(); ctx.moveTo(0,y*CELL+.5); ctx.lineTo(GRID_W*CELL,y*CELL+.5); ctx.stroke(); }
 
-  // roads — a core square plus a stub toward each side with an established
-  // edge connection, so an isolated tile visibly reads as disconnected and
-  // a through-route reads as a continuous line, instead of every road tile
-  // looking identical regardless of what it actually connects to. Ground is
-  // drawn first, elevated on top in a distinct color so a crossing (both
-  // layers occupying the same cell without connecting) is visible as two
-  // independent lines rather than one merged road.
+  // roads — connected edges render as a single straight line between their
+  // two port midpoints, so an isolated tile visibly reads as disconnected,
+  // a through-route reads as one continuous line, and — the point of this
+  // scheme — a turn reads as a genuine diagonal cutting the corner, not a
+  // blocky right-angle elbow bent through the tile's center; see
+  // drawTrackCell below for exactly which cases get a direct line vs. a
+  // center-based spoke. Ground is drawn first, elevated on top in a
+  // distinct color so a crossing (both layers occupying the same cell
+  // without connecting) is visible as two independent lines rather than
+  // one merged road.
   drawRoadLayer('ground', getCss('--road'), 8);
   drawRoadLayer('elevated', '#7fb8c9', 12);
   // Rail reuses drawRoadLayer entirely unchanged — same {track,edges,
@@ -73,20 +122,14 @@ function render(){
   }
 
   function drawRoadLayer(layerName, color, margin){
-    ctx.fillStyle = color;
     for(const [k,cell] of world.grid){
       const track = cell.layers[layerName];
       if(!track.track) continue;
       const [x,y] = k.split(',').map(Number);
-      ctx.fillStyle = color;
-      ctx.fillRect(x*CELL+margin, y*CELL+margin, CELL-margin*2, CELL-margin*2); // core
+      const connectedDirs = ROAD_DIRS.filter(d => track.edges[d.dir]).map(d => d.dir);
+      drawTrackCell(x, y, connectedDirs, color, margin);
       for(const {dir,dx,dy,opp} of ROAD_DIRS){
         if(!track.edges[dir]) continue;
-        ctx.fillStyle = color;
-        if(dir==='N') ctx.fillRect(x*CELL+margin, y*CELL, CELL-margin*2, margin);
-        if(dir==='S') ctx.fillRect(x*CELL+margin, y*CELL+CELL-margin, CELL-margin*2, margin);
-        if(dir==='E') ctx.fillRect(x*CELL+CELL-margin, y*CELL+margin, margin, CELL-margin*2);
-        if(dir==='W') ctx.fillRect(x*CELL, y*CELL+margin, margin, CELL-margin*2);
         // One-way arrow: drawn only from the side that's still allowed to
         // depart, so each physical one-way edge gets exactly one arrow.
         const nTrack = getCell(x+dx, y+dy).layers[layerName];

@@ -978,3 +978,36 @@ and no console errors or worker errors occur across any of it.
   main thread regardless, and `OffscreenCanvas` support/ergonomics is a
   separate, genuinely bigger milestone on its own, not a natural extension
   of this one.
+
+---
+
+# Addendum — connected edges render as a straight line, not a right-angle elbow
+
+A pure rendering change, applying equally to all three track layers
+(ground, elevated, rail) since they all share the same
+`{track, edges, oneWayBlocked}` shape and the one `drawRoadLayer` function
+that draws them (`render.js`). Nothing about world state, pathfinding, or
+any other system changed.
+
+Previously, a tile's connections were drawn as a filled core square plus
+one rectangular stub per connected side, all meeting in the tile's
+center — fine for a straight through-route (two stubs opposite each
+other already look like one continuous line), but a turn (e.g. connected
+only to the North and West) rendered as a blocky right-angle elbow bent
+through the middle of the tile, not how an actual road or rail bend looks.
+
+`drawTrackCell` now draws connections based on how many sides a tile
+connects to:
+- **Exactly 2** — the only case with one unambiguous line to draw — gets
+  a single straight line directly between the two sides' port midpoints
+  (`trackPort`), with no detour through the center. An opposite pair
+  (N-S or E-W) is still a straight line, same as before; an adjacent pair
+  (e.g. N-W) is now a genuine 45° diagonal cutting the corner.
+- **0, 1, or 3+** connected sides (an isolated tile, a dead end, or a
+  T-/4-way junction) still meet at the tile's center, unchanged from
+  before — there's no single pair to straighten out when multiple lines
+  genuinely converge at one point, or when there's at most one line at
+  all.
+
+One-way arrows are unaffected — `drawOneWayArrow` didn't change, and is
+still called once per one-way edge exactly as before.
