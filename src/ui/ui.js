@@ -34,6 +34,7 @@ function toolHint(t){
     bulktruck:'Click a ground road tile to buy a Bulk Truck ($200) there. Carries Ore only.',
     flatbedtruck:'Click a ground road tile to buy a Flatbed Truck ($260) there. Carries Steel only.',
     track:`Click or drag to build rail track ($${RAIL_DEFS.track.costPerTile}/tile). Uncheck auto-connect to place tiles without joining them. Crosses ground road at a right angle only — it won't connect through road running the same direction.`,
+    trackconnect:'Click a track tile, then click an adjacent track tile — connects them if not joined, disconnects them if they are.',
     signal:'Click a track tile, then click an adjacent connected tile — trains will only be allowed to travel from the first to the second. A signal also marks a hard block boundary.',
     depot:`Click the top-left cell for a Rail Depot (${BUILDING_DEFS.depot.footprint.w}x${BUILDING_DEFS.depot.footprint.h}). Choose which resource it buffers. Build a Station touching it for road access; any touching track tile gives it rail access.`,
     trainyard:`Click the top-left cell for a Train Yard (${BUILDING_DEFS.trainyard.footprint.w}x${BUILDING_DEFS.trainyard.footprint.h}). This is where trains get assembled — it doesn't move cargo itself. Any touching track tile gives it rail access.`,
@@ -191,6 +192,7 @@ function handleClick(cell){
   if(currentTool==='bulktruck'){ postCommand('cmdPurchaseVehicle', [x,y,'bulk']); return; }
   if(currentTool==='flatbedtruck'){ postCommand('cmdPurchaseVehicle', [x,y,'flatbed']); return; }
   if(currentTool==='track'){ postCommand('cmdBuildTrack', [x,y,currentAutoConnect()]); return; }
+  if(currentTool==='trackconnect'){ handleConnectClick(x,y); return; }
   if(currentTool==='signal'){ handleOneWayClick(x,y); return; }
   if(currentTool==='depot'){ postCommand('cmdBuildBuilding', ['depot', x, y, currentTier(), null, currentDepotResource()]); return; }
   if(currentTool==='trainyard'){ postCommand('cmdBuildBuilding', ['trainyard', x, y, 'small']); return; }
@@ -198,21 +200,27 @@ function handleClick(cell){
 }
 
 function handleConnectClick(x,y){
-  const layer = currentLayer();
+  // Doubles as rail's "Connect / Disconnect Track" (currentTool==='trackconnect')
+  // — same command, same two-click interaction, just always on the rail
+  // layer rather than whichever ground/elevated layer is currently
+  // selected, mirroring handleOneWayClick's signal/oneway split below.
+  // Without this, rail track built with auto-connect off (or that's had a
+  // connection manually severed) had no way back to being joined again.
+  const layer = currentTool==='trackconnect' ? 'rail' : currentLayer();
   if(!getCell(x,y).layers[layer].track){
-    logEvent(`No ${layer} road tile there.`, 'warn');
+    logEvent(`No ${layer} track there.`, 'warn');
     connectFirst = null;
-    document.getElementById('hint').textContent = toolHint('connect');
+    document.getElementById('hint').textContent = toolHint(currentTool);
     return;
   }
   if(!connectFirst){
     connectFirst = {x,y};
-    document.getElementById('hint').textContent = 'Now click an adjacent road tile to connect or disconnect it.';
+    document.getElementById('hint').textContent = 'Now click an adjacent tile on the same network to connect or disconnect it.';
     return;
   }
   postCommand('cmdToggleConnection', [connectFirst.x, connectFirst.y, x, y, layer]);
   connectFirst = null;
-  document.getElementById('hint').textContent = toolHint('connect');
+  document.getElementById('hint').textContent = toolHint(currentTool);
 }
 
 function handleOneWayClick(x,y){

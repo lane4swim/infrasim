@@ -1011,3 +1011,31 @@ connects to:
 
 One-way arrows are unaffected — `drawOneWayArrow` didn't change, and is
 still called once per one-way edge exactly as before.
+
+---
+
+# Addendum — a rail-specific Connect / Disconnect Track tool
+
+`cmdToggleConnection` was always layer-agnostic — it happily accepts
+`'rail'` and has since the Rail milestone (Test 8 already exercises it
+directly). But the UI never exposed a way to reach it for rail: the
+toolbar's "Connect / Disconnect" tool always used `currentLayer()`, and
+that dropdown only ever offers Ground or Elevated. Rail track built with
+auto-connect off, or that had a connection manually severed, had no way
+back to being joined again — the command worked, there was just no
+button that would ever call it with `layer:'rail'`.
+
+Fixed the same way rail's one-way toggle ("Toggle Signal Direction")
+already handled the identical problem: a new toolbar button,
+`data-tool="trackconnect"`, that reuses `handleConnectClick` entirely but
+hardcodes `layer = 'rail'` instead of reading `currentLayer()` — mirroring
+`handleOneWayClick`'s existing `currentTool==='signal' ? 'rail' : ...`
+split exactly. No command changed at all; this was purely a missing UI
+entry point.
+
+Verified in a real browser: two rail tiles built with auto-connect off
+start genuinely disconnected (`findRailPath` between them returns `null`),
+the new tool connects them (`findRailPath` then finds the direct path)
+and disconnects them again, and the original ground/elevated "Connect /
+Disconnect" tool still correctly rejects a rail-only cell rather than
+silently doing the wrong thing.
