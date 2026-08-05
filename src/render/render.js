@@ -157,29 +157,36 @@ function render(){
     }
     ctx.fillStyle = v.state==='blocked' ? getCss('--danger') : getVehicleStats(v).color;
     const cx = drawX*CELL+CELL/2, cy = drawY*CELL+CELL/2;
-    if(isTrain(v.id)){
-      // A train is a much bigger commitment than a truck — drawn as a
-      // rectangle rather than a dot so it reads as visually distinct on
-      // the rail layer, oriented along its direction of travel. Sized by
-      // v.length (which already reflects the whole consist — engine plus
-      // every wagon — since randomizedMovement derived it from
-      // getTrainStats), so a longer train visibly reads as longer.
-      const horizontal = v.path && v.pathIndex < v.path.length-1
-        ? v.path[v.pathIndex+1].x !== v.path[v.pathIndex].x
-        : true;
-      ctx.save();
-      ctx.translate(cx,cy);
-      const longSide = CELL * Math.max(0.6, Math.min(v.length/5, 2.5)); // consist length varies a lot now (1 wagon vs. 6) — scale within reason, don't let it swallow the grid
-      const w = horizontal ? longSide : CELL*0.5;
-      const h = horizontal ? CELL*0.5 : longSide;
-      ctx.fillRect(-w/2, -h/2, w, h);
-      ctx.restore();
-    } else {
-      const r = v.layer==='elevated' ? 6 : 8;
-      ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
-      if(v.layer==='elevated'){ ctx.strokeStyle='#7fb8c9'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(cx,cy,r+2,0,Math.PI*2); ctx.stroke(); }
+
+    // Every vehicle is drawn as a rectangle oriented along its direction of
+    // travel, its long side scaled 1:1 with its own `length` (tile-units) —
+    // the SAME unit `footprintKeysFor` already reserves cells with
+    // (§ shared movement engine), so a vehicle's rendered footprint and its
+    // actual physical reservation footprint agree. This is deliberately
+    // literal rather than compressed: a heavily-loaded train (engine + up
+    // to 6 wagons, ~10-20 tiles) is SUPPOSED to visibly span a big stretch
+    // of track — that's the same "one expensive asset, one big commitment"
+    // identity the Train Yard's cost/capacity numbers already carry,
+    // arriving for free with an honest length scale instead of a special
+    // train-only case. A truck's much smaller (~1.2-1.7 tile) length still
+    // reads as a subtle size difference between e.g. a Bulk Truck and the
+    // slightly longer Flatbed, rather than needing its own compressed scale.
+    const horizontal = v.path && v.pathIndex < v.path.length-1
+      ? v.path[v.pathIndex+1].x !== v.path[v.pathIndex].x
+      : true;
+    const longPx = CELL * v.length;
+    const shortPx = CELL * 0.42;
+    const w = horizontal ? longPx : shortPx;
+    const h = horizontal ? shortPx : longPx;
+    ctx.fillRect(cx-w/2, cy-h/2, w, h);
+    if(v.layer==='elevated'){
+      ctx.strokeStyle='#7fb8c9'; ctx.lineWidth=2;
+      ctx.strokeRect(cx-w/2-2, cy-h/2-2, w+4, h+4);
     }
-    if(v===selected){ ctx.strokeStyle='#fff'; ctx.lineWidth=2; ctx.strokeRect(cx-9, cy-9, 18, 18); }
+    if(v===selected){
+      ctx.strokeStyle='#fff'; ctx.lineWidth=2;
+      ctx.strokeRect(cx-w/2-3, cy-h/2-3, w+6, h+6);
+    }
   }
 
   // hover ghost for build tools — sized to the building's footprint where relevant
