@@ -482,6 +482,34 @@ both intact); a second rail tile placed parallel to the road at the same
 cell is placed but fails to connect through it, via both auto-connect
 and a manual Connect attempt.
 
+## Addendum — a train physically blocks the crossing while it's there
+
+A crossing being geometrically valid (perpendicular only, see above)
+said nothing about right-of-way — trucks and trains still ran through the
+same cell without ever noticing each other, unlike a real level crossing
+where a train always has priority and road traffic simply waits.
+
+`markTrainCrossingsOccupied` (`systems.js`) now seeds a truck's own
+occupancy map — the same one `gapAheadFor`/`advanceAlongPath` already
+check for other trucks — with every crossing cell a train's current
+footprint covers. This is deliberately not a new reservation/acquire-
+release table like rail's own block signaling: the map is rebuilt from
+scratch every tick anyway, so a crossing simply stops appearing in it the
+instant the train's footprint no longer covers that cell — "release" is
+just "didn't get marked this tick," nothing to leak or forget. Because
+it's the *same* occupancy map trucks already treat another vehicle's
+position as, a train at a crossing gets both smooth braking on approach
+and a hard stop at the boundary for free — no new physics. The rule is
+one-directional, matching a real crossing's right-of-way: trains never
+check truck occupancy at all, only the reverse.
+
+Covered by `test-rail.js`'s Test 9: a train placed directly onto a
+crossing cell holds a truck back from ever advancing past it for the
+whole time it sits there, then the truck proceeds on its own, unprompted,
+the moment the train is moved off — proving both the block and its
+automatic release, deterministically rather than hoping the two vehicles'
+organic timing happens to coincide.
+
 ---
 
 # Phase 2 — Content-Pack Refactor

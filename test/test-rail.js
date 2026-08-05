@@ -479,5 +479,50 @@ section('Test 8 — road and rail cross only at a right angle, sharing the same 
   check('manually connecting the same parallel overlap is rejected too', manual === false);
 });
 
+section('Test 9 — a train sitting on a road/rail crossing blocks trucks through it, releasing it once clear', () => {
+  const ctx = newGameContext();
+  const ids = run(ctx, `
+    cmdBuildBuilding('mine', 11, 3, 'small');
+    cmdBuildBuilding('station', 10, 3, 'small', 'S', 'ore'); // touches the Mine at (11,3); road dock at (10,4)
+    for(let x=2; x<=10; x++) cmdBuildRoad(x, 4, 'ground', true); // crosses the rail at (5,4)
+    for(let y=1; y<=8; y++) cmdBuildTrack(5, y, true);
+
+    cmdPurchaseVehicle(2, 4, 'bulk');
+    const truck = [...world.entities.values()].find(e=>e.kind==='vehicle' && e.type==='bulk');
+    const station = [...world.entities.values()].find(e=>e.kind==='building' && e.type==='station');
+    cmdSetOrders(truck, [{nodeId: station.id, action:'unload_all', resource:'ore'}]);
+
+    // Teleported straight onto the crossing cell rather than driven there —
+    // this test is about the blocking mechanism itself, not about timing
+    // two vehicles into organic coincidence.
+    const train = createTrain(5, 4, 'diesel', 'ore_wagon', 2);
+
+    return {truckId: truck.id, trainId: train.id};
+  `);
+
+  let maxTruckX = -1;
+  for(let i=0;i<80;i++){
+    run(ctx, `simTick();`);
+    const x = run(ctx, `return world.entities.get(${ids.truckId}).x;`);
+    if(x > maxTruckX) maxTruckX = x;
+  }
+  check('the truck never advances past the crossing while the train occupies it', maxTruckX <= 4, `truck reached x=${maxTruckX}`);
+
+  // Move the train off the crossing entirely — nothing should have
+  // latched the block permanently; the truck must now proceed on its own,
+  // no new command or nudge needed.
+  run(ctx, `
+    const train = world.entities.get(${ids.trainId});
+    train.x = 5; train.y = 2;
+  `);
+  let truckCrossed = false;
+  for(let i=0;i<200;i++){
+    run(ctx, `simTick();`);
+    const x = run(ctx, `return world.entities.get(${ids.truckId}).x;`);
+    if(x > 5){ truckCrossed = true; break; }
+  }
+  check('the truck proceeds through the crossing on its own once the train has cleared it', truckCrossed);
+});
+
 console.log(failures===0 ? `\nAll checks passed.` : `\n${failures} check(s) FAILED.`);
 process.exit(failures===0 ? 0 : 1);

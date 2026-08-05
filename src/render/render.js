@@ -57,12 +57,12 @@ function render(){
   // rail track physically share the same grid cell (necessarily crossing
   // at a right angle; see connectNewTileEdges/directionClaimedByOtherNetwork
   // in commands.js for why the two networks can never overlap in the same
-  // direction here). Purely informational, same spirit as the Ramp diamond
-  // above — nothing about pathfinding or occupancy treats this cell any
-  // differently from an ordinary road or rail tile.
-  for(const [k,cell] of world.grid){
-    if(!cell.layers.ground.track || !cell.layers.rail.track) continue;
+  // direction here). Also exactly where a train passing through blocks
+  // truck traffic until it clears — see markTrainCrossingsOccupied in
+  // systems.js — so this marker doubles as "trucks may have to wait here."
+  for(const [k] of world.grid){
     const [x,y] = k.split(',').map(Number);
+    if(!isRoadRailCrossing(x,y)) continue;
     const cx = x*CELL+CELL/2, cy = y*CELL+CELL/2;
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 2;

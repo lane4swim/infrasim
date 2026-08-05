@@ -183,8 +183,32 @@ function advanceAlongPath(v, occupied, canEnter, onEnter){
   if(v.pathIndex >= v.path.length-1) v.frac = 0; // discard any leftover speed at the very end
 }
 
+// A train physically occupying a road/rail crossing cell blocks truck
+// traffic through it — real level-crossing right-of-way, trains always
+// win, never the reverse (trains never check truck occupancy at all).
+// Seeds the SAME occupied map trucks already check in gapAheadFor/
+// advanceAlongPath with a sentinel value distinct from any real vehicle
+// id, at the *ground*-layer key for each crossing cell a train's
+// footprint currently covers — trucks get both smooth braking on
+// approach and a hard stop at the boundary for free, no new physics
+// needed. There's nothing to separately "release": this map is rebuilt
+// from scratch every tick (same as the rest of buildOccupancyMap), so a
+// crossing simply stops appearing in it the moment the train's footprint
+// no longer covers that cell.
+function markTrainCrossingsOccupied(occupied){
+  for(const id of queryEntities('Movement').filter(isTrain)){
+    const train = world.entities.get(id);
+    for(const key of footprintKeysFor(train)){
+      const [xStr,yStr] = key.split(',');
+      const x = Number(xStr), y = Number(yStr);
+      if(isRoadRailCrossing(x,y)) occupied.set(posKey(x,y,'ground'), `crossing-${id}`);
+    }
+  }
+}
+
 function tickVehicles(){
   const occupied = buildOccupancyMap(queryEntities('Movement').filter(id=>!isTrain(id)));
+  markTrainCrossingsOccupied(occupied);
 
   for(const id of queryEntities('Movement','Orders','Cargo','Status')){
     if(isTrain(id)) continue; // trains run their own tickTrainMovement below

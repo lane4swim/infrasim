@@ -20,6 +20,16 @@ function neighbors4(x,y){
   return [[x+1,y],[x-1,y],[x,y+1],[x,y-1]].filter(([nx,ny])=>inBounds(nx,ny));
 }
 function isRoad(x,y,layer){ return getCell(x,y).layers[layer||'ground'].track; }
+// A cell where ground road and rail physically coexist — necessarily a
+// perpendicular crossing (see connectNewTileEdges/directionClaimedByOtherNetwork
+// in commands.js for why the same direction can never belong to both). Used
+// both for the crossing marker (render.js) and for trains blocking road
+// traffic through it while they're physically there (see
+// markTrainCrossingsOccupied in systems.js).
+function isRoadRailCrossing(x,y){
+  const cell = getCell(x,y);
+  return cell.layers.ground.track && cell.layers.rail.track;
+}
 
 // Every cell a building occupies, derived from its anchor (x,y) + footprint.
 function footprintCells(building){
