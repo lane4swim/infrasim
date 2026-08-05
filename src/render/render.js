@@ -53,6 +53,25 @@ function render(){
     ctx.restore();
   }
 
+  // level crossings — a small white X marking a cell where ground road and
+  // rail track physically share the same grid cell (necessarily crossing
+  // at a right angle; see connectNewTileEdges/directionClaimedByOtherNetwork
+  // in commands.js for why the two networks can never overlap in the same
+  // direction here). Purely informational, same spirit as the Ramp diamond
+  // above — nothing about pathfinding or occupancy treats this cell any
+  // differently from an ordinary road or rail tile.
+  for(const [k,cell] of world.grid){
+    if(!cell.layers.ground.track || !cell.layers.rail.track) continue;
+    const [x,y] = k.split(',').map(Number);
+    const cx = x*CELL+CELL/2, cy = y*CELL+CELL/2;
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx-6,cy-6); ctx.lineTo(cx+6,cy+6);
+    ctx.moveTo(cx+6,cy-6); ctx.lineTo(cx-6,cy+6);
+    ctx.stroke();
+  }
+
   function drawRoadLayer(layerName, color, margin){
     ctx.fillStyle = color;
     for(const [k,cell] of world.grid){

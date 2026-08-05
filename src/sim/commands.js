@@ -1,14 +1,36 @@
 // ---------------------------------------------------------------------
 // COMMANDS  (§7 — the only way the world is mutated by the player)
 // ---------------------------------------------------------------------
+// Ground road and rail share the same physical grade — a real level
+// crossing is two networks crossing at a right angle, never running side
+// by side through the same point. So a single direction (N/S/E/W) at a
+// given cell can belong to a through-connected ground-road edge OR a
+// through-connected rail edge, never both; the two networks are free to
+// occupy perpendicular directions at the same cell (a clean crossing:
+// road claims E/W, rail claims N/S), but never the same direction (which
+// would mean the two literally overlapping in the same lane). Elevated
+// has no counterpart here — a bridge passes physically above rail, the
+// same non-interaction it already has with ground road absent a Ramp — so
+// this only ever applies between 'ground' and 'rail'.
+const GROUND_RAIL_COUNTERPART = {ground:'rail', rail:'ground'};
+function directionClaimedByOtherNetwork(x,y,layer,dir){
+  const counterpart = GROUND_RAIL_COUNTERPART[layer];
+  if(!counterpart) return false; // elevated: no counterpart, no constraint
+  return getCell(x,y).layers[counterpart].edges[dir];
+}
 // Connect only the specific edges that actually border an existing tile on
-// the SAME layer — a ground tile and an elevated (or rail) tile at the same
-// (x,y) never connect to each other just by overlapping; that's what lets
-// an elevated road cross a ground road, or track cross a road entirely,
-// without joining it. Shared by every "lay a tile" command (road, rail
-// track) since none of this is road-specific.
+// the SAME layer — a ground tile and an elevated tile at the same (x,y)
+// never connect to each other just by overlapping; that's what lets an
+// elevated road cross a ground road without joining it. Ground and rail
+// additionally skip any direction the other one already holds (see
+// directionClaimedByOtherNetwork above) — the mechanism that turns a
+// same-cell overlap into a real perpendicular crossing instead of two
+// networks silently fusing. Shared by every "lay a tile" command (road,
+// rail track) since none of this is road-specific.
 function connectNewTileEdges(x,y,layer,track){
   for(const {dir,dx,dy,opp} of ROAD_DIRS){
+    if(directionClaimedByOtherNetwork(x,y,layer,dir)) continue;
+    if(directionClaimedByOtherNetwork(x+dx,y+dy,layer,opp)) continue;
     const nTrack = getCell(x+dx,y+dy).layers[layer];
     if(nTrack.track){ track.edges[dir] = true; nTrack.edges[opp] = true; }
   }
@@ -62,6 +84,11 @@ function cmdToggleConnection(x1,y1,x2,y2,layer){
     aTrack.oneWayBlocked[d.dir] = false; bTrack.oneWayBlocked[d.opp] = false;
     logEvent('Connection removed.');
   } else {
+    if(directionClaimedByOtherNetwork(x1,y1,layer,d.dir) || directionClaimedByOtherNetwork(x2,y2,layer,d.opp)){
+      const other = layer==='rail' ? 'road' : 'rail';
+      logEvent(`Can't connect — ${other} track already runs through here in that direction; only a perpendicular crossing is possible.`, 'warn');
+      return;
+    }
     aTrack.edges[d.dir] = true; bTrack.edges[d.opp] = true; // new connections start two-way
     logEvent('Connection made.');
   }

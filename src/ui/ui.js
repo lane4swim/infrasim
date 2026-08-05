@@ -22,7 +22,7 @@ document.querySelectorAll('.tool-btn').forEach(btn=>{
 function toolHint(t){
   return {
     select:'Click a building or truck to inspect it.',
-    road:'Click or drag to build road on the selected layer ($10/tile, x2 elevated). Uncheck auto-connect to place tiles without joining them.',
+    road:'Click or drag to build road on the selected layer ($10/tile, x2 elevated). Uncheck auto-connect to place tiles without joining them. On the ground layer, crosses rail track at a right angle only — it won\'t connect through track running the same direction.',
     ramp:'Click a cell that already has both a ground and an elevated road tile to link them ($40).',
     connect:'Click a road tile, then click an adjacent road tile on the same layer — connects them if not joined, disconnects them if they are.',
     oneway:'Click a road tile, then click an adjacent connected tile — traffic will only be allowed from the first to the second.',
@@ -33,7 +33,7 @@ function toolHint(t){
     demolish:'Click a road or track tile (on the selected layer — rail is checked automatically) or a building to remove it.',
     bulktruck:'Click a ground road tile to buy a Bulk Truck ($200) there. Carries Ore only.',
     flatbedtruck:'Click a ground road tile to buy a Flatbed Truck ($260) there. Carries Steel only.',
-    track:`Click or drag to build rail track ($${RAIL_DEFS.track.costPerTile}/tile). Uncheck auto-connect to place tiles without joining them.`,
+    track:`Click or drag to build rail track ($${RAIL_DEFS.track.costPerTile}/tile). Uncheck auto-connect to place tiles without joining them. Crosses ground road at a right angle only — it won't connect through road running the same direction.`,
     signal:'Click a track tile, then click an adjacent connected tile — trains will only be allowed to travel from the first to the second. A signal also marks a hard block boundary.',
     depot:`Click the top-left cell for a Rail Depot (${BUILDING_DEFS.depot.footprint.w}x${BUILDING_DEFS.depot.footprint.h}). Choose which resource it buffers. Build a Station touching it for road access; any touching track tile gives it rail access.`,
     trainyard:`Click the top-left cell for a Train Yard (${BUILDING_DEFS.trainyard.footprint.w}x${BUILDING_DEFS.trainyard.footprint.h}). This is where trains get assembled — it doesn't move cargo itself. Any touching track tile gives it rail access.`,

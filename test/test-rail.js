@@ -434,5 +434,50 @@ section('Test 7 — Rail Depot forwards to a directly/chain-linked industry, lik
   check('the Town paid delivery income for ore it actually received', treasuryCredited);
 });
 
+section('Test 8 — road and rail cross only at a right angle, sharing the same grade', () => {
+  const ctx = newGameContext();
+  const s = run(ctx, `
+    // Ground road running E-W through (5,5); rail running N-S through the
+    // exact same cell — a clean perpendicular crossing.
+    for(let x=3; x<=7; x++) cmdBuildRoad(x, 5, 'ground', true);
+    for(let y=2; y<=8; y++) cmdBuildTrack(5, y, true);
+
+    const crossing = getCell(5,5);
+    const roadPath = findRoadPath({x:3,y:5,layer:'ground'}, {x:7,y:5,layer:'ground'});
+    const railPath = findRailPath({x:5,y:2}, {x:5,y:8});
+
+    // Now try to run a SECOND rail tile parallel to the road, through the
+    // same crossing cell (6,5 is already ground road) — this should place
+    // the tile but fail to connect through the crossing, since that
+    // direction is already the road's.
+    cmdBuildTrack(6, 5, true);
+    const eastOfCrossing = getCell(6,5);
+
+    return {
+      roadConnectsThrough: crossing.layers.ground.edges.E && crossing.layers.ground.edges.W,
+      railConnectsThrough: crossing.layers.rail.edges.N && crossing.layers.rail.edges.S,
+      roadPathLength: roadPath ? roadPath.length : -1,
+      railPathLength: railPath ? railPath.length : -1,
+      parallelRailTilePlaced: eastOfCrossing.layers.rail.track,
+      parallelRailBlockedAtCrossing: !crossing.layers.rail.edges.E && !eastOfCrossing.layers.rail.edges.W,
+    };
+  `);
+  check('the road still connects straight through the crossing cell (E-W)', s.roadConnectsThrough);
+  check('the rail still connects straight through the crossing cell (N-S), independently', s.railConnectsThrough);
+  check('a truck can still path the full length of the road through the crossing', s.roadPathLength === 5, `got ${s.roadPathLength}`);
+  check('a train can still path the full length of the track through the crossing', s.railPathLength === 7, `got ${s.railPathLength}`);
+  check('a rail tile placed parallel to the road (same direction) still gets placed...', s.parallelRailTilePlaced);
+  check('...but does not connect through the crossing — no same-direction overlap allowed', s.parallelRailBlockedAtCrossing);
+
+  // The manual Connect tool must reject the same parallel overlap, not just
+  // auto-connect — otherwise a player could route around the restriction
+  // with Connect/Disconnect.
+  const manual = run(ctx, `
+    cmdToggleConnection(5,5, 6,5, 'rail');
+    return getCell(5,5).layers.rail.edges.E;
+  `);
+  check('manually connecting the same parallel overlap is rejected too', manual === false);
+});
+
 console.log(failures===0 ? `\nAll checks passed.` : `\n${failures} check(s) FAILED.`);
 process.exit(failures===0 ? 0 : 1);

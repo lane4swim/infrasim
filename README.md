@@ -445,6 +445,43 @@ Station, no truck at all), forwarding into a Train Yard-assembled train,
 delivering through a second Depot chained to a Town via one ordinary
 Station — end to end, with zero trucks anywhere in the test.
 
+## Addendum — Road and rail cross only at a right angle
+
+Ground road and rail were originally fully independent layers: nothing
+stopped both from occupying the same cell in the same direction, so a road
+and a track could silently run parallel through the exact same point —
+not how any real level crossing works, and not a distinction the game
+enforced at all.
+
+Ground road and rail now share the same physical grade: a single
+direction (N/S/E/W) at a given cell can carry a through-connected
+ground-road edge *or* a through-connected rail edge, never both.
+`directionClaimedByOtherNetwork` (`commands.js`) checks this whenever an
+edge is about to form — in `connectNewTileEdges` (auto-connect on
+placing a new tile) and in `cmdToggleConnection` (the manual Connect
+tool, which now rejects the same overlap with a warning instead of
+silently fusing the two networks). Perpendicular directions at the same
+cell are unaffected, so a clean crossing (road claims E/W, rail claims
+N/S) forms automatically through ordinary auto-connect — no special
+"crossing" mode needed. A tile can still be *placed* on a cell the other
+network already occupies; only the specific direction that would overlap
+fails to connect, leaving that side an isolated stub instead. Elevated
+road keeps its existing, unchanged non-interaction with rail (a bridge
+passes physically above it, same as it already does over ground road
+absent a Ramp) — this rule is strictly between `ground` and `rail`.
+
+A crossing cell (both networks physically present) gets a small white X
+marker in `render.js`, the same spirit as the Ramp's diamond — purely
+informational, since pathfinding, occupancy, and block signaling all
+still only ever look at their own layer's edges and never needed to
+change.
+
+Covered by `test-rail.js`'s Test 8: a road and a track crossing at a
+right angle both stay fully connected end to end (truck and train paths
+both intact); a second rail tile placed parallel to the road at the same
+cell is placed but fails to connect through it, via both auto-connect
+and a manual Connect attempt.
+
 ---
 
 # Phase 2 — Content-Pack Refactor
