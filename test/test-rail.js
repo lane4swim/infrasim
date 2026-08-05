@@ -524,5 +524,56 @@ section('Test 9 — a train sitting on a road/rail crossing blocks trucks throug
   check('the truck proceeds through the crossing on its own once the train has cleared it', truckCrossed);
 });
 
+section('Test 10 — a train reserves a crossing well before it physically arrives', () => {
+  const ctx = newGameContext();
+  const ids = run(ctx, `
+    cmdBuildBuilding('mine', 11, 3, 'small');
+    cmdBuildBuilding('station', 10, 3, 'small', 'S', 'ore'); // road dock at (10,4)
+    for(let x=2; x<=10; x++) cmdBuildRoad(x, 4, 'ground', true); // crosses the rail at (5,4)
+    for(let y=0; y<=8; y++) cmdBuildTrack(5, y, true);
+
+    cmdPurchaseVehicle(2, 4, 'bulk');
+    const truck = [...world.entities.values()].find(e=>e.kind==='vehicle' && e.type==='bulk');
+    const station = [...world.entities.values()].find(e=>e.kind==='building' && e.type==='station');
+    cmdSetOrders(truck, [{nodeId: station.id, action:'unload_all', resource:'ore'}]);
+
+    // The train is nowhere near the crossing physically (y=8, 4 tiles south
+    // of it), and deliberately left with NO orders and 'idle' state so
+    // tickTrainMovement's own state machine never touches it — this test
+    // drives the truck via tickVehicles() alone (see the loop below) to
+    // isolate the crossing-reservation mechanism from the train actually
+    // moving. Its manually-set path already runs through the crossing a
+    // few steps ahead. If reservation only ever looked at where a train
+    // currently *is*, this train wouldn't register at the crossing yet.
+    const train = createTrain(5, 8, 'diesel', 'ore_wagon', 2);
+    train.path = [{x:5,y:8},{x:5,y:7},{x:5,y:6},{x:5,y:5},{x:5,y:4},{x:5,y:3},{x:5,y:2},{x:5,y:1},{x:5,y:0}];
+    train.pathIndex = 0;
+
+    return {truckId: truck.id, trainId: train.id};
+  `);
+
+  let maxTruckX = -1;
+  for(let i=0;i<80;i++){
+    run(ctx, `tickVehicles();`);
+    const x = run(ctx, `return world.entities.get(${ids.truckId}).x;`);
+    if(x > maxTruckX) maxTruckX = x;
+  }
+  check('the truck is held before the crossing even though the train is 4 tiles away and not moving', maxTruckX <= 4, `truck reached x=${maxTruckX}`);
+
+  // Clear the reservation (train no longer has a path bringing it toward
+  // the crossing at all) — the truck must proceed on its own.
+  run(ctx, `
+    const train = world.entities.get(${ids.trainId});
+    train.path = null;
+  `);
+  let truckCrossed = false;
+  for(let i=0;i<200;i++){
+    run(ctx, `tickVehicles();`);
+    const x = run(ctx, `return world.entities.get(${ids.truckId}).x;`);
+    if(x > 5){ truckCrossed = true; break; }
+  }
+  check('the truck proceeds once the train no longer has a path reserving the crossing', truckCrossed);
+});
+
 console.log(failures===0 ? `\nAll checks passed.` : `\n${failures} check(s) FAILED.`);
 process.exit(failures===0 ? 0 : 1);

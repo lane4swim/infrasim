@@ -510,6 +510,35 @@ the moment the train is moved off — proving both the block and its
 automatic release, deterministically rather than hoping the two vehicles'
 organic timing happens to coincide.
 
+## Addendum — a train reserves a crossing before it physically arrives
+
+Blocking a crossing only once a train's footprint already covered it
+(the addendum above) left a real gap: a truck could still end up sitting
+on the crossing cell itself the instant before the train got there —
+nothing warned it to stay clear in advance, unlike a real crossing whose
+gates come down *before* the train arrives, precisely so nothing is
+still on the tracks when it does.
+
+`markTrainCrossingsOccupied` (`systems.js`) now also scans a train's
+`path`/`pathIndex` up to `LOOKAHEAD` tiles ahead (the same constant
+`gapAheadFor` already uses for a truck's own collision lookahead — not a
+new number to invent, since a truck's own lookahead never sees further
+than that anyway regardless of how early the reservation actually
+started) and reserves any crossing cell found there, exactly like the
+cells the train's current footprint already covers. A truck approaching
+gets the reservation well before the train is anywhere near the cell —
+same smooth braking and hard stop as before, just triggered earlier —
+so by the time the train actually needs the crossing, nothing is on it.
+Nothing changed about *how* a crossing is blocked, only *when* it starts
+counting as occupied.
+
+Covered by `test-rail.js`'s Test 10: a train sitting 4 tiles from a
+crossing, entirely idle and not moving that tick, still holds a truck
+back from ever reaching the crossing — proving the reservation comes from
+the train's upcoming path, not merely its current position — and the
+truck proceeds on its own once that path no longer runs through the
+crossing at all.
+
 ---
 
 # Phase 2 — Content-Pack Refactor

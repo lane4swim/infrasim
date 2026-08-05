@@ -183,18 +183,32 @@ function advanceAlongPath(v, occupied, canEnter, onEnter){
   if(v.pathIndex >= v.path.length-1) v.frac = 0; // discard any leftover speed at the very end
 }
 
-// A train physically occupying a road/rail crossing cell blocks truck
-// traffic through it — real level-crossing right-of-way, trains always
-// win, never the reverse (trains never check truck occupancy at all).
-// Seeds the SAME occupied map trucks already check in gapAheadFor/
-// advanceAlongPath with a sentinel value distinct from any real vehicle
-// id, at the *ground*-layer key for each crossing cell a train's
-// footprint currently covers — trucks get both smooth braking on
-// approach and a hard stop at the boundary for free, no new physics
-// needed. There's nothing to separately "release": this map is rebuilt
-// from scratch every tick (same as the rest of buildOccupancyMap), so a
-// crossing simply stops appearing in it the moment the train's footprint
-// no longer covers that cell.
+// A train blocks road traffic at a road/rail crossing — real
+// level-crossing right-of-way, trains always win, never the reverse
+// (trains never check truck occupancy at all). Seeds the SAME occupied
+// map trucks already check in gapAheadFor/advanceAlongPath with a
+// sentinel value distinct from any real vehicle id, at the *ground*-layer
+// key for the crossing — trucks get both smooth braking on approach and
+// a hard stop at the boundary for free, no new physics needed.
+//
+// Reserved starting well before the train physically gets there, not
+// just while its footprint already covers the cell — a real crossing's
+// gates come down before the train arrives, precisely so nothing is
+// still sitting on the tracks when it does. A truck's own gapAheadFor
+// never looks further than LOOKAHEAD tiles down ITS OWN path regardless
+// of how early a hazard actually appeared, so reserving the crossing any
+// earlier than that (relative to the train's remaining distance along
+// ITS path) couldn't change what a truck can actually see and react to —
+// LOOKAHEAD is exactly the right amount of lead time, not a new number to
+// invent. Checked against the train's `path`/`pathIndex` rather than its
+// current position, so this covers a train that's still approaching, not
+// only one already on top of the crossing.
+//
+// There's nothing to separately "release" here either: this map is
+// rebuilt from scratch every tick (same as the rest of
+// buildOccupancyMap), so a crossing simply stops appearing in it the
+// moment it's no longer within the train's current footprint or its
+// upcoming LOOKAHEAD-tile reservation window.
 function markTrainCrossingsOccupied(occupied){
   for(const id of queryEntities('Movement').filter(isTrain)){
     const train = world.entities.get(id);
@@ -202,6 +216,12 @@ function markTrainCrossingsOccupied(occupied){
       const [xStr,yStr] = key.split(',');
       const x = Number(xStr), y = Number(yStr);
       if(isRoadRailCrossing(x,y)) occupied.set(posKey(x,y,'ground'), `crossing-${id}`);
+    }
+    if(train.path){
+      for(let i=1; i<=LOOKAHEAD && train.pathIndex+i < train.path.length; i++){
+        const node = train.path[train.pathIndex+i];
+        if(isRoadRailCrossing(node.x, node.y)) occupied.set(posKey(node.x, node.y, 'ground'), `crossing-${id}`);
+      }
     }
   }
 }
