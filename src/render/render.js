@@ -128,8 +128,18 @@ function render(){
       const bars = [];
       if(e.type==='depot'){
         // out and in are the same physical pile here (see createBuilding) —
-        // one bar, not two identical stacked ones.
-        bars.push({stock:e.outStock, cap:e.outCap, color:getCss('--teal')});
+        // one bar, not two identical stacked ones. When linked to an
+        // industry (directly, or through a chain of Stations — same
+        // forwarding a truck's Station does), trains bypass the Depot's
+        // own pile entirely, so the bar shows the linked industry's real
+        // stock instead — whichever slot it actually has (a Mine only
+        // has `out`, a Town only `in`), since that's the number actually
+        // moving now.
+        const linked = findLinkedIndustry(e);
+        const source = linked || e;
+        const stock = source.outStock!==undefined ? source.outStock : source.inStock;
+        const cap = source.outStock!==undefined ? source.outCap : source.inCap;
+        bars.push({stock, cap, color:getCss('--teal')});
       } else {
         if(e.outStock!==undefined) bars.push({stock:e.outStock, cap:e.outCap, color:getCss('--teal')});
         if(e.inStock!==undefined) bars.push({stock:e.inStock, cap:e.inCap, color:'#7fb8c9'});

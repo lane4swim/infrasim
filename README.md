@@ -409,6 +409,42 @@ Phase 1's original suites checked in to literally re-run.
   block for a parked train too; this is a simplification, same spirit as
   Phase 1's vehicle-`trail` rough edge.
 
+## Addendum — Depot forwards to a linked industry, like a Station
+
+A Rail Depot originally only ever moved cargo into/out of its own real
+`Storage` — a train's pickup/drop-off always hit that buffer directly,
+regardless of what (if anything) the Depot happened to be touching. That
+meant a Depot could never draw straight from an adjacent Mine, or push
+straight into an adjacent Town, the way a Station already did for trucks
+— every rail delivery needed a truck leg on at least one end to physically
+carry cargo into or out of the Depot's own bucket first (see Test 4
+above).
+
+A Depot now does the exact same `findLinkedIndustry` chain-walk a
+Station already used — touching an industry directly, or reaching one
+through a chain of other Stations — and when linked, a train's
+pickup/drop-off happens against *that* industry's real `Storage`
+directly, not the Depot's own. The Depot's own buffer is still there and
+still used exactly as before, but only as a fallback for when nothing's
+linked — so a standalone Depot mid-line, filled/drained by a truck+Station
+leg elsewhere on the map, keeps working unchanged (this is genuinely just
+a fallback, not a special case: `findLinkedIndustry(depot)` returning
+`null` and falling back to the Depot itself is indistinguishable, in
+every way that matters, from a Depot that was never linked to begin
+with).
+
+`resolveStopTarget` (`ui.js`) validates a Depot's own declared resource
+against both the vehicle's cargo and, when linked, the linked industry's
+actual resource — the same two checks a Station's chain already got, now
+applied symmetrically. The Depot inspector and its on-map fill bar both
+show the linked industry (if any) and its real stock instead of the
+Depot's own, since that's the number actually moving once a link exists.
+
+Covered by `test-rail.js`'s Test 7: a Mine touching a Depot directly (no
+Station, no truck at all), forwarding into a Train Yard-assembled train,
+delivering through a second Depot chained to a Town via one ordinary
+Station — end to end, with zero trucks anywhere in the test.
+
 ---
 
 # Phase 2 — Content-Pack Refactor

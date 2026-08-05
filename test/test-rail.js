@@ -363,5 +363,76 @@ section('Test 6 — no regressions in the road-only chain (Mine -> truck -> Mill
   check('the non-rail Mine -> Mill -> Town chain still delivers steel end to end', delivered);
 });
 
+section('Test 7 — Rail Depot forwards to a directly/chain-linked industry, like a Station', () => {
+  const ctx = newGameContext();
+  const ids = run(ctx, `
+    // Mine -- Depot A, touching directly, no Station at all on that side.
+    cmdBuildBuilding('mine', 0, 1, 'large');
+    cmdBuildBuilding('depot', 2, 1, 'large', null, 'ore'); // touches the Mine at (1,1)/(1,2)
+
+    // Rail spine, a Train Yard touching it, and Depot B at the far end.
+    for(let x=2; x<=14; x++) cmdBuildTrack(x, 3, true); // touches Depot A at (2,2)/(3,2)
+    cmdBuildBuilding('trainyard', 4, 4, 'small');        // touches the spine at (4,3)/(5,3)/(6,3)
+    cmdBuildBuilding('depot', 14, 1, 'large', null, 'ore'); // touches the spine at (14,2)/(15,2)
+
+    // Depot B -- Station -- Town: a chain of Stations reaching an
+    // industry, exactly the mechanism a truck's Station already used —
+    // no truck anywhere in this test, on either end.
+    cmdBuildBuilding('station', 16, 1, 'small', 'W', 'ore'); // touches Depot B at (15,1)
+    cmdBuildBuilding('town', 17, 1, 'large', null, 'ore');   // touches the Station at (17,1)
+
+    cmdAssembleTrain(4, 3, 'diesel', 'ore_wagon', 3);
+    const train = [...world.entities.values()].find(e=>e.kind==='vehicle' && isTrain(e.id));
+    const byType = t => [...world.entities.values()].filter(e=>e.kind==='building' && e.type===t);
+    const depots = byType('depot');
+    const ids = {
+      mineId: byType('mine')[0].id,
+      depotAId: depots.find(d=>d.x===2).id,
+      depotBId: depots.find(d=>d.x===14).id,
+      townId: byType('town')[0].id,
+    };
+    cmdSetOrders(train, [
+      {nodeId: ids.depotAId, action:'load_full', resource:'ore'},
+      {nodeId: ids.depotBId, action:'unload_all', resource:'ore'},
+    ]);
+    return ids;
+  `);
+
+  let mineDrawnDown = false, depotABufferUntouched = true, depotBBufferUntouched = true, townGotOre = false, treasuryCredited = false;
+  let maxMineStockSeen = 0, prevTreasury = run(ctx, `return world.treasury;`);
+  for(let i=0;i<4000;i++){
+    run(ctx, `simTick();`);
+    const s = run(ctx, `
+      return {
+        mineStock: world.entities.get(${ids.mineId}).outStock,
+        depotAStock: world.entities.get(${ids.depotAId}).outStock,
+        depotBStock: world.entities.get(${ids.depotBId}).outStock,
+        townStock: world.entities.get(${ids.townId}).inStock,
+        treasury: world.treasury,
+      };
+    `);
+    // Compared against a running peak/previous value, not a fixed baseline
+    // — the Mine's stock climbs from 0 regardless, and treasury drains
+    // every tick from the train's own running cost, so either one dipping
+    // below a *fixed* starting number wouldn't reliably show up. A drop
+    // from the highest point seen so far, or a tick where treasury rises
+    // instead of falling, can only mean the train actually pulled ore
+    // straight from the Mine, and the Town actually paid for delivered
+    // ore, respectively — nothing else moves either number in this test.
+    if(s.mineStock > maxMineStockSeen) maxMineStockSeen = s.mineStock;
+    else if(s.mineStock < maxMineStockSeen) mineDrawnDown = true;
+    if(s.depotAStock !== 0) depotABufferUntouched = false;    // Depot A's own buffer was never used — forwarding bypassed it
+    if(s.depotBStock !== 0) depotBBufferUntouched = false;    // same for Depot B, on the unload side
+    if(s.townStock > 0) townGotOre = true;                    // reached the Town through Depot B -> Station -> Town, no truck
+    if(s.treasury > prevTreasury) treasuryCredited = true;     // the Town, a real Consumer, paid for what it received
+    prevTreasury = s.treasury;
+  }
+  check('the train drew ore straight from the Mine\'s own Storage through Depot A, with no truck involved', mineDrawnDown);
+  check('Depot A\'s own buffer was never touched — the link bypassed it entirely', depotABufferUntouched);
+  check('Depot B\'s own buffer was never touched either, on the unload side', depotBBufferUntouched);
+  check('ore reached the Town through Depot B -> Station -> Town, with no truck involved', townGotOre);
+  check('the Town paid delivery income for ore it actually received', treasuryCredited);
+});
+
 console.log(failures===0 ? `\nAll checks passed.` : `\n${failures} check(s) FAILED.`);
 process.exit(failures===0 ? 0 : 1);

@@ -91,22 +91,40 @@ function vehicleAt(x,y){
 // with the player's chosen `action` ('load_full'|'unload_all') actually
 // means — the single place that validates a stop, for both trucks (via a
 // Station, walking its chain to whatever Storage-having building it's
-// linked to) and trains (directly at a Rail Depot, no chain to walk).
-// Returns {nodeId, resource} on success or {error} on failure. Resolving
-// by the player's explicit chosen action (rather than inferring it from
-// which resource the target's out/in slot happens to match) is what makes
-// a Rail Depot addressable at all here — its out and in slots share the
-// same resource by design (§2.1), so there'd be no way to tell "pick up"
-// from "drop off" apart from the player saying which one they meant.
+// linked to) and trains (at a Rail Depot, which now does exactly the same
+// chain walk a Station does — see findLinkedIndustry in tickTrainMovement's
+// counterpart below — falling back to the Depot's own buffer only when
+// nothing's linked). Returns {nodeId, resource} on success or {error} on
+// failure. Resolving by the player's explicit chosen action (rather than
+// inferring it from which resource the target's out/in slot happens to
+// match) is what makes a Rail Depot addressable at all here — its own
+// out and in slots share the same resource by design (§2.1), so there'd be
+// no way to tell "pick up" from "drop off" apart from the player saying
+// which one they meant.
 function resolveStopTarget(vehicle, clickedBuilding, action){
   const actionNoun = action==='load_full' ? 'output' : 'input';
   if(isTrain(vehicle.id)){
     if(clickedBuilding.type !== 'depot'){
       return {error:'Trains load/unload at Rail Depots only.'};
     }
-    const resource = action==='load_full' ? clickedBuilding.outResource : clickedBuilding.inResource;
-    if(resource===undefined) return {error:`Rail Depot #${clickedBuilding.id} has no ${actionNoun} buffer.`};
-    return {nodeId: clickedBuilding.id, resource};
+    if(clickedBuilding.outResource !== vehicle.cargoResource){
+      return {error:`This train only carries ${RESOURCES[vehicle.cargoResource].name}, but Rail Depot #${clickedBuilding.id} handles ${RESOURCES[clickedBuilding.outResource].name}.`};
+    }
+    // A Depot forwards to whatever it (or its chain of touching Stations)
+    // connects to, exactly like a Station forwards for a truck — unlike a
+    // Station, an unlinked Depot isn't an error: it still has its own real
+    // Storage to fall back on (§ Rail milestone), so the stop is valid
+    // either way. If it IS linked, its own declared resource must still
+    // match what the linked industry actually offers/accepts, same check
+    // a Station's chain gets.
+    const industry = findLinkedIndustry(clickedBuilding);
+    if(industry){
+      const resource = action==='load_full' ? industry.outResource : industry.inResource;
+      if(resource !== clickedBuilding.outResource){
+        return {error:`Rail Depot #${clickedBuilding.id} handles ${RESOURCES[clickedBuilding.outResource].name}, which doesn't match the linked industry's ${actionNoun}.`};
+      }
+    }
+    return {nodeId: clickedBuilding.id, resource: clickedBuilding.outResource};
   }
   if(clickedBuilding.type !== 'station'){
     return {error:'Trucks load/unload at Stations, not at the industry itself.'};
@@ -238,20 +256,33 @@ function renderSelection(){
 
   if(selected.kind==='building' && selected.type==='depot'){
     // A Depot is simultaneously a node in two networks — show both links
-    // rather than one, unlike a Station's single road-facing line.
+    // rather than one, unlike a Station's single road-facing line. It also
+    // now forwards to a linked industry exactly like a Station does (§
+    // Rail Depot forwarding) — when linked, the stock shown is the linked
+    // industry's own (whichever slot it actually has: a Mine only has
+    // `out`, a Town only `in`), since that's the number trains actually
+    // move now; the Depot's own buffer only matters, and is shown, when
+    // nothing's linked.
     const roadStation = findTouchingStation(selected);
     const railDock = buildingRailAccessCell(selected);
+    const industry = findLinkedIndustry(selected);
+    const source = industry || selected;
+    const stock = source.outStock!==undefined ? source.outStock : source.inStock;
+    const cap = source.outStock!==undefined ? source.outCap : source.inCap;
     let html = `
       <div><b>${BUILDING_DEFS.depot.label} #${selected.id}</b></div>
-      <div>Buffers: ${RESOURCES[selected.outResource].name}</div>
+      <div>Handles: ${RESOURCES[selected.outResource].name}</div>
+      <div>${industry
+        ? `Linked to: ${BUILDING_DEFS[industry.type].label} #${industry.id} — trains load/unload there directly`
+        : 'Not linked to an industry — buffers its own stock (fill/drain via a Station touching it, or here directly by train)'}</div>
       <div>Road side: ${roadStation
         ? `Station #${roadStation.id}`
         : '<span style="color:var(--danger)">not connected</span>'}</div>
       <div>Rail side: ${railDock
         ? 'connected'
         : '<span style="color:var(--danger)">not connected</span>'}</div>
-      <div>Buffered: ${selected.outStock.toFixed(1)} / ${selected.outCap}</div>
-      <div class="fill-bar"><div style="width:${(selected.outStock/selected.outCap*100).toFixed(0)}%"></div></div>
+      <div>${industry ? 'Linked stock' : 'Buffered'}: ${stock.toFixed(1)} / ${cap}</div>
+      <div class="fill-bar"><div style="width:${(stock/cap*100).toFixed(0)}%"></div></div>
     `;
     panel.innerHTML = html;
     return;

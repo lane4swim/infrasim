@@ -174,10 +174,14 @@
       <option value="ore">Depot handles: Ore</option>
       <option value="steel">Depot handles: Steel</option>
     </select>
-    <div class="hint-text">A Rail Depot has real storage, like a Mill — it's what lets a train drop
-      off dozens of units at once while trucks draw it down a few at a time.
-      Build a Station touching it for road access, same as a Mine or Mill;
-      track touching any side gives it rail access, no facing needed.</div>
+    <div class="hint-text">A Rail Depot works like a truck Station: build it touching an industry
+      (or a chain of Stations reaching one) and trains load/unload that
+      industry's own stock directly, same as a truck would. Left
+      unlinked, a Depot instead buffers its own real storage — handy for
+      letting a train drop off dozens of units at once while trucks draw
+      it down a few at a time elsewhere. Build a Station touching it for
+      road access, same as a Mine or Mill; track touching any side gives
+      it rail access, no facing needed.</div>
     <button class="tool-btn" data-tool="trainyard"><span class="tool-swatch" style="background:#4a4a6a"></span>Build Train Yard<span class="cost" id="trainyardCost">$400</span></button>
     <button class="tool-btn" data-tool="assembletrain"><span class="tool-swatch" style="background:#9b6bd6"></span>Assemble Train</button>
     <select id="engineSelect">

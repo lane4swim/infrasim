@@ -283,8 +283,10 @@ function tickTrainMovement(){
 
     const order = currentOrder(v);
     if(!order){ v.state='idle'; v.path=null; continue; }
-    // A train's target IS the industry — a Rail Depot has real Storage of
-    // its own (unlike a Station), so there's no chain to walk (§2.4).
+    // order.nodeId is always the Depot itself, never whatever it's linked
+    // to — the link can change (track/Stations built or demolished) after
+    // the order was set, so it's re-resolved fresh at load/unload time
+    // below, exactly like a truck's Station (§2.4).
     const target = world.entities.get(order.nodeId);
     if(!target){ advanceOrder(v); v.path=null; continue; } // stop was demolished
 
@@ -335,29 +337,41 @@ function tickTrainMovement(){
     }
 
     if(v.state==='loading'){
-      if(target.outStock===undefined){ v.state='blocked'; continue; }
-      if(target.outStock <= 0){ v.state='blocked'; continue; }
+      // A Depot forwards to whatever it (or its chain of touching Stations)
+      // connects to — exactly the same findLinkedIndustry chain-walk a
+      // truck's Station uses (§ Rail Depot forwarding) — falling back to
+      // the Depot's own real Storage when nothing's linked, which is what
+      // lets a standalone Depot still work as a buffer between two
+      // separate truck legs, same as before this existed.
+      const source = findLinkedIndustry(target) || target;
+      if(source.outStock===undefined){ v.state='blocked'; continue; }
+      if(source.outStock <= 0){ v.state='blocked'; continue; }
       const room = v.capacity - v.cargoAmount;
       if(room <= 0){ advanceOrder(v); v.state='idle'; continue; }
-      const amt = Math.min(TRANSFER_RATE, target.outStock, room);
-      target.outStock -= amt;
+      const amt = Math.min(TRANSFER_RATE, source.outStock, room);
+      source.outStock -= amt;
       v.cargoAmount += amt;
       if(v.cargoAmount >= v.capacity){ advanceOrder(v); v.state='idle'; }
       continue;
     }
 
     if(v.state==='unloading'){
-      if(target.inStock===undefined){ v.state='blocked'; continue; }
+      const dest = findLinkedIndustry(target) || target;
+      if(dest.inStock===undefined){ v.state='blocked'; continue; }
       if(v.cargoAmount<=0){ advanceOrder(v); v.state='idle'; continue; }
-      const room = target.inCap - target.inStock;
+      const room = dest.inCap - dest.inStock;
       if(room <= 0){ v.state='blocked'; continue; }
       const amt = Math.min(TRANSFER_RATE, v.cargoAmount, room);
-      target.inStock += amt;
+      dest.inStock += amt;
       v.cargoAmount -= amt;
-      if(target.consumer){
-        const resource = order.resource || v.cargoResource || target.inResource;
-        const income = Math.round(amt * RESOURCES[resource].baseValue * target.priceMultiplier);
-        credit(income, `delivery to ${BUILDING_DEFS[target.type].label} #${target.id}`);
+      if(dest.consumer){
+        // Only a true final Consumer (a Town) pays for what it receives —
+        // same rule a truck's delivery follows (§6.6), now that a train
+        // can reach one directly through a Depot instead of only ever
+        // depositing into the Depot's own intermediate buffer.
+        const resource = order.resource || v.cargoResource || dest.inResource;
+        const income = Math.round(amt * RESOURCES[resource].baseValue * dest.priceMultiplier);
+        credit(income, `delivery to ${BUILDING_DEFS[dest.type].label} #${dest.id}`);
       }
       if(v.cargoAmount<=0){ advanceOrder(v); v.state='idle'; }
       continue;
