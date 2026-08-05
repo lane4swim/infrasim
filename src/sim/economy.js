@@ -1,14 +1,14 @@
 // ---------------------------------------------------------------------
 // EVENTS / LOG  (stand-in for the Event stream in §7/§16)
 // ---------------------------------------------------------------------
-const logEl = document.getElementById('log');
+// This runs inside the Worker (see src/worker/worker-client.js), which has
+// no DOM — so logEvent can't write to #log directly the way it used to
+// pre-Worker-split. It queues instead; each snapshot message ships
+// pendingLogs to the main thread, which is the only place that still
+// touches #log (see worker-client.js's onmessage handler), then clears it.
+let pendingLogs = [];
 function logEvent(msg, cls){
-  const d = document.createElement('div');
-  if(cls) d.className = cls;
-  d.textContent = msg;
-  logEl.appendChild(d);
-  while(logEl.children.length > 40) logEl.removeChild(logEl.firstChild);
-  logEl.scrollTop = logEl.scrollHeight;
+  pendingLogs.push({msg, cls});
 }
 
 // ---------------------------------------------------------------------

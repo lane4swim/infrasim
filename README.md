@@ -650,15 +650,23 @@ src/
     entities.js            entity factories (buildings, trucks, trains) + vehicle-stat lookups
     commands.js            the only functions allowed to mutate world state (§7)
     systems.js             the per-tick systems, run from simTick()
+  worker/
+    worker-client.js       builds the simulation Worker and bridges it to the main thread (see Phase 2 — Worker Split below)
   render/
-    render.js              the fixed-timestep loop + canvas rendering
+    render.js              the render loop + canvas rendering
   ui/
     ui.js                  tool wiring, click handling, inspector, and the loop's initial kickoff
 test/
-  harness.js               runs src/*.js (concatenated in index.html's script order) in a Node vm
+  harness.js               runs loader.js + every sim/*.js file (fixed order, same as the Worker's own) in a Node vm
   test-rail.js
   test-content-pack.js
 ```
+
+*(As of Phase 2 — Worker Split below, `sim/commands.js` and `simTick()`
+only ever run inside the Worker, loaded there via `importScripts` — see
+that section for why `index.html`'s own `<script src>` list no longer
+includes `commands.js` even though every other `sim/*.js` file is still
+loaded on the main thread too.)*
 
 Load order in `index.html` matters only for the small amount of top-level
 (not-inside-a-function) code — the content-pack parsing in `loader.js`, and
@@ -666,11 +674,7 @@ Load order in `index.html` matters only for the small amount of top-level
 since that runs immediately as each script loads. Function bodies calling
 into a later-loaded file are fine regardless of order: nothing actually
 *calls* them until the game loop starts, by which point every file has
-already loaded. The chosen order (`content → sim/world → sim/ecs →
-sim/economy → sim/pathfinding → sim/rail-blocks → sim/entities →
-sim/commands → sim/systems → render → ui`) is exactly the sequence the
-single file already used internally, so nothing needed reordering — only
-splitting.
+already loaded.
 
 ## Testing
 
@@ -708,3 +712,139 @@ through actual clicks — not just "the files parse."
   handling) and per-tick logic (production, vehicles, trains) they each
   own; revisit only if either grows enough on its own to justify another
   cut.
+
+# Phase 2 — Worker Split
+
+The simulation itself (`sim/*.js` plus `content/loader.js`) now runs inside
+a Web Worker instead of the main thread — the fast-follow the Project
+Structure section above and the architecture spec's §8 both flagged. This
+was purely a plumbing change: no system, command, or content-pack code
+needed to change at all, since the whole point of the earlier `src/`
+split was that each file is already just plain functions operating on a
+`world` object, with no dependency on the DOM except the one spot the
+event log used to write to it (see below).
+
+## Why a Worker
+
+Before this, one JS-thread was doing production/movement/pathfinding
+*and* handling every click *and* drawing every frame — fine at the current
+scale, but a real bottleneck the moment a busy world (dozens of trucks and
+trains all pathfinding at once) needs a heavier tick: that work would
+directly stall input and rendering. Moving the tick loop to a Worker means
+a slow tick makes ticks arrive slower, not the page stop responding.
+
+## How it works
+
+`src/worker/worker-client.js` (loaded right after `sim/systems.js`, before
+`render.js`/`ui.js`) is the entire bridge, and is the only genuinely new
+file this milestone added:
+
+- **Building the Worker.** `new Worker('src/worker/....js')` is rejected
+  under `file://` — every page there has origin `"null"`, and browsers
+  refuse to load a worker script "from" a null origin even off the same
+  local file tree (verified directly; this is the same family of
+  restriction that ruled out ES modules in the Project Structure section
+  above). The fix is a **Blob-constructed Worker**: its initial script is
+  a small in-memory bootstrap string, not a `file://` fetch, so the
+  null-origin check never applies. That bootstrap then pulls in the real
+  simulation code unmodified via `importScripts()`, using each `sim/*.js`
+  file's own **absolute** `file://` URL (`new URL(path, document.baseURI)`)
+  — a *relative* `importScripts()` path throws ("the URL … is invalid")
+  from inside a `blob:` worker, since a blob URL has no base path to
+  resolve one against; this only works with an absolute URL, resolved on
+  the main thread first. Net effect: `sim/*.js` stays the single source of
+  truth, loaded twice (once as a `<script src>` on the page, once via
+  `importScripts` in the Worker) but never duplicated in content.
+- **Two-phase `importScripts`.** The Worker's bootstrap loads
+  `content/loader.js` alone first and stops. `loader.js`'s own top-level
+  bootstrap is guarded on `typeof document !== 'undefined'`, so this
+  leaves `initContentPack`/`validateContentPack` defined but not yet
+  called — there's no DOM inside a Worker to parse the content-pack block
+  from directly. Only once the page's own `'init'` message actually
+  arrives (carrying the content pack the page already parsed) does the
+  Worker call `initContentPack(pack)` itself, **then** `importScripts()`
+  the remaining `sim/*.js` files. This has to be two phases, not one:
+  `world.js`'s very first statement reads `INITIAL_TREASURY`, which
+  doesn't exist until `initContentPack()` has run, and `postMessage`
+  delivery is asynchronous while `importScripts` is synchronous — there's
+  no way to block a single import batch on the pack's arrival.
+- **Message protocol.** The page sends `{type:'init', contentPack}` once,
+  then one `{type:'command', name, args}` per player action (this
+  replaced every direct `cmdXxx(...)` call in `ui.js` with
+  `postCommand('cmdXxx', [...])`). The Worker ticks on its own
+  `setInterval(TICK_MS)`, independent of the page's framerate, and sends a
+  `{type:'snapshot', treasury, tick, grid, components, railBlocks,
+  entityIds, logs}` message back after `'init'`, after every command, and
+  after every tick.
+- **The shadow `world`.** The page still has its own `world` (from
+  `world.js`, loaded there same as always) — `render.js`/`ui.js` read it
+  exactly as before, they just never mutate it directly anymore. Each
+  snapshot overwrites `world`'s mutable properties in place (`world`'s own
+  `const` binding never changes) with what the Worker actually computed.
+  `world.entities` can't be shipped verbatim — its values are `Proxy`
+  handles (see `makeEntityHandle` in `ecs.js`), and a `Proxy` isn't
+  structured-clone-able — so the Worker instead sends a plain `entityIds`
+  array, and `worker-client.js` rebuilds `world.entities` as a fresh `Map`
+  of freshly made handles. This is safe even for a handle other code is
+  still holding onto (`ui.js`'s `selected`, across snapshots): every
+  property access on a handle re-reads `world.components` live rather than
+  caching, so an "old" handle instance keeps working correctly once
+  `world.components` itself has been swapped to the latest snapshot.
+- **The two commands that take a handle.** `cmdSellVehicle(vehicle)` and
+  `cmdSetOrders(vehicle, orders)` are the only commands whose signature
+  takes an entity handle rather than plain values — also not
+  structured-clone-able. Callers now send the vehicle's plain `.id`
+  instead; the Worker's command dispatcher resolves that id back to a
+  handle (via its own `world.entities`, not the page's) before invoking
+  the real function.
+- **The event log.** `economy.js`'s `logEvent` used to write to `#log`
+  directly — impossible inside a Worker (no DOM). It's now a plain queue
+  (`pendingLogs`), flushed into each snapshot's `logs` array and cleared.
+  `worker-client.js` then *redefines* the page's own top-level `logEvent`
+  (classic `<script>` tags share one global scope, so a later
+  `function logEvent` simply replaces the earlier one) to write straight
+  to `#log` — both for flushing a snapshot's queued lines, and for the
+  handful of direct `logEvent(...)` calls left in `ui.js` (pure
+  click-handler feedback, like "click a building to add it as a stop",
+  that never goes through the Worker at all and shows up with no added
+  latency either way).
+
+## Running the tests
+
+`test/test-rail.js` and `test/test-content-pack.js` both pass unmodified.
+`test/harness.js` no longer derives "the simulation core" from
+`index.html`'s `<script src>` tags (that list now excludes
+`sim/commands.js`, which is Worker-only) — it instead concatenates
+`content/loader.js` + every `sim/*.js` file in a fixed order matching what
+the Worker itself loads, since that's the environment this code actually
+runs in now. This is exactly the case the Worker split's own design
+intends to stay easy: the simulation core is still plain functions on a
+`world` object, runnable synchronously with no Worker, no `postMessage`,
+and no browser at all.
+
+Also re-verified in a real headless browser (Playwright), end to end
+through actual UI clicks and `postCommand()` calls (not just direct
+function calls): the Worker starts and ticks on its own independent of
+render framerate; building roads/track, buying trucks, assembling and
+selling a train, and adding load/unload stops via the order editor all
+correctly reach the Worker and show up in the next snapshot; a truck given
+real orders actually drives its route and loads/unloads cargo over time;
+log messages (both Worker-originated and pure-UI ones) appear in `#log`;
+and no console errors or worker errors occur across any of it.
+
+## Deliberately deferred
+
+- **Snapshot diffing / typed-array transport.** Every snapshot currently
+  ships the whole `grid`/`components`/`railBlocks` structure via
+  structured clone, wholesale, every tick. That's the simplest correct
+  thing, and at this project's current scale (a 22×14 grid, a handful of
+  vehicles) there's no measured cost to justify anything cleverer —
+  revisit only if profiling on a much bigger world actually shows
+  `postMessage` overhead mattering.
+- **Transferable objects / `SharedArrayBuffer`.** Same reasoning — real
+  options if snapshot size ever becomes the bottleneck, not before.
+- **Moving `render.js`/`ui.js` into the Worker too (OffscreenCanvas).**
+  Deliberately not attempted: input handling and DOM updates belong on the
+  main thread regardless, and `OffscreenCanvas` support/ergonomics is a
+  separate, genuinely bigger milestone on its own, not a natural extension
+  of this one.

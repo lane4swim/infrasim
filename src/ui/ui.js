@@ -70,8 +70,8 @@ canvas.addEventListener('mousedown', evt=>{
 canvas.addEventListener('mousemove', evt=>{
   hoverCell = cellFromEvent(evt);
   if(!dragging || !hoverCell) return;
-  if(currentTool==='road') cmdBuildRoad(hoverCell.x, hoverCell.y, currentLayer(), currentAutoConnect());
-  if(currentTool==='track') cmdBuildTrack(hoverCell.x, hoverCell.y, currentAutoConnect());
+  if(currentTool==='road') postCommand('cmdBuildRoad', [hoverCell.x, hoverCell.y, currentLayer(), currentAutoConnect()]);
+  if(currentTool==='track') postCommand('cmdBuildTrack', [hoverCell.x, hoverCell.y, currentAutoConnect()]);
 });
 window.addEventListener('mouseup', ()=>{ dragging=false; });
 
@@ -138,7 +138,7 @@ function handleClick(cell){
       } else {
         const orders = pickingStopFor.vehicle.orders.slice();
         orders.push({nodeId:result.nodeId, action:pickingStopFor.action, resource:result.resource});
-        cmdSetOrders(pickingStopFor.vehicle, orders);
+        postCommand('cmdSetOrders', [pickingStopFor.vehicle.id, orders]);
         renderOrderEditor(pickingStopFor.vehicle);
       }
     }
@@ -154,29 +154,29 @@ function handleClick(cell){
     renderSelection();
     return;
   }
-  if(currentTool==='road'){ cmdBuildRoad(x,y,currentLayer(),currentAutoConnect()); return; }
-  if(currentTool==='ramp'){ cmdBuildRamp(x,y); return; }
+  if(currentTool==='road'){ postCommand('cmdBuildRoad', [x,y,currentLayer(),currentAutoConnect()]); return; }
+  if(currentTool==='ramp'){ postCommand('cmdBuildRamp', [x,y]); return; }
   if(currentTool==='connect'){ handleConnectClick(x,y); return; }
   if(currentTool==='oneway'){ handleOneWayClick(x,y); return; }
-  if(currentTool==='mine'){ cmdBuildBuilding('mine', x, y, currentTier()); return; }
-  if(currentTool==='mill'){ cmdBuildBuilding('mill', x, y, currentTier()); return; }
-  if(currentTool==='town'){ cmdBuildBuilding('town', x, y, currentTier(), null, currentTownResource()); return; }
-  if(currentTool==='station'){ cmdBuildBuilding('station', x, y, 'small', currentFacing(), currentStationResource()); return; }
+  if(currentTool==='mine'){ postCommand('cmdBuildBuilding', ['mine', x, y, currentTier()]); return; }
+  if(currentTool==='mill'){ postCommand('cmdBuildBuilding', ['mill', x, y, currentTier()]); return; }
+  if(currentTool==='town'){ postCommand('cmdBuildBuilding', ['town', x, y, currentTier(), null, currentTownResource()]); return; }
+  if(currentTool==='station'){ postCommand('cmdBuildBuilding', ['station', x, y, 'small', currentFacing(), currentStationResource()]); return; }
   if(currentTool==='demolish'){
     // Rail isn't reachable through the ground/elevated layer dropdown, so
     // fall back to it automatically when the selected layer has nothing
     // to remove at this cell but rail track does.
     const layer = getCell(x,y).layers[currentLayer()].track ? currentLayer() : 'rail';
-    cmdDemolish(x,y,layer);
+    postCommand('cmdDemolish', [x,y,layer]);
     return;
   }
-  if(currentTool==='bulktruck'){ cmdPurchaseVehicle(x,y,'bulk'); return; }
-  if(currentTool==='flatbedtruck'){ cmdPurchaseVehicle(x,y,'flatbed'); return; }
-  if(currentTool==='track'){ cmdBuildTrack(x,y,currentAutoConnect()); return; }
+  if(currentTool==='bulktruck'){ postCommand('cmdPurchaseVehicle', [x,y,'bulk']); return; }
+  if(currentTool==='flatbedtruck'){ postCommand('cmdPurchaseVehicle', [x,y,'flatbed']); return; }
+  if(currentTool==='track'){ postCommand('cmdBuildTrack', [x,y,currentAutoConnect()]); return; }
   if(currentTool==='signal'){ handleOneWayClick(x,y); return; }
-  if(currentTool==='depot'){ cmdBuildBuilding('depot', x, y, currentTier(), null, currentDepotResource()); return; }
-  if(currentTool==='trainyard'){ cmdBuildBuilding('trainyard', x, y, 'small'); return; }
-  if(currentTool==='assembletrain'){ cmdAssembleTrain(x, y, currentEngine(), currentWagon(), currentWagonCount()); return; }
+  if(currentTool==='depot'){ postCommand('cmdBuildBuilding', ['depot', x, y, currentTier(), null, currentDepotResource()]); return; }
+  if(currentTool==='trainyard'){ postCommand('cmdBuildBuilding', ['trainyard', x, y, 'small']); return; }
+  if(currentTool==='assembletrain'){ postCommand('cmdAssembleTrain', [x, y, currentEngine(), currentWagon(), currentWagonCount()]); return; }
 }
 
 function handleConnectClick(x,y){
@@ -192,7 +192,7 @@ function handleConnectClick(x,y){
     document.getElementById('hint').textContent = 'Now click an adjacent road tile to connect or disconnect it.';
     return;
   }
-  cmdToggleConnection(connectFirst.x, connectFirst.y, x, y, layer);
+  postCommand('cmdToggleConnection', [connectFirst.x, connectFirst.y, x, y, layer]);
   connectFirst = null;
   document.getElementById('hint').textContent = toolHint('connect');
 }
@@ -213,7 +213,7 @@ function handleOneWayClick(x,y){
     document.getElementById('hint').textContent = 'Now click the adjacent, connected tile traffic should be allowed to reach.';
     return;
   }
-  cmdToggleOneWay(oneWayFirst.x, oneWayFirst.y, x, y, layer);
+  postCommand('cmdToggleOneWay', [oneWayFirst.x, oneWayFirst.y, x, y, layer]);
   oneWayFirst = null;
   document.getElementById('hint').textContent = toolHint(currentTool);
 }
@@ -336,7 +336,7 @@ function renderSelection(){
       document.getElementById('hint').textContent = `Click a ${targetNoun} to drop off at.`;
     });
     document.getElementById('sellBtn').addEventListener('click', ()=>{
-      cmdSellVehicle(selected);
+      postCommand('cmdSellVehicle', [selected.id]);
       selected = null;
       renderSelection();
     });
@@ -356,7 +356,7 @@ function renderOrderEditor(vehicle){
     row.querySelector('.rm').addEventListener('click', ()=>{
       const orders = vehicle.orders.slice();
       orders.splice(i,1);
-      cmdSetOrders(vehicle, orders);
+      postCommand('cmdSetOrders', [vehicle.id, orders]);
       renderOrderEditor(vehicle);
     });
     list.appendChild(row);

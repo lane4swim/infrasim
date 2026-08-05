@@ -1,14 +1,21 @@
 // Headless test harness for infrasim's simulation core.
 //
-// index.html no longer inlines one giant <script> — the code lives in
-// src/{content,sim,render,ui}/*.js, loaded as ordered classic
-// <script src="..."> tags (see loader.js's own header comment for why
-// classic, not module, scripts). This harness reads index.html for that
-// same list of <script src> tags, reads each referenced file in the same
-// order, and concatenates them into one script — behaviorally identical to
-// a browser loading them as separate sequential classic scripts (they all
-// share one global scope either way), just easier to run inside a single
-// Node vm context. Real shipped code, not a reimplementation.
+// The code lives in src/{content,sim,render,ui,worker}/*.js, loaded as
+// ordered classic <script src="..."> tags in the real page (see loader.js's
+// own header comment for why classic, not module, scripts) — but since the
+// Worker split (see src/worker/worker-client.js), index.html's own script
+// list no longer includes every file this harness needs: sim/commands.js
+// only ever runs inside the Worker now, loaded there via importScripts
+// rather than a <script src> tag on the page. Testing "the simulation
+// core" headlessly is exactly the case the Worker split's own design
+// doc calls out as staying easy regardless — the core is still plain
+// functions hung off a `world` object, runnable synchronously with no
+// Worker, no postMessage, and no browser at all. So this harness ignores
+// index.html's <script> tags entirely and instead concatenates loader.js
+// plus every sim/*.js file, in the fixed dependency order below (the same
+// order the Worker itself uses) — real shipped code, not a
+// reimplementation, just assembled the way the Worker assembles it rather
+// than the way the page does.
 //
 // The trick: the combined script's top-level `const`/`function`
 // declarations become lexical bindings tied to this vm context, not
@@ -23,15 +30,27 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-// Reads index.html's <script src="..."> tags in document order and
-// concatenates the referenced files (resolved relative to index.html's own
-// directory) into one script — the harness's view of "the game's code."
+// The simulation core's files, in dependency order — same list and order
+// as worker-client.js's own WORKER_LOADER_URL + WORKER_SIM_URLS, since
+// that's the real environment this code actually runs in now.
+const SIM_SCRIPT_FILES = [
+  'src/content/loader.js',
+  'src/sim/world.js',
+  'src/sim/ecs.js',
+  'src/sim/economy.js',
+  'src/sim/pathfinding.js',
+  'src/sim/rail-blocks.js',
+  'src/sim/entities.js',
+  'src/sim/commands.js',
+  'src/sim/systems.js',
+];
+
+// Concatenates the simulation core's files (resolved relative to
+// index.html's own directory, i.e. the project root) into one script —
+// the harness's view of "the game's code."
 function extractScript(htmlPath){
-  const html = fs.readFileSync(htmlPath, 'utf8');
-  const srcs = [...html.matchAll(/<script src="([^"]+)"><\/script>/g)].map(m => m[1]);
-  if(srcs.length === 0) throw new Error(`No <script src="..."> tags found in ${htmlPath}`);
   const baseDir = path.dirname(htmlPath);
-  return srcs.map(src => fs.readFileSync(path.join(baseDir, src), 'utf8')).join('\n');
+  return SIM_SCRIPT_FILES.map(src => fs.readFileSync(path.join(baseDir, src), 'utf8')).join('\n');
 }
 
 // The content-pack <script> tag has a type/id attribute, so it never

@@ -1,11 +1,12 @@
 // ---------------------------------------------------------------------
-// FIXED-TIMESTEP LOOP  (§8 — decoupled from render framerate)
+// RENDER LOOP  (§8) — simTick() no longer runs here at all. The
+// simulation itself now lives in a Web Worker (see
+// src/worker/worker-client.js), ticking on its own setInterval(TICK_MS)
+// independent of this page's framerate; this loop's only job is to keep
+// redrawing the shadow `world` that worker-client.js's onmessage handler
+// overwrites each time a snapshot arrives.
 // ---------------------------------------------------------------------
-let acc = 0, lastT = performance.now();
-function frame(now){
-  const dt = now - lastT; lastT = now;
-  acc += dt;
-  while(acc >= TICK_MS){ simTick(); acc -= TICK_MS; }
+function frame(){
   render();
   requestAnimationFrame(frame);
 }

@@ -1,10 +1,10 @@
 /* =====================================================================
    INFRASIM
-   Implements, on the main thread for now (see README for the Worker
-   split noted in the architecture spec §2/§8 as a fast-follow):
+   Implements:
      - single ground layer, road network + trucks (§6.2)
      - ECS-ish entities: buildings (Producer/Consumer/Storage), vehicles
-     - fixed-timestep simulation loop decoupled from rendering (§8)
+     - fixed-timestep simulation loop, run in a Worker, decoupled from
+       both rendering and the main thread (§8)
      - player-authored Orders lists — no auto-routing (§6.6)
      - player-chosen storage capacity at build time (§6.6)
      - backpressure: halted production / waiting vehicles (§6.6)
@@ -13,8 +13,8 @@
 
    PROJECT STRUCTURE (§14 of specification.md, adapted): this used to be
    one giant inline <script> in index.html. It's now split across
-   src/{content,sim,render,ui}/*.js, loaded in dependency order as plain
-   classic <script src="..."> tags — deliberately NOT `type="module"`,
+   src/{content,sim,render,ui,worker}/*.js, loaded in dependency order as
+   plain classic <script src="..."> tags — deliberately NOT `type="module"`,
    since module scripts are blocked by CORS under file:// in every major
    browser, which would break the "just double-click index.html" workflow
    this project has kept since Phase 1. Classic scripts have no such
@@ -30,6 +30,15 @@
    *calls* them until the game loop starts, by which point every file has
    loaded. See index.html's own script tags for the exact load order.
 
+   The simulation itself (sim/*.js + this file) now runs inside a Web
+   Worker, not the main thread — see src/worker/worker-client.js for the
+   Worker split and why sim/commands.js and sim/systems.js's simTick() are
+   only ever invoked there. The main thread still loads every sim/*.js file
+   too, because a handful of read-only helpers (render.js's getVehicleStats,
+   ui.js's findLinkedIndustry, etc.) need to run against the shadow `world`
+   snapshot the Worker sends back each tick; the mutating half of that same
+   code (commands.js, simTick) simply never gets called from here.
+
    content/loader.js   — this file: content-pack parsing/validation + config constants
    sim/world.js        — grid + world state (§14's "World")
    sim/ecs.js          — component tables, entity handles, queries (§14's "Component, System, Query")
@@ -37,9 +46,10 @@
    sim/pathfinding.js  — road/rail BFS, dock-cell resolution, Station/industry chain-walking
    sim/rail-blocks.js  — rail mutual-exclusion segment computation
    sim/entities.js     — entity factories (buildings, trucks, trains) + vehicle-stat lookups
-   sim/commands.js     — the only functions allowed to mutate world state (§7)
-   sim/systems.js       — the per-tick systems, run from simTick()
-   render/render.js    — the fixed-timestep loop + canvas rendering
+   sim/commands.js     — the only functions allowed to mutate world state (§7) — Worker-only, see above
+   sim/systems.js       — the per-tick systems, run from simTick() — Worker-only, see above
+   worker/worker-client.js — builds the Worker, ships it sim/*.js, and bridges postCommand()/snapshots to the main thread
+   render/render.js    — the render loop + canvas rendering
    ui/ui.js            — tool wiring, click handling, inspector, and the loop's initial kickoff
    ===================================================================== */
 
@@ -110,21 +120,44 @@ function validateContentPack(pack){
   }
 }
 
-const CONTENT_PACK = JSON.parse(document.getElementById('content-pack').textContent);
-validateContentPack(CONTENT_PACK);
-const RESOURCES = CONTENT_PACK.resources;
-const RESOURCE = RESOURCES.ore; // back-compat alias: code/data written for the single-resource era still works
-const RECIPES = CONTENT_PACK.recipes;
-const BUILDING_DEFS = CONTENT_PACK.buildings;
-const VEHICLE_DEFS = CONTENT_PACK.vehicles;
-const RAIL_DEFS = CONTENT_PACK.rail;
-const ENGINE_DEFS = CONTENT_PACK.engines;
-const WAGON_DEFS = CONTENT_PACK.wagons;
+// Populated by initContentPack() below — `let`, not `const`, because the
+// Worker (see src/worker/worker-client.js) can't read the page's DOM to
+// parse the content pack itself. It receives the pack over postMessage
+// instead and calls initContentPack(pack) directly once it arrives, so
+// these bindings exist (as declarations) the moment this file loads via
+// importScripts, but are only populated once the pack is actually known —
+// on the main thread that happens synchronously below; in the Worker it
+// happens on the first 'init' message (see worker-client.js's protocol
+// comment for why that has to be a separate later step).
+let CONTENT_PACK, RESOURCES, RESOURCE, RECIPES, BUILDING_DEFS, VEHICLE_DEFS, RAIL_DEFS, ENGINE_DEFS, WAGON_DEFS;
+let INITIAL_TREASURY, ROAD_COST_PER_TILE, ELEVATED_COST_MULTIPLIER, RAMP_COST, TRANSFER_RATE, TICK_MS, CONSUMPTION_PER_CAPITA;
 
-const INITIAL_TREASURY = 5000; // starting cash — bumped up from 1000 now that a Mine->Mill->Town chain needs multiple buildings, stations, and trucks before any income comes in
-const ROAD_COST_PER_TILE = 10;
-const ELEVATED_COST_MULTIPLIER = 2; // bridges cost more per tile (§16.2-style layer multiplier)
-const RAMP_COST = 40;               // one-time cost to link ground<->elevated at a single cell
-const TRANSFER_RATE = 4;           // units moved per tick during load/unload
-const TICK_MS = 300;               // fixed simulation timestep
-const CONSUMPTION_PER_CAPITA = 0.02; // resource drained per tick, per resident (§16-style: data-defined rate)
+function initContentPack(pack){
+  validateContentPack(pack);
+  CONTENT_PACK = pack;
+  RESOURCES = pack.resources;
+  RESOURCE = RESOURCES.ore; // back-compat alias: code/data written for the single-resource era still works
+  RECIPES = pack.recipes;
+  BUILDING_DEFS = pack.buildings;
+  VEHICLE_DEFS = pack.vehicles;
+  RAIL_DEFS = pack.rail;
+  ENGINE_DEFS = pack.engines;
+  WAGON_DEFS = pack.wagons;
+
+  INITIAL_TREASURY = 5000; // starting cash — bumped up from 1000 now that a Mine->Mill->Town chain needs multiple buildings, stations, and trucks before any income comes in
+  ROAD_COST_PER_TILE = 10;
+  ELEVATED_COST_MULTIPLIER = 2; // bridges cost more per tile (§16.2-style layer multiplier)
+  RAMP_COST = 40;               // one-time cost to link ground<->elevated at a single cell
+  TRANSFER_RATE = 4;           // units moved per tick during load/unload
+  TICK_MS = 300;               // fixed simulation timestep
+  CONSUMPTION_PER_CAPITA = 0.02; // resource drained per tick, per resident (§16-style: data-defined rate)
+}
+
+// Main-thread bootstrap: parse the page's own content-pack block immediately,
+// same as before this function existed. Guarded on `document` so this file
+// no-ops when loaded into the Worker via importScripts (no DOM there) —
+// the Worker calls initContentPack(pack) itself after receiving the pack
+// over postMessage instead.
+if(typeof document !== 'undefined'){
+  initContentPack(JSON.parse(document.getElementById('content-pack').textContent));
+}
