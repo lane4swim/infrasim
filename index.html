@@ -151,7 +151,9 @@
       <option value="ore">Station handles: Ore</option>
       <option value="steel">Station handles: Steel</option>
     </select>
-    <div class="hint-text">Ground/Elevated applies to Road, Ramp, Connect, One-Way and Demolish. Uncheck
+    <div class="hint-text">Ground/Elevated applies to Road, Ramp, Connect, One-Way, Demolish, and
+      — since rail also runs on both layers now — Build Track, Connect /
+      Disconnect Track, and Toggle Signal Direction too. Uncheck
       auto-connect to lay road tiles side by side without joining them —
       handy for parallel one-way streets — then use Connect / Disconnect to
       wire up (or sever) specific edges by hand. Facing sets the single side
@@ -168,6 +170,7 @@
 
     <div class="section-label">Rail</div>
     <button class="tool-btn" data-tool="track"><span class="tool-swatch" style="background:#9b6bd6"></span>Build Track<span class="cost" id="trackCost">$25/tile</span></button>
+    <button class="tool-btn" data-tool="railramp"><span class="tool-swatch" style="background:#c9a8e8"></span>Build Rail Ramp<span class="cost" id="railRampCost">$40</span></button>
     <button class="tool-btn" data-tool="trackconnect"><span class="tool-swatch" style="background:var(--teal)"></span>Connect / Disconnect Track</button>
     <button class="tool-btn" data-tool="signal"><span class="tool-swatch" style="background:var(--amber)"></span>Toggle Signal Direction</button>
     <button class="tool-btn" data-tool="depot"><span class="tool-swatch" style="background:#6b5b95"></span>Build Rail Depot<span class="cost" id="depotCost">$300</span></button>
@@ -219,10 +222,16 @@
       road, Rail Depots instead of Stations. A signal is rail's one-way: it
       also marks a hard block boundary, so two trains can never occupy the
       same signaled segment at once.
-      Ground road and rail share the same grade, so a road and a track can
-      cross at the same cell — but only at a right angle (marked with a
-      white X), like a real level crossing; a track running the same
-      direction as an existing road there won't connect through it.
+      Rail also runs on ground and elevated layers, same as road — a Rail
+      Ramp links them, entirely independent of the road Ramp, so a cell can
+      have either, both, or neither. A train on elevated rail blocks
+      elevated road traffic at a crossing exactly like a ground train
+      blocks ground road traffic.
+      Ground road and rail share the same grade (elevated road and
+      elevated rail share theirs), so a road and a track can cross at the
+      same cell — but only at a right angle (marked with a white X), like a
+      real level crossing; a track running the same direction as an
+      existing road there won't connect through it.
     </div>
   </div>
 

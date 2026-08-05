@@ -131,7 +131,7 @@ section('Test 3 — a modder-authored content pack works with zero code changes'
     cmdBuildBuilding('station', 0, 2, 'small', 'N', 'coal');
     cmdBuildRoad(0, 3, 'ground', true);
     cmdPurchaseVehicle(0, 3, 'coaltruck');
-    cmdBuildTrack(2, 3, true);
+    cmdBuildTrack(2, 3, 'rail', true);
     const train = createTrain(2, 3, 'diesel', 'coal_wagon', 2);
     const mine = [...world.entities.values()].find(e=>e.kind==='building' && e.type==='mine');
     for(let i=0;i<50;i++) simTick();

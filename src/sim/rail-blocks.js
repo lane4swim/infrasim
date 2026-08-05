@@ -4,21 +4,24 @@
 // edges between two "hubs." A cell is a hub — a block boundary — if it's a
 // junction or dead end (its own degree isn't exactly 2), has a signal on
 // any of its edges (a signal IS a boundary, not just a direction filter),
-// or touches a Rail Depot (so a train's approach to a depot is always its
-// own segment, never shared with unrelated through-traffic). Two trains
-// can never hold the same block at once, regardless of the softer
+// touches a Rail Depot or Train Yard (so a train's approach to either is
+// always its own segment, never shared with unrelated through-traffic), or
+// is a railRamp (the vertical transition to/from railElevated is as
+// natural a block boundary as a signal — see computeRailBlocks below for
+// why both rail layers get this treatment independently). Two trains can
+// never hold the same block at once, regardless of the softer
 // velocity-gap spacing trains also use for smooth car-following — the
 // block is a hard guarantee on top of that, not a replacement for it (see
 // tickTrainMovement).
 // ---------------------------------------------------------------------
-function railCellDegree(x,y){
-  const track = getCell(x,y).layers.rail;
+function railCellDegree(x,y,layer){
+  const track = getCell(x,y).layers[layer];
   let n = 0;
   for(const {dir} of ROAD_DIRS) if(track.edges[dir]) n++;
   return n;
 }
-function railCellHasSignal(x,y){
-  const track = getCell(x,y).layers.rail;
+function railCellHasSignal(x,y,layer){
+  const track = getCell(x,y).layers[layer];
   for(const {dir} of ROAD_DIRS) if(track.edges[dir] && track.oneWayBlocked[dir]) return true;
   return false;
 }
@@ -27,7 +30,12 @@ function railCellHasSignal(x,y){
 // either is always its own segment, never shared with unrelated
 // through-traffic. Depot and Yard stay separate components (different
 // things touching them means different things — a truck chain vs. an
-// assembly command), but both count here.
+// assembly command), but both count here. Grid-adjacency only, regardless
+// of which rail layer is asking — a Depot/Yard is always a ground
+// building, so this can never actually trigger for a railElevated cell in
+// practice (nothing elevated is ever adjacent to a ground building at the
+// same (x,y)), but it costs nothing to leave layer-agnostic here rather
+// than adding a check that can never fire.
 function railCellTouchesRailEndpoint(x,y){
   for(const [nx,ny] of neighbors4(x,y)){
     const buildingId = getCell(nx,ny).buildingId;
@@ -42,17 +50,19 @@ function railCellTouchesYard(x,y){
   }
   return false;
 }
-function railCellIsHub(x,y){
-  return railCellDegree(x,y) !== 2 || railCellHasSignal(x,y) || railCellTouchesRailEndpoint(x,y);
+function railCellIsHub(x,y,layer){
+  return railCellDegree(x,y,layer) !== 2 || railCellHasSignal(x,y,layer) || railCellTouchesRailEndpoint(x,y) || getCell(x,y).railRamp;
 }
 
-function computeRailBlocks(){
-  world.railBlocks = new Map();
-  let nextBlockId = 1;
+// Computes blocks for one rail layer ('rail' or 'railElevated') into the
+// shared world.railBlocks map, continuing the block-id sequence a caller
+// hands in rather than restarting at 1 — see computeRailBlocks below,
+// which runs this once per layer so ids from either never collide.
+function computeRailBlocksForLayer(layer, blockIdCounter){
   const visitedEdge = new Set(); // "x,y,dir" — each directed edge is visited exactly once across both walking passes below
   const railCells = [];
   for(const [k,cell] of world.grid){
-    const track = cell.layers.rail;
+    const track = cell.layers[layer];
     if(!track.track) continue;
     const [x,y] = k.split(',').map(Number);
     railCells.push({x,y});
@@ -62,18 +72,18 @@ function computeRailBlocks(){
   // shared block id to every edge crossed along the way (both directions —
   // block membership doesn't depend on direction of travel).
   function walkBlock(startX, startY, startDir){
-    const blockId = nextBlockId++;
+    const blockId = blockIdCounter.next++;
     world.railBlocks.set(blockId, {occupiedBy:null});
     let x = startX, y = startY, dir = startDir;
     while(true){
       const d = ROAD_DIRS.find(r=>r.dir===dir);
       const nx = x+d.dx, ny = y+d.dy;
-      getCell(x,y).layers.rail.blockId[dir] = blockId;
-      getCell(nx,ny).layers.rail.blockId[d.opp] = blockId;
+      getCell(x,y).layers[layer].blockId[dir] = blockId;
+      getCell(nx,ny).layers[layer].blockId[d.opp] = blockId;
       visitedEdge.add(x+','+y+','+dir);
       visitedEdge.add(nx+','+ny+','+d.opp);
-      if(railCellIsHub(nx,ny)) break;
-      const track = getCell(nx,ny).layers.rail;
+      if(railCellIsHub(nx,ny,layer)) break;
+      const track = getCell(nx,ny).layers[layer];
       const forward = ROAD_DIRS.find(r=>r.dir!==d.opp && track.edges[r.dir]);
       if(!forward || visitedEdge.has(nx+','+ny+','+forward.dir)) break; // dead end, or a hub-less loop closing back on itself
       x = nx; y = ny; dir = forward.dir;
@@ -81,23 +91,39 @@ function computeRailBlocks(){
   }
   // Pass 1: every edge reachable from an actual hub.
   for(const {x,y} of railCells){
-    if(!railCellIsHub(x,y)) continue;
-    const track = getCell(x,y).layers.rail;
+    if(!railCellIsHub(x,y,layer)) continue;
+    const track = getCell(x,y).layers[layer];
     for(const {dir} of ROAD_DIRS){
       if(!track.edges[dir] || visitedEdge.has(x+','+y+','+dir)) continue;
       walkBlock(x,y,dir);
     }
   }
   // Pass 2: whatever's left is a closed loop of degree-2 track with no
-  // signal or depot anywhere on it — no natural boundary, so it becomes one
-  // block, split arbitrarily at whichever edge is encountered first.
+  // signal, depot, or ramp anywhere on it — no natural boundary, so it
+  // becomes one block, split arbitrarily at whichever edge is encountered
+  // first.
   for(const {x,y} of railCells){
-    const track = getCell(x,y).layers.rail;
+    const track = getCell(x,y).layers[layer];
     for(const {dir} of ROAD_DIRS){
       if(!track.edges[dir] || visitedEdge.has(x+','+y+','+dir)) continue;
       walkBlock(x,y,dir);
     }
   }
+}
+// Rail's two layers ('rail' and 'railElevated', see world.js) each get
+// their own independent block graph — a railRamp cell is a hub on BOTH
+// (see railCellIsHub above), so a train transitioning between them always
+// crosses a block boundary there anyway; there's no need for one
+// combined graph spanning the vertical move itself (tickTrainMovement
+// treats a layer-changing step as always allowed, with no edge/block of
+// its own — see its canEnter/onEnter callbacks). Both layers' blocks
+// share one world.railBlocks map and one continuous id sequence, exactly
+// like before this existed for a single layer.
+function computeRailBlocks(){
+  world.railBlocks = new Map();
+  const blockIdCounter = {next: 1};
+  computeRailBlocksForLayer('rail', blockIdCounter);
+  computeRailBlocksForLayer('railElevated', blockIdCounter);
 }
 function releaseBlock(v){
   if(v.currentBlock==null) return;

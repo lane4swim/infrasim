@@ -24,18 +24,19 @@ function toolHint(t){
     select:'Click a building or truck to inspect it.',
     road:'Click or drag to build road on the selected layer ($10/tile, x2 elevated). Uncheck auto-connect to place tiles without joining them. On the ground layer, crosses rail track at a right angle only — it won\'t connect through track running the same direction.',
     ramp:'Click a cell that already has both a ground and an elevated road tile to link them ($40).',
+    railramp:'Click a cell that already has both a rail and an elevated rail tile to link them ($40) — rail\'s own Ramp, entirely independent of the road one.',
     connect:'Click a road tile, then click an adjacent road tile on the same layer — connects them if not joined, disconnects them if they are.',
     oneway:'Click a road tile, then click an adjacent connected tile — traffic will only be allowed from the first to the second.',
     mine:`Click the top-left cell for a Mine (${BUILDING_DEFS.mine.footprint.w}x${BUILDING_DEFS.mine.footprint.h}). Always produces Ore. It doesn't need to touch a road itself — build a Station touching it for trucks to use.`,
     mill:`Click the top-left cell for a Steel Mill (${BUILDING_DEFS.mill.footprint.w}x${BUILDING_DEFS.mill.footprint.h}). Turns Ore into Steel — it needs one Station handling Ore (delivery) and one handling Steel (pickup), both touching it.`,
     town:`Click the top-left cell for a Town (${BUILDING_DEFS.town.footprint.w}x${BUILDING_DEFS.town.footprint.h}). Accepts whichever resource is chosen in the dropdown. It doesn't need to touch a road itself — build a Station touching it for trucks to use.`,
     station:`Click a cell touching a Mine, Mill, Town, or another Station (${BUILDING_DEFS.station.footprint.w}x${BUILDING_DEFS.station.footprint.h}). Choose which resource it handles — it will only ever connect to a road on its chosen facing side.`,
-    demolish:'Click a road or track tile (on the selected layer — rail is checked automatically) or a building to remove it.',
+    demolish:'Click a road or track tile (on the selected layer, whichever of road or rail is actually there) or a building to remove it.',
     bulktruck:'Click a ground road tile to buy a Bulk Truck ($200) there. Carries Ore only.',
     flatbedtruck:'Click a ground road tile to buy a Flatbed Truck ($260) there. Carries Steel only.',
-    track:`Click or drag to build rail track ($${RAIL_DEFS.track.costPerTile}/tile). Uncheck auto-connect to place tiles without joining them. Crosses ground road at a right angle only — it won't connect through road running the same direction.`,
-    trackconnect:'Click a track tile, then click an adjacent track tile — connects them if not joined, disconnects them if they are.',
-    signal:'Click a track tile, then click an adjacent connected tile — trains will only be allowed to travel from the first to the second. A signal also marks a hard block boundary.',
+    track:`Click or drag to build rail track on the selected layer ($${RAIL_DEFS.track.costPerTile}/tile, x2 elevated). Uncheck auto-connect to place tiles without joining them. Crosses the same-grade road layer at a right angle only — it won't connect through road running the same direction.`,
+    trackconnect:'Click a track tile, then click an adjacent track tile on the same layer — connects them if not joined, disconnects them if they are.',
+    signal:'Click a track tile, then click an adjacent connected tile on the same layer — trains will only be allowed to travel from the first to the second. A signal also marks a hard block boundary.',
     depot:`Click the top-left cell for a Rail Depot (${BUILDING_DEFS.depot.footprint.w}x${BUILDING_DEFS.depot.footprint.h}). Choose which resource it buffers. Build a Station touching it for road access; any touching track tile gives it rail access.`,
     trainyard:`Click the top-left cell for a Train Yard (${BUILDING_DEFS.trainyard.footprint.w}x${BUILDING_DEFS.trainyard.footprint.h}). This is where trains get assembled — it doesn't move cargo itself. Any touching track tile gives it rail access.`,
     assembletrain:'Pick an engine, a wagon type, and a wagon count, then click a rail track tile touching a Train Yard to assemble and pay for the train there.',
@@ -44,6 +45,11 @@ function toolHint(t){
 
 function currentTier(){ return document.getElementById('tierSelect').value; }
 function currentLayer(){ return document.getElementById('layerSelect').value; }
+// The same Ground/Elevated dropdown road tools already read, translated
+// to rail's own layer names — one shared "Network" layer selector governs
+// every track-laying tool (Road AND Track), rather than rail needing a
+// second dropdown of its own.
+function currentRailLayer(){ return currentLayer()==='elevated' ? 'railElevated' : 'rail'; }
 function currentFacing(){ return document.getElementById('facingSelect').value; }
 function currentAutoConnect(){ return document.getElementById('autoConnect').checked; }
 function currentTownResource(){ return document.getElementById('townResourceSelect').value; }
@@ -72,7 +78,7 @@ canvas.addEventListener('mousemove', evt=>{
   hoverCell = cellFromEvent(evt);
   if(!dragging || !hoverCell) return;
   if(currentTool==='road') postCommand('cmdBuildRoad', [hoverCell.x, hoverCell.y, currentLayer(), currentAutoConnect()]);
-  if(currentTool==='track') postCommand('cmdBuildTrack', [hoverCell.x, hoverCell.y, currentAutoConnect()]);
+  if(currentTool==='track') postCommand('cmdBuildTrack', [hoverCell.x, hoverCell.y, currentRailLayer(), currentAutoConnect()]);
 });
 window.addEventListener('mouseup', ()=>{ dragging=false; });
 
@@ -175,6 +181,7 @@ function handleClick(cell){
   }
   if(currentTool==='road'){ postCommand('cmdBuildRoad', [x,y,currentLayer(),currentAutoConnect()]); return; }
   if(currentTool==='ramp'){ postCommand('cmdBuildRamp', [x,y]); return; }
+  if(currentTool==='railramp'){ postCommand('cmdBuildRailRamp', [x,y]); return; }
   if(currentTool==='connect'){ handleConnectClick(x,y); return; }
   if(currentTool==='oneway'){ handleOneWayClick(x,y); return; }
   if(currentTool==='mine'){ postCommand('cmdBuildBuilding', ['mine', x, y, currentTier()]); return; }
@@ -182,16 +189,18 @@ function handleClick(cell){
   if(currentTool==='town'){ postCommand('cmdBuildBuilding', ['town', x, y, currentTier(), null, currentTownResource()]); return; }
   if(currentTool==='station'){ postCommand('cmdBuildBuilding', ['station', x, y, 'small', currentFacing(), currentStationResource()]); return; }
   if(currentTool==='demolish'){
-    // Rail isn't reachable through the ground/elevated layer dropdown, so
-    // fall back to it automatically when the selected layer has nothing
-    // to remove at this cell but rail track does.
-    const layer = getCell(x,y).layers[currentLayer()].track ? currentLayer() : 'rail';
+    // The selected Ground/Elevated layer picks which of that grade's ROAD
+    // layer to try first; if there's nothing to remove there, fall back
+    // to that same grade's RAIL layer (ground->rail, elevated->railElevated).
+    const roadLayer = currentLayer();
+    const railLayer = currentRailLayer();
+    const layer = getCell(x,y).layers[roadLayer].track ? roadLayer : railLayer;
     postCommand('cmdDemolish', [x,y,layer]);
     return;
   }
   if(currentTool==='bulktruck'){ postCommand('cmdPurchaseVehicle', [x,y,'bulk']); return; }
   if(currentTool==='flatbedtruck'){ postCommand('cmdPurchaseVehicle', [x,y,'flatbed']); return; }
-  if(currentTool==='track'){ postCommand('cmdBuildTrack', [x,y,currentAutoConnect()]); return; }
+  if(currentTool==='track'){ postCommand('cmdBuildTrack', [x,y,currentRailLayer(),currentAutoConnect()]); return; }
   if(currentTool==='trackconnect'){ handleConnectClick(x,y); return; }
   if(currentTool==='signal'){ handleOneWayClick(x,y); return; }
   if(currentTool==='depot'){ postCommand('cmdBuildBuilding', ['depot', x, y, currentTier(), null, currentDepotResource()]); return; }
@@ -201,12 +210,13 @@ function handleClick(cell){
 
 function handleConnectClick(x,y){
   // Doubles as rail's "Connect / Disconnect Track" (currentTool==='trackconnect')
-  // — same command, same two-click interaction, just always on the rail
-  // layer rather than whichever ground/elevated layer is currently
-  // selected, mirroring handleOneWayClick's signal/oneway split below.
-  // Without this, rail track built with auto-connect off (or that's had a
-  // connection manually severed) had no way back to being joined again.
-  const layer = currentTool==='trackconnect' ? 'rail' : currentLayer();
+  // — same command, same two-click interaction, just on whichever rail
+  // layer the shared Ground/Elevated dropdown maps to (currentRailLayer())
+  // rather than the road layer names currentLayer() itself returns,
+  // mirroring handleOneWayClick's signal/oneway split below. Without this,
+  // rail track built with auto-connect off (or that's had a connection
+  // manually severed) had no way back to being joined again.
+  const layer = currentTool==='trackconnect' ? currentRailLayer() : currentLayer();
   if(!getCell(x,y).layers[layer].track){
     logEvent(`No ${layer} track there.`, 'warn');
     connectFirst = null;
@@ -225,9 +235,9 @@ function handleConnectClick(x,y){
 
 function handleOneWayClick(x,y){
   // Doubles as rail's "Toggle Signal Direction" (currentTool==='signal') —
-  // same command, same two-click interaction, just always on the rail
-  // layer rather than whichever ground/elevated layer is currently selected.
-  const layer = currentTool==='signal' ? 'rail' : currentLayer();
+  // same command, same two-click interaction, just on whichever rail layer
+  // the shared Ground/Elevated dropdown maps to (currentRailLayer()).
+  const layer = currentTool==='signal' ? currentRailLayer() : currentLayer();
   if(!getCell(x,y).layers[layer].track){
     logEvent(`No ${layer} track there.`, 'warn');
     oneWayFirst = null;
@@ -410,7 +420,7 @@ document.getElementById('millCost').textContent = '$' + BUILDING_DEFS.mill.build
 document.getElementById('townCost').textContent = '$' + BUILDING_DEFS.town.buildCost;
 document.getElementById('stationCost').textContent = '$' + BUILDING_DEFS.station.buildCost;
 document.getElementById('rampCost').textContent = '$' + RAMP_COST;
-document.getElementById('trackCost').textContent = '$' + RAIL_DEFS.track.costPerTile + '/tile';
+document.getElementById('railRampCost').textContent = '$' + RAMP_COST;
 document.getElementById('depotCost').textContent = '$' + BUILDING_DEFS.depot.buildCost;
 document.getElementById('trainyardCost').textContent = '$' + BUILDING_DEFS.trainyard.buildCost;
 function updateRoadCostLabel(){
@@ -418,7 +428,14 @@ function updateRoadCostLabel(){
   document.getElementById('roadCost').textContent =
     '$' + (ROAD_COST_PER_TILE * (elevated ? ELEVATED_COST_MULTIPLIER : 1)) + '/tile';
 }
+function updateTrackCostLabel(){
+  const elevated = currentLayer()==='elevated';
+  document.getElementById('trackCost').textContent =
+    '$' + (RAIL_DEFS.track.costPerTile * (elevated ? ELEVATED_COST_MULTIPLIER : 1)) + '/tile';
+}
 document.getElementById('layerSelect').addEventListener('change', updateRoadCostLabel);
+document.getElementById('layerSelect').addEventListener('change', updateTrackCostLabel);
 updateRoadCostLabel();
+updateTrackCostLabel();
 
 requestAnimationFrame(frame);

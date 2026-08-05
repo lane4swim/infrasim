@@ -87,10 +87,18 @@ function render(){
   // oneWayBlocked} shape, so a signal renders exactly like a one-way arrow
   // for free, and rail crossing a road at the same cell reads as two
   // independent lines (different layer key, never auto-connected).
+  // railElevated is rail's own bridge layer (rail ramps, not roads) — a
+  // lighter tint of rail's purple, the same relationship elevated road's
+  // light blue has to ground road's gray.
   drawRoadLayer('rail', '#9b6bd6', 10);
+  drawRoadLayer('railElevated', '#c9a8e8', 13);
 
-  // ramps — a small diamond marking a cell where ground and elevated are
-  // deliberately linked (the only place a vehicle can change layer)
+  // ramps — a small diamond marking a cell where a layer pair is
+  // deliberately linked (the only place a vehicle can change layer): the
+  // road Ramp (ground<->elevated) in elevated road's own light blue, the
+  // independent Rail Ramp (rail<->railElevated) in elevated rail's own
+  // light purple, so the two are visibly distinguishable when a cell
+  // happens to have both.
   for(const [k,cell] of world.grid){
     if(!cell.ramp) continue;
     const [x,y] = k.split(',').map(Number);
@@ -101,17 +109,31 @@ function render(){
     ctx.fillRect(-5,-5,10,10);
     ctx.restore();
   }
+  for(const [k,cell] of world.grid){
+    if(!cell.railRamp) continue;
+    const [x,y] = k.split(',').map(Number);
+    const cx = x*CELL+CELL/2, cy = y*CELL+CELL/2;
+    ctx.save();
+    ctx.translate(cx,cy); ctx.rotate(Math.PI/4);
+    ctx.fillStyle = '#c9a8e8';
+    ctx.fillRect(-5,-5,10,10);
+    ctx.restore();
+  }
 
-  // level crossings — a small white X marking a cell where ground road and
-  // rail track physically share the same grid cell (necessarily crossing
-  // at a right angle; see connectNewTileEdges/directionClaimedByOtherNetwork
-  // in commands.js for why the two networks can never overlap in the same
-  // direction here). Also exactly where a train passing through blocks
-  // truck traffic until it clears — see markTrainCrossingsOccupied in
-  // systems.js — so this marker doubles as "trucks may have to wait here."
+  // level crossings — a small white X marking a cell where a road layer and
+  // its same-grade rail layer physically share the same grid cell
+  // (necessarily crossing at a right angle; see
+  // connectNewTileEdges/directionClaimedByOtherNetwork in commands.js for
+  // why the two networks can never overlap in the same direction here).
+  // Checked at both grades — ground road vs. ground rail, and elevated
+  // road vs. elevated rail — either can independently be a crossing at the
+  // same cell. Also exactly where a train passing through blocks road
+  // traffic (at the SAME grade) until it clears — see
+  // markTrainCrossingsOccupied in systems.js — so this marker doubles as
+  // "vehicles may have to wait here."
   for(const [k] of world.grid){
     const [x,y] = k.split(',').map(Number);
-    if(!isRoadRailCrossing(x,y)) continue;
+    if(!isRoadRailCrossing(x,y,'rail') && !isRoadRailCrossing(x,y,'railElevated')) continue;
     const cx = x*CELL+CELL/2, cy = y*CELL+CELL/2;
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 2;
@@ -252,7 +274,10 @@ function render(){
     const w = horizontal ? longPx : shortPx;
     const h = horizontal ? shortPx : longPx;
     ctx.fillRect(cx-w/2, cy-h/2, w, h);
-    if(v.layer==='elevated'){
+    if(v.layer==='elevated' || v.layer==='railElevated'){
+      // Same "on a bridge" outline for a truck on elevated road and a train
+      // on elevated rail — both mean the same thing (currently on this
+      // vehicle's own elevated layer), so one shared visual cue is enough.
       ctx.strokeStyle='#7fb8c9'; ctx.lineWidth=2;
       ctx.strokeRect(cx-w/2-2, cy-h/2-2, w+4, h+4);
     }

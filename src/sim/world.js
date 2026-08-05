@@ -5,7 +5,7 @@ const GRID_W = 22, GRID_H = 14, CELL = 40;
 const world = {
   treasury: INITIAL_TREASURY,
   tick: 0,
-  grid: new Map(),          // "x,y" -> { buildingId, ramp, layers:{ground,elevated,rail} }
+  grid: new Map(),          // "x,y" -> { buildingId, ramp, railRamp, layers:{ground,elevated,rail,railElevated} }
   entities: new Map(),      // id -> entity handle (see makeEntityHandle below)
   components: {},           // componentName -> Map<entityId, componentData> — the real storage
   // blockId -> {occupiedBy: entityId|null}. Rail's mutual-exclusion state
@@ -41,8 +41,17 @@ function getCell(x,y){
   const k = cellKey(x,y);
   if(!world.grid.has(k)) world.grid.set(k,{
     buildingId: null,
-    ramp: false,             // true if ground and elevated tracks are linked vertically here
-    layers: { ground:newTrack(), elevated:newTrack(), rail:newTrack() },
+    ramp: false,             // true if ground and elevated ROAD tracks are linked vertically here
+    railRamp: false,         // true if rail and railElevated tracks are linked vertically here — the rail network's own Ramp, entirely independent of the road one above
+    // Rail gets the same ground/elevated split road already has (rail
+    // bridges) — `rail` is ground-level track, `railElevated` a separate
+    // bridge layer, linked only at a railRamp cell, exactly mirroring how
+    // `ground`/`elevated` only link at a (road) Ramp. Four independent
+    // layers, not a 2x2 nested structure, so every existing piece of code
+    // that already treats "a layer" as a flat string key into this object
+    // (pathfinding, rendering, block computation) needed no restructuring,
+    // just one more key to iterate.
+    layers: { ground:newTrack(), elevated:newTrack(), rail:newTrack(), railElevated:newTrack() },
   });
   return world.grid.get(k);
 }

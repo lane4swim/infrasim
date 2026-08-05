@@ -213,14 +213,15 @@ function markTrainCrossingsOccupied(occupied){
   for(const id of queryEntities('Movement').filter(isTrain)){
     const train = world.entities.get(id);
     for(const key of footprintKeysFor(train)){
-      const [xStr,yStr] = key.split(',');
+      const [xStr,yStr,railLayer] = key.split(',');
       const x = Number(xStr), y = Number(yStr);
-      if(isRoadRailCrossing(x,y)) occupied.set(posKey(x,y,'ground'), `crossing-${id}`);
+      if(isRoadRailCrossing(x,y,railLayer)) occupied.set(posKey(x,y,RAIL_ROAD_COUNTERPART[railLayer]), `crossing-${id}`);
     }
     if(train.path){
       for(let i=1; i<=LOOKAHEAD && train.pathIndex+i < train.path.length; i++){
         const node = train.path[train.pathIndex+i];
-        if(isRoadRailCrossing(node.x, node.y)) occupied.set(posKey(node.x, node.y, 'ground'), `crossing-${id}`);
+        const railLayer = node.layer!==undefined ? node.layer : train.layer;
+        if(isRoadRailCrossing(node.x, node.y, railLayer)) occupied.set(posKey(node.x, node.y, RAIL_ROAD_COUNTERPART[railLayer]), `crossing-${id}`);
       }
     }
   }
@@ -308,7 +309,7 @@ function tickVehicles(){
 function startMovingToRail(train, building){
   const dock = buildingRailAccessCell(building);
   if(!dock){ train.state='blocked'; return false; } // no rail track touches this building right now
-  const path = findRailPath({x:train.x, y:train.y}, dock);
+  const path = findRailPath({x:train.x, y:train.y, layer:train.layer}, dock);
   if(!path){ train.state='blocked'; return false; }
   train.path = path;
   train.pathIndex = 0;
@@ -337,7 +338,7 @@ function tickTrainMovement(){
     if(v.state==='idle' || v.state==='blocked'){
       const dock = buildingRailAccessCell(target);
       if(!dock){ v.state='blocked'; continue; }
-      if(v.x===dock.x && v.y===dock.y){
+      if(v.x===dock.x && v.y===dock.y && v.layer===dock.layer){
         v.state = order.action==='load_full' ? 'loading' : 'unloading';
       } else {
         startMovingToRail(v, target);
@@ -358,17 +359,25 @@ function tickTrainMovement(){
       // already held by this same train) — never "as close as physics
       // allows," always a full stop at the block boundary. Acquiring a new
       // block releases whichever one this train held before, so it never
-      // holds more than one at a time.
+      // holds more than one at a time. `cur.layer` (not a hardcoded 'rail')
+      // since a train can now be on 'railElevated' too; a vertical move
+      // through a railRamp (same x,y, different layer — dirBetween has no
+      // entry for that) has no lateral edge or block of its own to check —
+      // the ramp cell is already a hub on each layer's own independent
+      // block graph (see railCellIsHub in rail-blocks.js), so the vertical
+      // step itself is always allowed.
       advanceAlongPath(v, occupied,
         (cur,next) => {
+          if(cur.layer !== next.layer) return true;
           const dir = dirBetween(cur,next).dir;
-          const blockId = getCell(cur.x,cur.y).layers.rail.blockId[dir];
+          const blockId = getCell(cur.x,cur.y).layers[cur.layer].blockId[dir];
           const block = blockId!=null ? world.railBlocks.get(blockId) : null;
           return !block || block.occupiedBy===null || block.occupiedBy===v.id;
         },
         (cur,next) => {
+          if(cur.layer !== next.layer) return;
           const dir = dirBetween(cur,next).dir;
-          const blockId = getCell(cur.x,cur.y).layers.rail.blockId[dir];
+          const blockId = getCell(cur.x,cur.y).layers[cur.layer].blockId[dir];
           if(blockId !== v.currentBlock){
             releaseBlock(v);
             const block = blockId!=null ? world.railBlocks.get(blockId) : null;

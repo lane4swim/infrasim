@@ -1,21 +1,23 @@
 // ---------------------------------------------------------------------
 // COMMANDS  (§7 — the only way the world is mutated by the player)
 // ---------------------------------------------------------------------
-// Ground road and rail share the same physical grade — a real level
-// crossing is two networks crossing at a right angle, never running side
-// by side through the same point. So a single direction (N/S/E/W) at a
-// given cell can belong to a through-connected ground-road edge OR a
-// through-connected rail edge, never both; the two networks are free to
-// occupy perpendicular directions at the same cell (a clean crossing:
-// road claims E/W, rail claims N/S), but never the same direction (which
-// would mean the two literally overlapping in the same lane). Elevated
-// has no counterpart here — a bridge passes physically above rail, the
-// same non-interaction it already has with ground road absent a Ramp — so
-// this only ever applies between 'ground' and 'rail'.
-const GROUND_RAIL_COUNTERPART = {ground:'rail', rail:'ground'};
+// A road layer and its same-grade rail layer (ground road with ground
+// rail, elevated road with elevated rail — see RAIL_ROAD_COUNTERPART in
+// pathfinding.js) share the same physical grade — a real level crossing
+// is two networks crossing at a right angle, never running side by side
+// through the same point. So a single direction (N/S/E/W) at a given cell
+// can belong to a through-connected edge on one of the pair OR the other,
+// never both; the two networks are free to occupy perpendicular
+// directions at the same cell (a clean crossing: road claims E/W, rail
+// claims N/S), but never the same direction (which would mean the two
+// literally overlapping in the same lane). A layer's counterpart at a
+// DIFFERENT grade (ground road vs. elevated rail, or the reverse) has no
+// entry in that map at all — a bridge passes physically above whatever's
+// below it, the same non-interaction ground/elevated road already has
+// absent a Ramp.
 function directionClaimedByOtherNetwork(x,y,layer,dir){
-  const counterpart = GROUND_RAIL_COUNTERPART[layer];
-  if(!counterpart) return false; // elevated: no counterpart, no constraint
+  const counterpart = RAIL_ROAD_COUNTERPART[layer];
+  if(!counterpart) return false; // no same-grade counterpart, no constraint
   return getCell(x,y).layers[counterpart].edges[dir];
 }
 // Connect only the specific edges that actually border an existing tile on
@@ -49,21 +51,25 @@ function cmdBuildRoad(x,y,layer,autoConnect){
   if(autoConnect) connectNewTileEdges(x,y,layer,track); // else placed isolated — wire it up later with Connect / Disconnect
 }
 // Rail track tile — same construction/connection shape as a road tile (see
-// connectNewTileEdges), just on the `rail` layer and at RAIL_DEFS' own
-// per-tile cost. Block segmentation only ever needs recomputing when the
-// track graph's topology actually changes, so it's done once here (and in
-// cmdDemolish/cmdToggleOneWay-on-rail) rather than every tick.
-function cmdBuildTrack(x,y,autoConnect){
+// connectNewTileEdges), just on the `rail`/`railElevated` layer and at
+// RAIL_DEFS' own per-tile cost (elevated at the same x2 multiplier
+// elevated road uses — the same "bridges cost more per tile" reasoning
+// applies regardless of network). Block segmentation only ever needs
+// recomputing when the track graph's topology actually changes, so it's
+// done once here (and in cmdDemolish/cmdToggleConnection/cmdToggleOneWay)
+// rather than every tick.
+function cmdBuildTrack(x,y,layer,autoConnect){
+  layer = layer || 'rail';
   if(autoConnect === undefined) autoConnect = true;
   const cell = getCell(x,y);
-  const track = cell.layers.rail;
+  const track = cell.layers[layer];
   if(track.track) return;
-  if(cell.buildingId) return; // can't lay track under a building
-  const cost = RAIL_DEFS.track.costPerTile;
+  if(layer==='rail' && cell.buildingId) return; // can't lay ground-level track under a building
+  const cost = RAIL_DEFS.track.costPerTile * (layer==='railElevated' ? ELEVATED_COST_MULTIPLIER : 1);
   if(!canAfford(cost)){ logEvent('Insufficient funds for track.', 'warn'); return; }
-  charge(cost, 'rail track tile');
+  charge(cost, layer==='railElevated' ? 'elevated rail track tile' : 'rail track tile');
   track.track = true;
-  if(autoConnect) connectNewTileEdges(x,y,'rail',track);
+  if(autoConnect) connectNewTileEdges(x,y,layer,track);
   computeRailBlocks();
 }
 function cmdToggleConnection(x1,y1,x2,y2,layer){
@@ -92,7 +98,7 @@ function cmdToggleConnection(x1,y1,x2,y2,layer){
     aTrack.edges[d.dir] = true; bTrack.edges[d.opp] = true; // new connections start two-way
     logEvent('Connection made.');
   }
-  if(layer==='rail') computeRailBlocks();
+  if(layer==='rail' || layer==='railElevated') computeRailBlocks();
 }
 function cmdBuildRamp(x,y){
   const cell = getCell(x,y);
@@ -104,6 +110,23 @@ function cmdBuildRamp(x,y){
   if(!canAfford(RAMP_COST)){ logEvent('Insufficient funds for ramp.', 'warn'); return; }
   charge(RAMP_COST, 'ramp');
   cell.ramp = true;
+}
+// Rail's own Ramp — links `rail` and `railElevated` at a cell exactly like
+// a (road) Ramp links `ground` and `elevated`, entirely independent of it
+// (a cell can have either, both, or neither kind of ramp). Same cost,
+// same one-per-cell rule, same "needs both layers' track already there
+// first" requirement.
+function cmdBuildRailRamp(x,y){
+  const cell = getCell(x,y);
+  if(!cell.layers.rail.track || !cell.layers.railElevated.track){
+    logEvent('A Rail Ramp needs both a rail and an elevated rail tile at the same cell.', 'warn');
+    return;
+  }
+  if(cell.railRamp){ logEvent('There is already a Rail Ramp here.', 'warn'); return; }
+  if(!canAfford(RAMP_COST)){ logEvent('Insufficient funds for rail ramp.', 'warn'); return; }
+  charge(RAMP_COST, 'rail ramp');
+  cell.railRamp = true;
+  computeRailBlocks(); // a railRamp cell is a hub — topology-equivalent to adding a signal
 }
 function cmdToggleOneWay(x1,y1,x2,y2,layer){
   // Also doubles as rail's "Toggle Signal Direction" (layer='rail') — same
@@ -124,7 +147,7 @@ function cmdToggleOneWay(x1,y1,x2,y2,layer){
     bTrack.oneWayBlocked[d.opp] = true;  // block the reverse
     logEvent('Edge set to one-way.');
   }
-  if(layer==='rail') computeRailBlocks();
+  if(layer==='rail' || layer==='railElevated') computeRailBlocks();
 }
 function cmdBuildBuilding(type, x, y, tier, facing, resource){
   const def = BUILDING_DEFS[type];
@@ -173,8 +196,13 @@ function cmdDemolish(x,y,layer){
     track.edges = {N:false, S:false, E:false, W:false};
     track.oneWayBlocked = {N:false, S:false, E:false, W:false};
     track.blockId = {N:null, S:null, E:null, W:null};
-    if(cell.ramp) cell.ramp = false; // a Ramp needs both layers present
-    if(layer==='rail') computeRailBlocks(); // topology changed — block boundaries may have moved
+    // Each ramp needs both of ITS OWN pair of layers present — demolishing
+    // ground/elevated only ever invalidates the road Ramp, demolishing
+    // rail/railElevated only ever invalidates the Rail Ramp, never the
+    // other pair's.
+    if(cell.ramp && (layer==='ground' || layer==='elevated')) cell.ramp = false;
+    if(cell.railRamp && (layer==='rail' || layer==='railElevated')) cell.railRamp = false;
+    if(layer==='rail' || layer==='railElevated') computeRailBlocks(); // topology changed — block boundaries may have moved
   }
 }
 function cmdPurchaseVehicle(x,y,vehicleType){

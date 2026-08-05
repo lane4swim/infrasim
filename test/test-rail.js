@@ -23,11 +23,11 @@ function section(name, fn){
 function buildJunctionLine(ctx){
   return run(ctx, `
     cmdBuildBuilding('depot', 0, 5, 'large', null, 'ore');
-    for(let x=2; x<=11; x++) cmdBuildTrack(x, 5, true);
-    cmdBuildTrack(6, 6, true); // branch stub off the junction cell — used by Test 2
+    for(let x=2; x<=11; x++) cmdBuildTrack(x, 5, 'rail', true);
+    cmdBuildTrack(6, 6, 'rail', true); // branch stub off the junction cell — used by Test 2
     cmdBuildBuilding('depot', 12, 5, 'large', null, 'ore');
-    cmdBuildTrack(11, 6, true);
-    cmdBuildTrack(11, 7, true);
+    cmdBuildTrack(11, 6, 'rail', true);
+    cmdBuildTrack(11, 7, 'rail', true);
     cmdBuildBuilding('depot', 10, 8, 'large', null, 'ore');
     const depots = [...world.entities.values()].filter(e=>e.kind==='building' && e.type==='depot');
     return {
@@ -155,8 +155,8 @@ section('Test 3 — Train Yard assembly (engines + wagons, not a fixed train def
   const ctx = newGameContext();
   run(ctx, `
     cmdBuildBuilding('trainyard', 0, 0, 'small');
-    cmdBuildTrack(3, 0, true);  // touches the Yard's footprint (0,0)-(2,1) at (2,0)
-    cmdBuildTrack(3, 3, true);  // NOT touching any Yard
+    cmdBuildTrack(3, 0, 'rail', true);  // touches the Yard's footprint (0,0)-(2,1) at (2,0)
+    cmdBuildTrack(3, 3, 'rail', true);  // NOT touching any Yard
   `);
 
   const rejected = run(ctx, `
@@ -203,7 +203,7 @@ section('Test 4 — cross-mode chain end to end (Mine -> truck -> Depot -> train
   const ctx = newGameContext();
   const ids = run(ctx, `
     function roadRun(x, y1, y2){ for(let y=Math.min(y1,y2); y<=Math.max(y1,y2); y++) cmdBuildRoad(x,y,'ground',true); }
-    function railRun(x1, x2, y){ for(let x=Math.min(x1,x2); x<=Math.max(x1,x2); x++) cmdBuildTrack(x,y,true); }
+    function railRun(x1, x2, y){ for(let x=Math.min(x1,x2); x<=Math.max(x1,x2); x++) cmdBuildTrack(x,y,'rail',true); }
 
     // West side (road): Mine -> Station(facing S) -> road -> Station(facing N) -> Depot A
     // (Stations must be built AFTER whatever they touch already exists —
@@ -298,7 +298,7 @@ section('Test 4 — cross-mode chain end to end (Mine -> truck -> Depot -> train
 section('Test 5 — train physics reuse (same F=ma model as trucks, parameterized over an assembled consist)', () => {
   const ctx = newGameContext();
   const out = run(ctx, `
-    for(let x=0;x<=15;x++) cmdBuildTrack(x, 0, true);
+    for(let x=0;x<=15;x++) cmdBuildTrack(x, 0, 'rail', true);
     cmdBuildBuilding('depot', 16, 0, 'large', null, 'ore');
     const train = createTrain(0, 0, 'diesel', 'ore_wagon', 3);
     const depot = [...world.entities.values()].find(e=>e.type==='depot');
@@ -371,7 +371,7 @@ section('Test 7 — Rail Depot forwards to a directly/chain-linked industry, lik
     cmdBuildBuilding('depot', 2, 1, 'large', null, 'ore'); // touches the Mine at (1,1)/(1,2)
 
     // Rail spine, a Train Yard touching it, and Depot B at the far end.
-    for(let x=2; x<=14; x++) cmdBuildTrack(x, 3, true); // touches Depot A at (2,2)/(3,2)
+    for(let x=2; x<=14; x++) cmdBuildTrack(x, 3, 'rail', true); // touches Depot A at (2,2)/(3,2)
     cmdBuildBuilding('trainyard', 4, 4, 'small');        // touches the spine at (4,3)/(5,3)/(6,3)
     cmdBuildBuilding('depot', 14, 1, 'large', null, 'ore'); // touches the spine at (14,2)/(15,2)
 
@@ -440,17 +440,17 @@ section('Test 8 — road and rail cross only at a right angle, sharing the same 
     // Ground road running E-W through (5,5); rail running N-S through the
     // exact same cell — a clean perpendicular crossing.
     for(let x=3; x<=7; x++) cmdBuildRoad(x, 5, 'ground', true);
-    for(let y=2; y<=8; y++) cmdBuildTrack(5, y, true);
+    for(let y=2; y<=8; y++) cmdBuildTrack(5, y, 'rail', true);
 
     const crossing = getCell(5,5);
     const roadPath = findRoadPath({x:3,y:5,layer:'ground'}, {x:7,y:5,layer:'ground'});
-    const railPath = findRailPath({x:5,y:2}, {x:5,y:8});
+    const railPath = findRailPath({x:5,y:2,layer:'rail'}, {x:5,y:8,layer:'rail'});
 
     // Now try to run a SECOND rail tile parallel to the road, through the
     // same crossing cell (6,5 is already ground road) — this should place
     // the tile but fail to connect through the crossing, since that
     // direction is already the road's.
-    cmdBuildTrack(6, 5, true);
+    cmdBuildTrack(6, 5, 'rail', true);
     const eastOfCrossing = getCell(6,5);
 
     return {
@@ -485,7 +485,7 @@ section('Test 9 — a train sitting on a road/rail crossing blocks trucks throug
     cmdBuildBuilding('mine', 11, 3, 'small');
     cmdBuildBuilding('station', 10, 3, 'small', 'S', 'ore'); // touches the Mine at (11,3); road dock at (10,4)
     for(let x=2; x<=10; x++) cmdBuildRoad(x, 4, 'ground', true); // crosses the rail at (5,4)
-    for(let y=1; y<=8; y++) cmdBuildTrack(5, y, true);
+    for(let y=1; y<=8; y++) cmdBuildTrack(5, y, 'rail', true);
 
     cmdPurchaseVehicle(2, 4, 'bulk');
     const truck = [...world.entities.values()].find(e=>e.kind==='vehicle' && e.type==='bulk');
@@ -530,7 +530,7 @@ section('Test 10 — a train reserves a crossing well before it physically arriv
     cmdBuildBuilding('mine', 11, 3, 'small');
     cmdBuildBuilding('station', 10, 3, 'small', 'S', 'ore'); // road dock at (10,4)
     for(let x=2; x<=10; x++) cmdBuildRoad(x, 4, 'ground', true); // crosses the rail at (5,4)
-    for(let y=0; y<=8; y++) cmdBuildTrack(5, y, true);
+    for(let y=0; y<=8; y++) cmdBuildTrack(5, y, 'rail', true);
 
     cmdPurchaseVehicle(2, 4, 'bulk');
     const truck = [...world.entities.values()].find(e=>e.kind==='vehicle' && e.type==='bulk');
@@ -573,6 +573,76 @@ section('Test 10 — a train reserves a crossing well before it physically arriv
     if(x > 5){ truckCrossed = true; break; }
   }
   check('the truck proceeds once the train no longer has a path reserving the crossing', truckCrossed);
+});
+
+section('Test 11 — rail also runs on ground and elevated layers, linked by its own Rail Ramp', () => {
+  const ctx = newGameContext();
+  const s = run(ctx, `
+    // Elevated road E-W crossing elevated rail N-S at (5,5) — the same
+    // perpendicular-only crossing rule Test 8 proved for ground, now
+    // checked at the elevated grade instead.
+    for(let x=3; x<=7; x++) cmdBuildRoad(x, 5, 'elevated', true);
+    for(let y=2; y<=8; y++) cmdBuildTrack(5, y, 'railElevated', true);
+    const crossing = getCell(5,5);
+
+    // A signal on railElevated is its own block boundary, independent of
+    // any ground-rail blocks elsewhere on the map.
+    cmdBuildTrack(10, 0, 'railElevated', true);
+    cmdBuildTrack(11, 0, 'railElevated', true);
+    cmdBuildTrack(12, 0, 'railElevated', true);
+    cmdToggleOneWay(10, 0, 11, 0, 'railElevated');
+    const elevatedBlockA = getCell(10,0).layers.railElevated.blockId.E;
+    const elevatedBlockB = getCell(11,0).layers.railElevated.blockId.E;
+
+    return {
+      roadConnectsThrough: crossing.layers.elevated.edges.E && crossing.layers.elevated.edges.W,
+      railConnectsThrough: crossing.layers.railElevated.edges.N && crossing.layers.railElevated.edges.S,
+      elevatedBlocksSplitBySignal: elevatedBlockA !== elevatedBlockB && elevatedBlockA != null && elevatedBlockB != null,
+    };
+  `);
+  check('elevated road and elevated rail cross at a right angle, both staying fully connected', s.roadConnectsThrough && s.railConnectsThrough);
+  check('a signal on the elevated rail layer splits blocks there too, independent of ground rail', s.elevatedBlocksSplitBySignal);
+
+  // A Rail Ramp links rail and railElevated exactly like a (road) Ramp
+  // links ground and elevated — proven end to end with a real train,
+  // organically driven by simTick(), not just a pathfinding check: it
+  // must actually climb onto the elevated bridge and come back down to
+  // reach a second, ground-level Depot.
+  const ids = run(ctx, `
+    cmdBuildBuilding('depot', 0, 3, 'large', null, 'ore');
+    for(let x=2; x<=4; x++) cmdBuildTrack(x, 3, 'rail', true);
+    cmdBuildBuilding('trainyard', 2, 4, 'small');
+    for(let x=4; x<=8; x++) cmdBuildTrack(x, 3, 'railElevated', true);
+    cmdBuildRailRamp(4, 3);
+    for(let x=8; x<=10; x++) cmdBuildTrack(x, 3, 'rail', true);
+    cmdBuildRailRamp(8, 3);
+    cmdBuildBuilding('depot', 11, 3, 'large', null, 'ore');
+
+    const depots = [...world.entities.values()].filter(e=>e.kind==='building' && e.type==='depot');
+    const depotAId = depots.find(d=>d.x===0).id;
+    const depotBId = depots.find(d=>d.x===11).id;
+    world.entities.get(depotAId).outStock = 50; // seed cargo directly — this test is about the ramp, not production
+
+    cmdAssembleTrain(2, 3, 'diesel', 'ore_wagon', 2);
+    const train = [...world.entities.values()].find(e=>e.kind==='vehicle' && isTrain(e.id));
+    cmdSetOrders(train, [
+      {nodeId: depotAId, action:'load_full', resource:'ore'},
+      {nodeId: depotBId, action:'unload_all', resource:'ore'},
+    ]);
+    return {trainId: train.id, depotAId, depotBId};
+  `);
+
+  let sawElevated = false, sawGroundAfterElevated = false;
+  for(let i=0;i<3000;i++){
+    run(ctx, `simTick();`);
+    const t = run(ctx, `const t = world.entities.get(${ids.trainId}); return {x:t.x, layer:t.layer};`);
+    if(t.layer==='railElevated') sawElevated = true;
+    if(sawElevated && t.layer==='rail' && t.x > 8) sawGroundAfterElevated = true;
+  }
+  check('the train climbed onto the elevated rail bridge via the first Rail Ramp', sawElevated);
+  check('the train came back down to ground rail via the second Rail Ramp, past the bridge', sawGroundAfterElevated);
+  const depotBStock = run(ctx, `return world.entities.get(${ids.depotBId}).outStock;`);
+  check('the ore actually made it across the bridge and was delivered at the far Depot', depotBStock > 0, `depotB stock: ${depotBStock}`);
 });
 
 console.log(failures===0 ? `\nAll checks passed.` : `\n${failures} check(s) FAILED.`);

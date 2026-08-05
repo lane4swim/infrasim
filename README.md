@@ -1039,3 +1039,84 @@ the new tool connects them (`findRailPath` then finds the direct path)
 and disconnects them again, and the original ground/elevated "Connect /
 Disconnect" tool still correctly rejects a rail-only cell rather than
 silently doing the wrong thing.
+
+---
+
+# Addendum — rail also runs on ground and elevated layers, linked by its own Rail Ramp
+
+Rail was a single flat layer — a bridge over an obstacle (another rail
+line, a river the tile grid doesn't model, whatever) had no way to exist,
+even though road already had exactly that via its own ground/elevated
+split. Since rail bridges are a real, common thing, rail now gets the
+same split: a new `railElevated` layer, structurally identical to `rail`,
+linked to it only at a **Rail Ramp** (`cell.railRamp`) — entirely
+independent of the road Ramp (`cell.ramp`); a cell can have either, both,
+or neither.
+
+## What changed
+
+- **`world.js`**: `getCell`'s `layers` object gains a fourth key,
+  `railElevated` (alongside `ground`/`elevated`/`rail`), and cells gain a
+  `railRamp` flag next to the existing `ramp`. Four independent flat
+  layers, not a 2x2 nested structure — every existing piece of code that
+  already treated "a layer" as a string key into this object needed no
+  restructuring, just one more key to iterate.
+- **`pathfinding.js`**: `findRailPath` now takes the same
+  `{x,y,layer}` node shape `findRoadPath` always has, and gained the same
+  vertical-move-via-ramp logic — a `railRamp` cell lets a train's path
+  switch between `rail` and `railElevated`, exactly like a Ramp switches
+  a truck's path between `ground` and `elevated`. `RAIL_ROAD_COUNTERPART`
+  (`{ground:'rail', rail:'ground', elevated:'railElevated',
+  railElevated:'elevated'}`) replaces the old ground-only mapping the
+  perpendicular-crossing rule used, so that rule and the crossing-blocking
+  mechanic both now apply at the elevated grade too, symmetrically.
+  `buildingRailAccessCell` stays ground-only (`rail`) deliberately — a
+  Depot or Train Yard is a ground building, and `railElevated` is a
+  through-only bridge layer that must come back down via a Rail Ramp
+  before reaching one, exactly like an elevated road must return to
+  ground via a Ramp before reaching a Station.
+- **`commands.js`**: `cmdBuildTrack` gained a `layer` parameter (default
+  `'rail'`), matching `cmdBuildRoad`'s existing signature — elevated track
+  costs the same x2 multiplier elevated road does. A new
+  `cmdBuildRailRamp(x,y)` mirrors `cmdBuildRamp` exactly, for the
+  `rail`/`railElevated` pair. `cmdToggleConnection`/`cmdToggleOneWay`/
+  `cmdDemolish` all now recompute rail blocks for either rail layer, and
+  `cmdDemolish` clears only the ramp type whose own layer pair was
+  actually affected (a latent bug fixed as a natural side effect of
+  writing this correctly for two ramp types instead of one).
+- **`rail-blocks.js`**: `computeRailBlocks` now computes both rail
+  layers' blocks into the same `world.railBlocks` map with one continuous
+  id sequence, via a new `computeRailBlocksForLayer(layer, counter)` — a
+  `railRamp` cell counts as a hub (like a signal or Depot), so a train
+  transitioning layers always crosses a block boundary there; the vertical
+  move itself has no edge/block of its own and is always allowed (see
+  `tickTrainMovement`'s `canEnter`/`onEnter` callbacks, now guarded on
+  `cur.layer !== next.layer`).
+- **`render.js`**: `railElevated` draws in a lighter tint of rail's purple
+  (mirroring elevated road's relationship to ground road); a Rail Ramp
+  gets its own diamond marker in that same color, distinguishable from the
+  road Ramp's; the crossing-marker and crossing-blocking logic both check
+  the elevated pair in addition to the ground pair.
+- **`ui.js`/`index.html`**: Build Track, Connect / Disconnect Track, and
+  Toggle Signal Direction all now read the same Ground/Elevated dropdown
+  road tools already use (via a new `currentRailLayer()` helper) instead
+  of being hardcoded to ground-level rail. A new "Build Rail Ramp" tool
+  and cost label round out the toolbar; Demolish's per-layer fallback
+  logic extends naturally to try each grade's rail layer, not just ground.
+
+## Testing
+
+Covered by `test-rail.js`'s Test 11: an elevated road crossing elevated
+rail stays perpendicular-only and fully connected on both, exactly like
+the ground-grade version; a signal on the elevated rail layer splits
+blocks there independently of any ground-rail blocks; and — driven
+entirely by `simTick()`, not just a pathfinding check — a real assembled
+train climbs from a ground-level Depot onto an elevated rail bridge via
+one Rail Ramp, crosses it, comes back down via a second Rail Ramp, and
+delivers cargo to a second ground-level Depot on the far side.
+
+Also verified in a real browser: every new tool (elevated Build Track,
+Build Rail Ramp, layer-aware Connect / Disconnect Track and Toggle Signal
+Direction) works via actual clicks, the elevated track cost label updates
+correctly (x2 multiplier), and the elevated crossing renders exactly like
+its ground counterpart — with no console errors.
