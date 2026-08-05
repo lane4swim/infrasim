@@ -1,30 +1,37 @@
-// Headless test harness for index.html's simulation core.
+// Headless test harness for infrasim's simulation core.
 //
-// Phase 1 stayed a single self-contained index.html (no build step, opens
-// via file://) — the simulation code isn't factored into a separate module.
-// Rather than pulling it apart (which the content-pack/Worker-split
-// workstreams already plan to revisit for other reasons), this harness runs
-// the *actual* <script> contents from index.html inside a Node vm context
-// stubbed with just enough of a DOM to let the file load without executing
-// any rendering or event-wiring — real shipped code, not a reimplementation.
+// index.html no longer inlines one giant <script> — the code lives in
+// src/{content,sim,render,ui}/*.js, loaded as ordered classic
+// <script src="..."> tags (see loader.js's own header comment for why
+// classic, not module, scripts). This harness reads index.html for that
+// same list of <script src> tags, reads each referenced file in the same
+// order, and concatenates them into one script — behaviorally identical to
+// a browser loading them as separate sequential classic scripts (they all
+// share one global scope either way), just easier to run inside a single
+// Node vm context. Real shipped code, not a reimplementation.
 //
-// The trick: index.html's top-level `const`/`function` declarations become
-// lexical bindings tied to this vm context, not enumerable properties of
-// it — so a single context is created once and reused across every
-// `run()` call, letting later snippets reference `world`, `cmdBuildRoad`,
-// `simTick`, etc. by name, exactly as if they were later statements in the
-// same script. requestAnimationFrame is stubbed to a no-op specifically so
-// the render loop never actually starts (nothing in a test needs a canvas).
+// The trick: the combined script's top-level `const`/`function`
+// declarations become lexical bindings tied to this vm context, not
+// enumerable properties of it — so a single context is created once and
+// reused across every `run()` call, letting later snippets reference
+// `world`, `cmdBuildRoad`, `simTick`, etc. by name, exactly as if they were
+// later statements in the same script. requestAnimationFrame is stubbed to
+// a no-op specifically so the render loop never actually starts (nothing
+// in a test needs a canvas).
 'use strict';
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
+// Reads index.html's <script src="..."> tags in document order and
+// concatenates the referenced files (resolved relative to index.html's own
+// directory) into one script — the harness's view of "the game's code."
 function extractScript(htmlPath){
   const html = fs.readFileSync(htmlPath, 'utf8');
-  const m = html.match(/<script>([\s\S]*)<\/script>/);
-  if(!m) throw new Error(`No <script> block found in ${htmlPath}`);
-  return m[1];
+  const srcs = [...html.matchAll(/<script src="([^"]+)"><\/script>/g)].map(m => m[1]);
+  if(srcs.length === 0) throw new Error(`No <script src="..."> tags found in ${htmlPath}`);
+  const baseDir = path.dirname(htmlPath);
+  return srcs.map(src => fs.readFileSync(path.join(baseDir, src), 'utf8')).join('\n');
 }
 
 // The content-pack <script> tag has a type/id attribute, so it never
@@ -84,7 +91,7 @@ function newGameContext({contentPackJson} = {}){
   };
   const context = vm.createContext(sandbox);
   const script = extractScript(htmlPath);
-  vm.runInContext(script, context, {filename: 'index.html'});
+  vm.runInContext(script, context, {filename: 'src/*.js (concatenated per index.html script order)'});
   return context;
 }
 

@@ -16,9 +16,10 @@ vehicle types.
 ## Running it
 
 Open `index.html` directly in a browser (Chrome/Edge/Firefox). No build
-step, no server, no npm install — it's a single self-contained file, which
-was a deliberate choice so it runs anywhere without a network connection or
-tooling. There's nothing to install.
+step, no server, no npm install — the code is organized into files under
+`src/` (see [Phase 2 — Project Structure](#phase-2--project-structure)
+below), but loading it is still just double-clicking `index.html`; nothing
+to install, no network connection needed.
 
 ## How to play
 
@@ -591,3 +592,119 @@ resource/recipe/vehicle.
 - **Reconfiguring an existing train** (swap wagons, add/remove cars) at a
   Yard after assembly. Currently a train's consist is fixed for its life,
   same as a truck's type; you sell it and assemble a new one instead.
+
+---
+
+# Phase 2 — Project Structure
+
+`index.html`'s inline `<script>` had grown to ~2,000 lines across four
+milestones (Rail, content-pack refactor, Train Yard, plus Phase 1 itself).
+This splits it into files matching §14 of `specification.md`'s suggested
+module structure, adapted for what this project actually is right now: no
+TypeScript, no bundler, no Pixi/Preact/Worker — those are real future
+milestones (§15), not retrofitted here just to match the folder names.
+
+## Why classic `<script src>`, not ES modules
+
+§14's structure assumes a build step; this project still doesn't have one,
+for the same reason the content-pack refactor kept its data inline instead
+of moving to real `data/*.json` files (see that section above): **ES
+module scripts (`<script type="module" src="...">`) are blocked by CORS
+under `file://` in every major browser** — the exact failure mode that
+made Phase 1 a single file and made the content-pack refactor stop short
+of external JSON. **Classic scripts (`<script src="...">`, no `type` or a
+JS MIME type) have no such restriction** and load local sibling files fine
+under `file://`, which is the mechanism this split actually uses. All
+classic `<script>` elements on one page share a single global scope
+(top-level `const`/`function` in one file is visible to every
+*later*-loaded `<script>` on the same page, exactly as if they'd been
+concatenated) — so this is a pure reorganization: identical runtime
+behavior, just organized into files that match what each piece is, instead
+of one file with comment-delimited sections. Verified directly: every
+split file loads with a real 200 response under a `file://` URL in a
+headless browser, and the game runs identically (ticks advance, treasury
+updates, UI responds) — see Testing below.
+
+The content-pack JSON itself stays inline in `index.html` (not moved to
+`src/data/`, unlike §14's suggested layout) — moving *that* to an external
+file raises a genuinely different question (whether a non-executable
+`<script type="application/json" src="...">` even fetches its content the
+same way a classic JS script does) that wasn't worth gambling on when the
+inline version is already verified working; a later, purely additive step
+if it turns out to work cleanly.
+
+## Project layout
+
+```
+index.html              markup, CSS, the content-pack JSON block, and the
+                         ordered <script src> tags that load everything below
+src/
+  content/
+    loader.js            content-pack parsing + validateContentPack + config constants
+  sim/
+    world.js              grid + world state (§14's "World")
+    ecs.js                 component tables, entity handles, queries (§14's "Component, System, Query")
+    economy.js             treasury + the event log
+    pathfinding.js         road/rail BFS, dock-cell resolution, Station/industry chain-walking
+    rail-blocks.js         rail mutual-exclusion segment computation
+    entities.js            entity factories (buildings, trucks, trains) + vehicle-stat lookups
+    commands.js            the only functions allowed to mutate world state (§7)
+    systems.js             the per-tick systems, run from simTick()
+  render/
+    render.js              the fixed-timestep loop + canvas rendering
+  ui/
+    ui.js                  tool wiring, click handling, inspector, and the loop's initial kickoff
+test/
+  harness.js               runs src/*.js (concatenated in index.html's script order) in a Node vm
+  test-rail.js
+  test-content-pack.js
+```
+
+Load order in `index.html` matters only for the small amount of top-level
+(not-inside-a-function) code — the content-pack parsing in `loader.js`, and
+`ui.js`'s final `requestAnimationFrame(frame)` call that starts the game —
+since that runs immediately as each script loads. Function bodies calling
+into a later-loaded file are fine regardless of order: nothing actually
+*calls* them until the game loop starts, by which point every file has
+already loaded. The chosen order (`content → sim/world → sim/ecs →
+sim/economy → sim/pathfinding → sim/rail-blocks → sim/entities →
+sim/commands → sim/systems → render → ui`) is exactly the sequence the
+single file already used internally, so nothing needed reordering — only
+splitting.
+
+## Testing
+
+No behavior changed, so no new tests — `test/test-rail.js` and
+`test/test-content-pack.js` both pass unmodified, which is itself the
+regression check (§ "Extract current inline defs verbatim… confirm
+byte-for-byte equivalent" — the same principle the content-pack refactor
+used, applied here to code instead of data). `test/harness.js` was updated
+to read index.html's `<script src>` tags and concatenate the referenced
+files in order, instead of extracting one inline `<script>` block — that
+change is exactly the harness's job (running the real shipped code) staying
+honest about what "the real shipped code" now consists of.
+
+Also re-verified in a real headless browser (Playwright): every one of the
+11 `<script src>` requests resolves with a real HTTP-style `200` under a
+`file://` URL (no CORS failures, no 404s), and the game genuinely runs —
+ticks advance, the UI responds, a full build/assemble/inspect flow works
+through actual clicks — not just "the files parse."
+
+## Deliberately deferred
+
+- **Moving the content-pack JSON to `src/data/`** — see the CORS
+  discussion above; revisit once/if it's confirmed that an external
+  non-executable `<script type="application/json" src="...">` fetches
+  cleanly under `file://`, or once a real bundler is adopted for other
+  reasons (most likely the Worker split), at which point this becomes
+  moot.
+- **Real ES modules, a bundler, TypeScript, Pixi, Preact, a Worker** — the
+  rest of §14's target structure. All later milestones (§15) in their own
+  right, not something this reorganization tries to simulate with plain
+  files.
+- **Splitting `ui.js` or `systems.js` further.** Both are still the
+  largest files (~385 and ~384 lines) — reasonable for now given how much
+  of the game's interactive surface (tool wiring, inspector, click
+  handling) and per-tick logic (production, vehicles, trains) they each
+  own; revisit only if either grows enough on its own to justify another
+  cut.
