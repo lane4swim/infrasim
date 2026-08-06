@@ -40,12 +40,30 @@ function getTrainStats(consist){
 function getVehicleStats(v){ return isTrain(v.id) ? getTrainStats(v.consist) : getVehicleDef(v.type); }
 // ENTITY FACTORIES
 // ---------------------------------------------------------------------
+// A Rail Depot's footprint is authored long-axis-N-S in the content pack
+// (see depotPlatformCells in pathfinding.js for why only the pair of sides
+// PARALLEL to the long axis can ever be its rail side); building it 'ew'
+// instead just swaps w/h, so the same footprint data serves either
+// orientation with no second content-pack entry. Every other building type
+// is unaffected — this is a no-op for them, returning the def's footprint
+// verbatim. Shared between createBuilding (below) and cmdBuildBuilding's
+// pre-creation bounds/overlap check (commands.js), so both agree on what
+// "this building's footprint" actually means before and after it exists.
+function effectiveFootprint(type, def, orientation){
+  if(type==='depot' && orientation==='ew') return {w:def.footprint.h, h:def.footprint.w};
+  return def.footprint;
+}
 function createBuilding(type, x, y, tier, facing, resource){
   const def = BUILDING_DEFS[type];
   const id = world.nextId++;
   addComponent(id, 'Identity', {kind:'building', type});
   addComponent(id, 'Transform', {x, y, layer:'ground'});
-  addComponent(id, 'Footprint', {w:def.footprint.w, h:def.footprint.h}); // cells occupied, anchored at (x,y)
+  // `facing` doubles as a Depot's orientation ('ns'|'ew') — Depots have no
+  // road-facing side of their own (a Station touching one handles that,
+  // same as any other industry), so the slot Station already uses this
+  // parameter for was free to repurpose rather than adding a new one.
+  const fp = effectiveFootprint(type, def, facing);
+  addComponent(id, 'Footprint', {w:fp.w, h:fp.h}); // cells occupied, anchored at (x,y)
   if(type==='station'){
     addComponent(id, 'Facing', facing); // which single side can ever touch a road (Stations only)
     addComponent(id, 'StationResource', resource || 'ore'); // which single resource this Station handles

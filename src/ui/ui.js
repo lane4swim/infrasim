@@ -37,7 +37,7 @@ function toolHint(t){
     track:`Click or drag to build rail track on the selected layer ($${RAIL_DEFS.track.costPerTile}/tile, x2 elevated). Uncheck auto-connect to place tiles without joining them. Crosses the same-grade road layer at a right angle only — it won't connect through road running the same direction.`,
     trackconnect:'Click a track tile, then click an adjacent track tile on the same layer — connects them if not joined, disconnects them if they are.',
     signal:'Click a track tile, then click an adjacent connected tile on the same layer — trains will only be allowed to travel from the first to the second. A signal also marks a hard block boundary.',
-    depot:`Click the top-left cell for a Rail Depot (${BUILDING_DEFS.depot.footprint.w}x${BUILDING_DEFS.depot.footprint.h}). Choose which resource it buffers. Build a Station touching it for road access; any touching track tile gives it rail access.`,
+    depot:(()=>{ const fp = effectiveFootprint('depot', BUILDING_DEFS.depot, currentDepotOrientation()); return `Click the top-left cell for a Rail Depot (${fp.w}x${fp.h}). It must run alongside a straight, unbroken length of track on one of its long sides — no track there yet, and the build is rejected. Choose which resource it buffers and build a Station touching it for road access.`; })(),
     trainyard:`Click the top-left cell for a Train Yard (${BUILDING_DEFS.trainyard.footprint.w}x${BUILDING_DEFS.trainyard.footprint.h}). This is where trains get assembled — it doesn't move cargo itself. Any touching track tile gives it rail access.`,
     assembletrain:'Pick an engine, a wagon type, and a wagon count, then click a rail track tile touching a Train Yard to assemble and pay for the train there.',
   }[t] || '';
@@ -55,6 +55,7 @@ function currentAutoConnect(){ return document.getElementById('autoConnect').che
 function currentTownResource(){ return document.getElementById('townResourceSelect').value; }
 function currentStationResource(){ return document.getElementById('stationResourceSelect').value; }
 function currentDepotResource(){ return document.getElementById('depotResourceSelect').value; }
+function currentDepotOrientation(){ return document.getElementById('depotOrientationSelect').value; }
 function currentEngine(){ return document.getElementById('engineSelect').value; }
 function currentWagon(){ return document.getElementById('wagonSelect').value; }
 function currentWagonCount(){ return parseInt(document.getElementById('wagonCountSelect').value, 10); }
@@ -203,7 +204,7 @@ function handleClick(cell){
   if(currentTool==='track'){ postCommand('cmdBuildTrack', [x,y,currentRailLayer(),currentAutoConnect()]); return; }
   if(currentTool==='trackconnect'){ handleConnectClick(x,y); return; }
   if(currentTool==='signal'){ handleOneWayClick(x,y); return; }
-  if(currentTool==='depot'){ postCommand('cmdBuildBuilding', ['depot', x, y, currentTier(), null, currentDepotResource()]); return; }
+  if(currentTool==='depot'){ postCommand('cmdBuildBuilding', ['depot', x, y, currentTier(), currentDepotOrientation(), currentDepotResource()]); return; }
   if(currentTool==='trainyard'){ postCommand('cmdBuildBuilding', ['trainyard', x, y, 'small']); return; }
   if(currentTool==='assembletrain'){ postCommand('cmdAssembleTrain', [x, y, currentEngine(), currentWagon(), currentWagonCount()]); return; }
 }
@@ -282,7 +283,7 @@ function renderSelection(){
     // move now; the Depot's own buffer only matters, and is shown, when
     // nothing's linked.
     const roadStation = findTouchingStation(selected);
-    const railDock = buildingRailAccessCell(selected);
+    const platform = depotPlatformCells(selected.x, selected.y, selected.footprint.w, selected.footprint.h);
     const industry = findLinkedIndustry(selected);
     const source = industry || selected;
     const stock = source.outStock!==undefined ? source.outStock : source.inStock;
@@ -296,9 +297,9 @@ function renderSelection(){
       <div>Road side: ${roadStation
         ? `Station #${roadStation.id}`
         : '<span style="color:var(--danger)">not connected</span>'}</div>
-      <div>Rail side: ${railDock
-        ? 'connected'
-        : '<span style="color:var(--danger)">not connected</span>'}</div>
+      <div>Platform: ${platform
+        ? `${platform.length} tiles — a train docked alongside up to that many of its own cells loads/unloads that many times faster`
+        : '<span style="color:var(--danger)">no parallel track — trains can\'t reach this Depot</span>'}</div>
       <div>${industry ? 'Linked stock' : 'Buffered'}: ${stock.toFixed(1)} / ${cap}</div>
       <div class="fill-bar"><div style="width:${(stock/cap*100).toFixed(0)}%"></div></div>
     `;

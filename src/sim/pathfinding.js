@@ -45,6 +45,31 @@ function footprintCells(building){
   return cells;
 }
 
+// A Rail Depot's platform: a real loading platform runs alongside the
+// track it serves, not just touching it at one corner, so a Depot's
+// footprint has a long axis (whichever of w/h is bigger) and only the PAIR
+// of sides parallel to that axis are eligible to be its rail side — the
+// two short end caps never are, the same way a real platform's end doesn't
+// serve trains passing alongside it. Returns the ordered list of the
+// track cells alongside whichever of those two long sides has a full,
+// unbroken run of ground rail track for the platform's entire length (the
+// literal "runs parallel to the track" requirement), or null if neither
+// long side qualifies. Takes raw x/y/w/h (not a building handle) so it
+// works both for build-time validation, before the building exists, and
+// for runtime dock resolution against an already-built Depot.
+function depotPlatformCells(x,y,w,h){
+  const tall = h >= w; // long axis is N-S (or a square fallback, arbitrarily treated as tall)
+  const sides = tall
+    ? [ Array.from({length:h}, (_,dy)=>({x:x-1, y:y+dy})),   // west
+        Array.from({length:h}, (_,dy)=>({x:x+w, y:y+dy})) ]  // east
+    : [ Array.from({length:w}, (_,dx)=>({x:x+dx, y:y-1})),   // north
+        Array.from({length:w}, (_,dx)=>({x:x+dx, y:y+h})) ]; // south
+  for(const cells of sides){
+    if(cells.every(c => inBounds(c.x,c.y) && trackAt(c.x,c.y,'rail').track)) return cells;
+  }
+  return null;
+}
+
 // A building's road dock. If it has a `facing` (Stations do — chosen by the
 // player at build time), it connects through that single side only, even if
 // a road happens to touch another side too. Buildings without a facing fall
@@ -66,18 +91,25 @@ function buildingRoadAccessCell(building){
   return null;
 }
 
-// A Rail Depot's rail side, in contrast, is full-perimeter — any touching
-// rail tile counts, no facing to choose at build time (§2.1's simpler of
-// the two options: the depot's identity as a transfer node is already the
-// new thing here, so this deliberately doesn't ALSO introduce a rail-facing
-// UI). Structurally the same "scan every side" fallback buildingRoadAccessCell
-// already has for a building with no `facing`, just against the rail layer.
+// A Train Yard's rail side is full-perimeter — any touching rail tile
+// counts, no facing/platform to choose at build time, since a Yard is
+// purely an assembly point (a train departs from wherever it's built, it
+// doesn't load/unload there — see createBuilding). A Rail Depot, in
+// contrast, only ever docks along its platform (see depotPlatformCells)
+// — this returns the platform's first cell as a single representative
+// dock cell for callers that just need "is this reachable at all" (the
+// UI's connectivity check); resolveTrainDock in systems.js does the real,
+// train-length-aware endpoint choice for an actual arriving train.
 // Ground-level ('rail') only, deliberately, same as buildingRoadAccessCell
 // only ever checks 'ground' road — a Depot or Train Yard is a ground
 // building; 'railElevated' is a through-only bridge layer that must come
 // back down via a railRamp before it can reach one, exactly like an
 // elevated road must return to ground via a Ramp before reaching a Station.
 function buildingRailAccessCell(building){
+  if(building.type === 'depot'){
+    const platform = depotPlatformCells(building.x, building.y, building.footprint.w, building.footprint.h);
+    return platform ? {x:platform[0].x, y:platform[0].y, layer:'rail'} : null;
+  }
   const own = new Set(footprintCells(building).map(c=>c.x+','+c.y));
   for(const cell of footprintCells(building)){
     for(const [nx,ny] of neighbors4(cell.x,cell.y)){

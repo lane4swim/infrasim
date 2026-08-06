@@ -14,26 +14,32 @@ function section(name, fn){
   fn();
 }
 
-// Depot A -- Block1 -- junction(6,5) -- Block2 -- Depot B, with a short
-// branch off Depot B's own hub cell leading on to Depot C. The branch is
-// what lets a train release Block2 by continuing on to a genuinely
-// different block (Depot C) without ever needing to backtrack through the
-// junction — avoiding a same-track physical deadlock with whatever else is
-// waiting there (see the reasoning in Test 1).
+// Depot A -- Block1(west span) -- junction(8,5) -- Block2(east span) --
+// Depot B's own siding, with a further branch off the FAR end of Depot B's
+// siding (already a hub, since it touches Depot B) leading on to Depot C.
+// The branch is what lets a train release Block2 by continuing on to a
+// genuinely different block (Depot C) without ever needing to backtrack
+// through the junction — avoiding a same-track physical deadlock with
+// whatever else is waiting there (see the reasoning in Test 1). Each
+// Depot gets its own dedicated siding (rather than sitting flush against
+// the shared through-line) precisely so touching it doesn't fragment the
+// shared spine's own block1/block2 identity — a real platform track is
+// usually its own siding for exactly this reason.
 function buildJunctionLine(ctx){
   return run(ctx, `
-    cmdBuildBuilding('depot', 0, 5, 'large', null, 'ore');
-    for(let x=2; x<=11; x++) cmdBuildTrack(x, 5, 'rail', true);
-    cmdBuildTrack(6, 6, 'rail', true); // branch stub off the junction cell — used by Test 2
-    cmdBuildBuilding('depot', 12, 5, 'large', null, 'ore');
-    cmdBuildTrack(11, 6, 'rail', true);
-    cmdBuildTrack(11, 7, 'rail', true);
-    cmdBuildBuilding('depot', 10, 8, 'large', null, 'ore');
+    for(let x=2; x<=16; x++) cmdBuildTrack(x, 5, 'rail', true);
+    for(let y=6; y<=9; y++) cmdBuildTrack(2, y, 'rail', true);   // Depot A's siding
+    cmdBuildBuilding('depot', 0, 6, 'large', 'ns', 'ore');
+    cmdBuildTrack(8, 6, 'rail', true);                            // branch stub off the junction cell — used by Test 2
+    for(let y=6; y<=9; y++) cmdBuildTrack(16, y, 'rail', true);   // Depot B's siding
+    cmdBuildBuilding('depot', 17, 6, 'large', 'ns', 'ore');
+    for(let y=10; y<=13; y++) cmdBuildTrack(16, y, 'rail', true); // branch off Depot B's siding to Depot C
+    cmdBuildBuilding('depot', 14, 10, 'large', 'ns', 'ore');
     const depots = [...world.entities.values()].filter(e=>e.kind==='building' && e.type==='depot');
     return {
       depotAId: depots.find(d=>d.x===0).id,
-      depotBId: depots.find(d=>d.x===12).id,
-      depotCId: depots.find(d=>d.x===10).id,
+      depotBId: depots.find(d=>d.x===17).id,
+      depotCId: depots.find(d=>d.x===14).id,
     };
   `);
 }
@@ -43,13 +49,13 @@ section('Test 1 — block mutual exclusion', () => {
   const {depotAId, depotBId, depotCId} = buildJunctionLine(ctx);
 
   // Train A's route (Depot A -> Depot B -> Depot C) crosses Block2 once,
-  // then leaves it for good via the Depot C branch — never needing to
-  // backtrack through the junction where Train B will be waiting. Created
-  // directly via createTrain (not cmdAssembleTrain/a Train Yard) since this
-  // test is about block mechanics, not the assembly command — that has its
-  // own test below.
+  // then leaves it for good via Depot B's own siding into the Depot C
+  // branch — never needing to backtrack through the junction where Train B
+  // will be waiting. Created directly via createTrain (not
+  // cmdAssembleTrain/a Train Yard) since this test is about block
+  // mechanics, not the assembly command — that has its own test below.
   const trainAId = run(ctx, `
-    const trainA = createTrain(2, 5, 'diesel', 'ore_wagon', 3);
+    const trainA = createTrain(3, 5, 'diesel', 'ore_wagon', 3);
     cmdSetOrders(trainA, [
       {nodeId: ${depotBId}, action:'unload_all', resource:'ore'},
       {nodeId: ${depotCId}, action:'unload_all', resource:'ore'},
@@ -57,15 +63,15 @@ section('Test 1 — block mutual exclusion', () => {
     return trainA.id;
   `);
 
-  // Run Train A alone until it's inside block2 (x between 7 and 9). Budgets
-  // here are generous because per-vehicle stats are randomized at creation
-  // (§ createVehicle) — actual tick counts vary run to run.
+  // Run Train A alone until it's inside block2 (x between 10 and 13).
+  // Budgets here are generous because per-vehicle stats are randomized at
+  // creation (§ createVehicle) — actual tick counts vary run to run.
   let block2Id = null;
   for(let i=0;i<1000;i++){
     run(ctx, `simTick();`);
     const a = run(ctx, `const a = world.entities.get(${trainAId}); return {x:a.x, currentBlock:a.currentBlock};`);
-    if(a.x >= 7 && a.x <= 9){
-      block2Id = run(ctx, `return trackAt(6,5,'rail').blockId.E;`);
+    if(a.x >= 10 && a.x <= 13){
+      block2Id = run(ctx, `return trackAt(9,5,'rail').blockId.E;`);
       check('train A holds block2 while crossing it', a.currentBlock === block2Id, `currentBlock=${a.currentBlock} block2Id=${block2Id}`);
       break;
     }
@@ -75,22 +81,23 @@ section('Test 1 — block mutual exclusion', () => {
   // Spawn Train B right at the junction, approaching block2 from the
   // opposite end — it must NOT be able to enter while Train A holds it.
   const trainBId = run(ctx, `
-    const trainB = createTrain(6, 5, 'diesel', 'ore_wagon', 3);
+    const trainB = createTrain(8, 5, 'diesel', 'ore_wagon', 3);
     cmdSetOrders(trainB, [{nodeId: ${depotBId}, action:'unload_all', resource:'ore'}]);
     return trainB.id;
   `);
   run(ctx, `simTick();`);
   let b = run(ctx, `const b = world.entities.get(${trainBId}); return {x:b.x, y:b.y};`);
-  check('train B does not enter the block while train A holds it', b.x === 6 && b.y === 5, JSON.stringify(b));
+  check('train B does not enter the block while train A holds it', b.x === 8 && b.y === 5, JSON.stringify(b));
 
-  // Run until train A stops holding block2 (it diverted onto the Depot C
-  // branch) and confirm train B proceeds shortly after — not stalled
-  // indefinitely, and without needing a full stop-and-reaccelerate cycle.
-  // Watched as "no longer held by A" rather than "becomes null", since A's
-  // release and B's re-acquisition can legitimately land in the SAME tick
-  // (A is processed first in tickTrainMovement, frees the block, and B —
-  // processed right after in that same call — can claim it immediately) —
-  // that's the best case, not an edge case to special-case around.
+  // Run until train A stops holding block2 (it diverted through Depot B's
+  // siding onto the Depot C branch) and confirm train B proceeds shortly
+  // after — not stalled indefinitely, and without needing a full
+  // stop-and-reaccelerate cycle. Watched as "no longer held by A" rather
+  // than "becomes null", since A's release and B's re-acquisition can
+  // legitimately land in the SAME tick (A is processed first in
+  // tickTrainMovement, frees the block, and B — processed right after in
+  // that same call — can claim it immediately) — that's the best case, not
+  // an edge case to special-case around.
   let releasedAtTick = -1, bMovedAtTick = -1;
   for(let i=0;i<2000;i++){
     const before = run(ctx, `return world.railBlocks.get(${block2Id}).occupiedBy;`);
@@ -99,7 +106,7 @@ section('Test 1 — block mutual exclusion', () => {
     if(releasedAtTick===-1 && before===trainAId && after!==trainAId) releasedAtTick = i;
     if(releasedAtTick!==-1 && bMovedAtTick===-1){
       const bb = run(ctx, `const b = world.entities.get(${trainBId}); return {x:b.x, y:b.y};`);
-      if(bb.x !== 6 || bb.y !== 5) bMovedAtTick = i;
+      if(bb.x !== 8 || bb.y !== 5) bMovedAtTick = i;
     }
     if(releasedAtTick!==-1 && bMovedAtTick!==-1) break;
   }
@@ -119,11 +126,11 @@ section('Test 2 — block computation correctness', () => {
   buildJunctionLine(ctx);
   const edges = run(ctx, `
     return {
-      block1_a: trackAt(2,5,'rail').blockId.E,
-      block1_b: trackAt(5,5,'rail').blockId.E,
-      block2_a: trackAt(6,5,'rail').blockId.E,
-      block2_b: trackAt(10,5,'rail').blockId.E,
-      branch:   trackAt(6,5,'rail').blockId.S,
+      block1_a: trackAt(3,5,'rail').blockId.E,
+      block1_b: trackAt(6,5,'rail').blockId.E,
+      block2_a: trackAt(9,5,'rail').blockId.E,
+      block2_b: trackAt(13,5,'rail').blockId.E,
+      branch:   trackAt(8,5,'rail').blockId.S,
     };
   `);
   check('block1 is one consistent id across its whole span', edges.block1_a === edges.block1_b && edges.block1_a != null);
@@ -131,14 +138,14 @@ section('Test 2 — block computation correctness', () => {
   check('the junction branch is its own block', edges.branch != null && edges.branch !== edges.block1_a && edges.branch !== edges.block2_a);
   check('block1 and block2 are distinct blocks, split exactly at the junction', edges.block1_a !== edges.block2_a);
 
-  // Demolish a middle tile of block1 (x=4) — it should split into two
-  // separate blocks (a new dead end forms on each side), not silently
+  // Demolish a middle tile of block1's span (x=4) — it should split into
+  // two separate blocks (a new dead end forms on each side), not silently
   // keep stale ids or merge across the gap.
   run(ctx, `cmdDemolish(4, 5, 'rail');`);
   const after = run(ctx, `
     return {
-      leftStub:  trackAt(2,5,'rail').blockId.E,   // (2,5)-(3,5), now a dead end at x=3
-      rightStub: trackAt(5,5,'rail').blockId.E,   // (5,5)-(6,5), unaffected span
+      leftStub:  trackAt(3,5,'rail').blockId.E,   // (3,5)-(4,5), now a dead end at x=4
+      rightStub: trackAt(6,5,'rail').blockId.E,   // (6,5)-(7,5), unaffected span
       gapGone:   trackAt(4,5,'rail').track,
     };
   `);
@@ -203,28 +210,30 @@ section('Test 4 — cross-mode chain end to end (Mine -> truck -> Depot -> train
   const ctx = newGameContext();
   const ids = run(ctx, `
     function roadRun(x, y1, y2){ for(let y=Math.min(y1,y2); y<=Math.max(y1,y2); y++) cmdBuildRoad(x,y,'ground',true); }
-    function railRun(x1, x2, y){ for(let x=Math.min(x1,x2); x<=Math.max(x1,x2); x++) cmdBuildTrack(x,y,'rail',true); }
 
     // West side (road): Mine -> Station(facing S) -> road -> Station(facing N) -> Depot A
     // (Stations must be built AFTER whatever they touch already exists —
-    // touchesIndustryOrStation checks at build time, not retroactively.)
+    // touchesIndustryOrStation checks at build time, not retroactively;
+    // a Depot's own platform track must exist before the Depot too.)
     cmdBuildBuilding('mine', 0, 0, 'large');
     cmdBuildBuilding('station', 2, 1, 'small', 'S', 'ore');   // touches mine at (1,1)
     roadRun(2, 2, 4);
-    cmdBuildBuilding('depot', 3, 5, 'large', null, 'ore');
+    for(let y=5; y<=8; y++) cmdBuildTrack(5, y, 'rail', true); // Depot A's platform siding (east side)
+    cmdBuildBuilding('depot', 3, 5, 'large', 'ns', 'ore');
     cmdBuildBuilding('station', 2, 5, 'small', 'N', 'ore');   // touches road at (2,4), touches Depot A at (3,5)
 
-    // Rail spine: Depot A -> Depot B, with a Train Yard touching the line
-    // partway along (8,7)) so a train can actually be assembled onto it.
-    railRun(3, 15, 7); // touches Depot A at (3,6) via (3,7), Depot B at (16,7) via (15,7)
-    cmdBuildBuilding('depot', 16, 7, 'large', null, 'ore');
-    cmdBuildBuilding('trainyard', 8, 8, 'small'); // touches the rail spine at (8,7) via (8,8)
+    // Rail spine: Depot A's siding -> Train Yard -> Depot B's siding.
+    for(let x=6; x<=11; x++) cmdBuildTrack(x, 8, 'rail', true);
+    cmdBuildBuilding('trainyard', 6, 9, 'small'); // touches the spine at (6,8)/(7,8)/(8,8)
+    for(let y=9; y<=12; y++) cmdBuildTrack(11, y, 'rail', true); // Depot B's platform siding
+    cmdBuildBuilding('depot', 9, 9, 'large', 'ns', 'ore');
 
-    // East side (road): Depot B -> Station(facing S) -> road -> Station(facing S) -> Town
-    cmdBuildBuilding('station', 18, 8, 'small', 'S', 'ore');  // touches Depot B at (17,8)
-    roadRun(18, 9, 10);
-    cmdBuildBuilding('town', 19, 10, 'large', null, 'ore');
-    cmdBuildBuilding('station', 18, 11, 'small', 'N', 'ore'); // touches road at (18,10), touches Town at (19,11)
+    // East side (road): Depot B -> Station -> road -> Station -> Town
+    cmdBuildBuilding('station', 10, 13, 'small', 'E', 'ore');  // touches Depot B at (10,12)
+    roadRun(11, 13, 13);
+    roadRun(12, 13, 13);
+    cmdBuildBuilding('town', 13, 12, 'large', null, 'ore');
+    cmdBuildBuilding('station', 12, 12, 'small', 'S', 'ore');  // touches road at (12,13), touches Town at (13,12)
 
     const byType = t => [...world.entities.values()].filter(e=>e.kind==='building' && e.type===t);
     const stations = byType('station');
@@ -234,8 +243,8 @@ section('Test 4 — cross-mode chain end to end (Mine -> truck -> Depot -> train
       depotAStationId: findStationAt(2,5).id,
       depotAId: byType('depot')[0].id,
       depotBId: byType('depot')[1].id,
-      depotBStationId: findStationAt(18,8).id,
-      townStationId: findStationAt(18,11).id,
+      depotBStationId: findStationAt(10,13).id,
+      townStationId: findStationAt(12,12).id,
       townId: byType('town')[0].id,
     };
   `);
@@ -248,14 +257,14 @@ section('Test 4 — cross-mode chain end to end (Mine -> truck -> Depot -> train
       {nodeId: ${ids.depotAStationId}, action:'unload_all', resource:'ore'},
     ]);
 
-    cmdPurchaseVehicle(18, 9, 'bulk');
-    const truck2 = [...world.entities.values()].find(e=>e.kind==='vehicle' && e.x===18 && e.y===9);
+    cmdPurchaseVehicle(11, 13, 'bulk');
+    const truck2 = [...world.entities.values()].find(e=>e.kind==='vehicle' && e.x===11 && e.y===13);
     cmdSetOrders(truck2, [
       {nodeId: ${ids.depotBStationId}, action:'load_full', resource:'ore'},
       {nodeId: ${ids.townStationId}, action:'unload_all', resource:'ore'},
     ]);
 
-    cmdAssembleTrain(8, 7, 'diesel', 'ore_wagon', 4); // 4 wagons: capacity comfortably above a truck's, to make the buffering effect visible
+    cmdAssembleTrain(6, 8, 'diesel', 'ore_wagon', 4); // 4 wagons: capacity comfortably above a truck's, to make the buffering effect visible
     const train = [...world.entities.values()].find(e=>e.kind==='vehicle' && isTrain(e.id));
     cmdSetOrders(train, [
       {nodeId: ${ids.depotAId}, action:'load_full', resource:'ore'},
@@ -298,8 +307,9 @@ section('Test 4 — cross-mode chain end to end (Mine -> truck -> Depot -> train
 section('Test 5 — train physics reuse (same F=ma model as trucks, parameterized over an assembled consist)', () => {
   const ctx = newGameContext();
   const out = run(ctx, `
-    for(let x=0;x<=15;x++) cmdBuildTrack(x, 0, 'rail', true);
-    cmdBuildBuilding('depot', 16, 0, 'large', null, 'ore');
+    for(let x=0;x<=13;x++) cmdBuildTrack(x, 0, 'rail', true);
+    for(let y=1;y<=4;y++) cmdBuildTrack(13, y, 'rail', true); // Depot's platform siding
+    cmdBuildBuilding('depot', 11, 1, 'large', 'ns', 'ore');
     const train = createTrain(0, 0, 'diesel', 'ore_wagon', 3);
     const depot = [...world.entities.values()].find(e=>e.type==='depot');
     cmdSetOrders(train, [{nodeId: depot.id, action:'unload_all', resource:'ore'}]);
@@ -366,29 +376,34 @@ section('Test 6 — no regressions in the road-only chain (Mine -> truck -> Mill
 section('Test 7 — Rail Depot forwards to a directly/chain-linked industry, like a Station', () => {
   const ctx = newGameContext();
   const ids = run(ctx, `
-    // Mine -- Depot A, touching directly, no Station at all on that side.
-    cmdBuildBuilding('mine', 0, 1, 'large');
-    cmdBuildBuilding('depot', 2, 1, 'large', null, 'ore'); // touches the Mine at (1,1)/(1,2)
+    // Mine -- Depot A, touching directly, no Station at all on that side;
+    // Depot A's platform siding sits on its OTHER side, so the mine touch
+    // and the rail access are two entirely independent sides.
+    cmdBuildBuilding('mine', 0, 0, 'large');
+    for(let y=0; y<=3; y++) cmdBuildTrack(4, y, 'rail', true); // Depot A's platform siding (east side)
+    cmdBuildBuilding('depot', 2, 0, 'large', 'ns', 'ore');     // touches the Mine at (1,0)/(1,1) on its west side
 
     // Rail spine, a Train Yard touching it, and Depot B at the far end.
-    for(let x=2; x<=14; x++) cmdBuildTrack(x, 3, 'rail', true); // touches Depot A at (2,2)/(3,2)
-    cmdBuildBuilding('trainyard', 4, 4, 'small');        // touches the spine at (4,3)/(5,3)/(6,3)
-    cmdBuildBuilding('depot', 14, 1, 'large', null, 'ore'); // touches the spine at (14,2)/(15,2)
+    cmdBuildTrack(4, 3, 'rail', true); // ties the siding into the spine
+    for(let x=5; x<=14; x++) cmdBuildTrack(x, 3, 'rail', true);
+    cmdBuildBuilding('trainyard', 5, 4, 'small'); // touches the spine at (5,3)/(6,3)/(7,3)
+    for(let y=4; y<=7; y++) cmdBuildTrack(14, y, 'rail', true); // Depot B's platform siding
+    cmdBuildBuilding('depot', 12, 4, 'large', 'ns', 'ore');
 
     // Depot B -- Station -- Town: a chain of Stations reaching an
     // industry, exactly the mechanism a truck's Station already used —
     // no truck anywhere in this test, on either end.
-    cmdBuildBuilding('station', 16, 1, 'small', 'W', 'ore'); // touches Depot B at (15,1)
-    cmdBuildBuilding('town', 17, 1, 'large', null, 'ore');   // touches the Station at (17,1)
+    cmdBuildBuilding('station', 13, 8, 'small', 'E', 'ore'); // touches Depot B at (13,7)
+    cmdBuildBuilding('town', 14, 8, 'large', null, 'ore');   // touches the Station at (14,8)
 
-    cmdAssembleTrain(4, 3, 'diesel', 'ore_wagon', 3);
+    cmdAssembleTrain(5, 3, 'diesel', 'ore_wagon', 3);
     const train = [...world.entities.values()].find(e=>e.kind==='vehicle' && isTrain(e.id));
     const byType = t => [...world.entities.values()].filter(e=>e.kind==='building' && e.type===t);
     const depots = byType('depot');
     const ids = {
       mineId: byType('mine')[0].id,
       depotAId: depots.find(d=>d.x===2).id,
-      depotBId: depots.find(d=>d.x===14).id,
+      depotBId: depots.find(d=>d.x===12).id,
       townId: byType('town')[0].id,
     };
     cmdSetOrders(train, [
@@ -607,23 +622,31 @@ section('Test 11 — rail also runs on ground and elevated layers, linked by its
   // links ground and elevated — proven end to end with a real train,
   // organically driven by simTick(), not just a pathfinding check: it
   // must actually climb onto the elevated bridge and come back down to
-  // reach a second, ground-level Depot.
+  // reach a second, ground-level Depot. Each Depot gets its own siding
+  // (as elsewhere in this file), tied into the ground->bridge->ground line
+  // via a plain connector tile.
   const ids = run(ctx, `
-    cmdBuildBuilding('depot', 0, 3, 'large', null, 'ore');
-    for(let x=2; x<=4; x++) cmdBuildTrack(x, 3, 'rail', true);
-    cmdBuildBuilding('trainyard', 2, 4, 'small');
+    for(let y=3; y<=6; y++) cmdBuildTrack(2, y, 'rail', true); // Depot A's siding (east side)
+    cmdBuildBuilding('depot', 0, 3, 'large', 'ns', 'ore');
+    cmdBuildTrack(3, 3, 'rail', true); // ties the siding into the main line
+    cmdBuildBuilding('trainyard', 3, 4, 'small'); // touches the main line at (3,3)
+
+    cmdBuildTrack(4, 3, 'rail', true);
     for(let x=4; x<=8; x++) cmdBuildTrack(x, 3, 'railElevated', true);
     cmdBuildRailRamp(4, 3);
     for(let x=8; x<=10; x++) cmdBuildTrack(x, 3, 'rail', true);
     cmdBuildRailRamp(8, 3);
-    cmdBuildBuilding('depot', 11, 3, 'large', null, 'ore');
+
+    cmdBuildTrack(11, 3, 'rail', true); // connector to Depot B's siding
+    for(let y=3; y<=6; y++) cmdBuildTrack(12, y, 'rail', true); // Depot B's siding (west side)
+    cmdBuildBuilding('depot', 13, 3, 'large', 'ns', 'ore');
 
     const depots = [...world.entities.values()].filter(e=>e.kind==='building' && e.type==='depot');
     const depotAId = depots.find(d=>d.x===0).id;
-    const depotBId = depots.find(d=>d.x===11).id;
+    const depotBId = depots.find(d=>d.x===13).id;
     world.entities.get(depotAId).outStock = 50; // seed cargo directly — this test is about the ramp, not production
 
-    cmdAssembleTrain(2, 3, 'diesel', 'ore_wagon', 2);
+    cmdAssembleTrain(3, 3, 'diesel', 'ore_wagon', 2);
     const train = [...world.entities.values()].find(e=>e.kind==='vehicle' && isTrain(e.id));
     cmdSetOrders(train, [
       {nodeId: depotAId, action:'load_full', resource:'ore'},

@@ -44,7 +44,8 @@ function buildScenario(ctx){
 
     for(let x=0; x<=6; x++) cmdBuildTrack(x, 6, 'rail', true); // spine at y=6
     cmdBuildBuilding('trainyard', 0, 7, 'small'); // touches the spine at (0,6)/(1,6)/(2,6)
-    cmdBuildBuilding('depot', 4, 4, 'large', null, 'ore'); // touches the spine at (4,5)-(4,6)/(5,5)-(5,6)
+    for(let y=7; y<=10; y++) cmdBuildTrack(6, y, 'rail', true); // Depot's platform siding, off the spine's east end
+    cmdBuildBuilding('depot', 4, 7, 'large', 'ns', 'ore'); // its east side runs alongside the siding
     cmdAssembleTrain(0, 6, 'diesel', 'ore_wagon', 2);
     const train = [...world.entities.values()].find(e=>e.kind==='vehicle' && isTrain(e.id));
     const depot = [...world.entities.values()].find(e=>e.kind==='building' && e.type==='depot');

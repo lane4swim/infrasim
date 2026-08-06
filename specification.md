@@ -385,6 +385,21 @@ a transfer node is what absorbs that mismatch — see §6.6.
 > version, since a real transfer node choosing "which mode reaches me from
 > which direction, carrying which resource" is exactly this same idea, generalized.
 
+> **Amended in Phase 2 (Rail Depot platform).** The Rail Depot — Phase 2's
+> real cross-mode transfer node this section originally anticipated —
+> went further than a Station's single-side `facing`: it's spatially
+> oriented, not just side-selected. Its footprint is elongated with a
+> chosen long axis, and only the pair of sides parallel to that axis (a
+> real platform's long edges, not its end caps) can ever be its rail
+> side, and only when a straight, unbroken run of track covers that whole
+> side's length — a single touching corner, sufficient for a Station's
+> road side, isn't enough for a train platform. This is genuinely the
+> same idea as the Station deviation above (a spatial constraint on how a
+> transfer node meets its network), just with orientation and length
+> added on top of a single chosen side — worth keeping as the template
+> for any future mode whose access point is physically an elongated dock
+> (a ship's berth, a runway apron) rather than a single-cell touch point.
+
 ### 6.6 Player-authored routing & storage as a design constraint
 
 Two things the simulation deliberately does **not** do for the player:

@@ -238,6 +238,28 @@ function render(){
         ctx.fillRect(px+4, y, (pw-8)*pct, barH);
       });
     }
+    // The platform edge — a real loading platform runs alongside the
+    // track it serves for its whole length (§ Depot parallel-track
+    // requirement), so highlight whichever long side actually qualifies,
+    // right against the footprint's edge, reading as "this is the side
+    // trains dock along" the same way a Station's facing notch reads as
+    // "this is the side that touches a road."
+    if(e.type==='depot'){
+      const platform = depotPlatformCells(e.x, e.y, e.footprint.w, e.footprint.h);
+      if(platform){
+        ctx.strokeStyle = getCss('--amber');
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        if(platform[0].x < e.x || platform[0].x >= e.x+e.footprint.w){
+          const lx = platform[0].x < e.x ? px : px+pw;
+          ctx.moveTo(lx, py); ctx.lineTo(lx, py+ph);
+        } else {
+          const ly = platform[0].y < e.y ? py : py+ph;
+          ctx.moveTo(px, ly); ctx.lineTo(px+pw, ly);
+        }
+        ctx.stroke();
+      }
+    }
   }
 
   // vehicles — drawn at their interpolated sub-tile position so fractional
@@ -292,7 +314,7 @@ function render(){
     ctx.strokeStyle = getCss('--teal');
     ctx.lineWidth = 2;
     if(currentTool==='mine' || currentTool==='mill' || currentTool==='town' || currentTool==='station' || currentTool==='depot' || currentTool==='trainyard'){
-      const fp = BUILDING_DEFS[currentTool].footprint;
+      const fp = currentTool==='depot' ? effectiveFootprint('depot', BUILDING_DEFS.depot, currentDepotOrientation()) : BUILDING_DEFS[currentTool].footprint;
       ctx.strokeRect(hoverCell.x*CELL+1, hoverCell.y*CELL+1, fp.w*CELL-2, fp.h*CELL-2);
     } else if(currentTool==='road' || currentTool==='track' || currentTool==='bulktruck' || currentTool==='flatbedtruck' || currentTool==='assembletrain'){
       ctx.strokeRect(hoverCell.x*CELL+1, hoverCell.y*CELL+1, CELL-2, CELL-2);

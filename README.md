@@ -1317,3 +1317,125 @@ built a Mine, clicked Save Game (a real file download), built something
 else, clicked Load Game and selected the saved file — the extra
 post-save building disappeared and the Mine (with its accumulated stock)
 came back exactly as saved, treasury included, with no console errors.
+
+---
+
+# Addendum — Rail Depots run parallel to the track
+
+A Rail Depot used to be a plain 2x2 building with "full-perimeter" rail
+access — any single touching track tile counted, the same way a Station's
+non-facing side works. That's a fine model for a truck's Station, but not
+for a real train platform: a platform runs *alongside* the track it
+serves for its whole length, not just touches it at one corner. This
+gives a Depot that real shape, and makes a longer train docked alongside
+more of the platform load/unload proportionally faster.
+
+## Design
+
+- **Footprint**: the content pack's `depot` entry is now `{"w":2,"h":4}` —
+  elongated, not square. `w`/`h` are canonical for the "platform runs
+  North-South" orientation; a new toolbar dropdown (Platform runs
+  North-South / East-West) lets the player rotate it, swapping `w`/`h` at
+  build time. This repurposes the `facing` positional argument
+  `cmdBuildBuilding`/`createBuilding` already had — Depots never used it
+  (they have no single road-facing side; a Station touching them handles
+  that, same as any other industry) — rather than adding a new parameter
+  just for this. `effectiveFootprint(type, def, orientation)` (new, in
+  `entities.js`) is the one place that does the swap; both
+  `cmdBuildBuilding`'s pre-creation bounds/overlap check and
+  `createBuilding`'s actual `Footprint` component go through it, so they
+  can never disagree about what "this Depot's footprint" means.
+- **Which sides count**: only the pair of sides *parallel* to the
+  footprint's long axis are eligible to be the platform — the two short
+  end caps never are, the same way a real platform's end doesn't serve
+  trains passing alongside it. `depotPlatformCells(x,y,w,h)` (new, in
+  `pathfinding.js`) returns the ordered list of track cells alongside
+  whichever long side has a full, unbroken run of ground rail track for
+  the platform's *entire* length, or `null` if neither long side
+  qualifies — this is both the build-time validation
+  (`cmdBuildBuilding` rejects the build without one) and the single
+  source of truth every other Depot-facing function (dock resolution,
+  transfer-rate scaling, the inspector, the render marker) reads from.
+- **Dock resolution**: a train doesn't just aim for "the first platform
+  cell it finds" — `resolveTrainDock(train, building)` (new, in
+  `systems.js`) picks whichever *end* of the platform is farther from the
+  train (more path hops, not straight-line distance), since reaching the
+  far end necessarily means passing through the nearer platform cells
+  first. By the time the train physically stops, its trailing body
+  (`footprintKeysFor` — the same physical-length reservation collision
+  already used) already covers as much of the platform as its own length
+  allows, instead of stopping at the very first platform cell reached
+  with nothing of the platform actually behind it. A Train Yard (or
+  anything without a platform) has no such choice to make — this falls
+  back to the plain `buildingRailAccessCell` for it, unchanged.
+  - **Bug found and fixed while building this**: the first version of
+    `resolveTrainDock` re-derived "farther endpoint" from the train's
+    *current* position on every idle/blocked re-check — fine on first
+    approach, but once a train is already sitting somewhere on the
+    platform (e.g. re-evaluating the same repeating order right after
+    finishing a load), the end it just arrived *from* now reads as
+    "farther," sending it shuttling back and forth across the platform
+    forever instead of just staying docked. Fixed by short-circuiting:
+    if the train's current cell is already a member of the platform, stay
+    exactly there. Test 4 in `test-depot-platform.js` is the regression
+    test for this.
+- **Multi-cell transfer**: a real platform loads/unloads its whole length
+  at once, not through one bottleneck point. `dockedPlatformCellCount(train,
+  building)` (new, in `systems.js`) counts how many of the train's own
+  currently-occupied cells (again `footprintKeysFor`) are members of the
+  platform's cell set right now, and `tickTrainMovement`'s loading/
+  unloading branches multiply `TRANSFER_RATE` by that count instead of
+  using it flat. A Train Yard (or any non-Depot target) is always
+  exactly 1 — this only ever speeds up Depot transfers, nothing else.
+
+## What changed
+
+- **`index.html`**: `depot` footprint is now `{"w":2,"h":4}`; a new
+  "Platform runs North-South / East-West" dropdown next to the Build Rail
+  Depot button; updated hint text.
+- **`entities.js`**: new `effectiveFootprint`; `createBuilding` uses it
+  for Depot's `Footprint` component.
+- **`commands.js`**: `cmdBuildBuilding` uses `effectiveFootprint` for its
+  bounds/overlap check, and rejects a Depot build with no valid platform
+  (`depotPlatformCells` returns `null`).
+- **`pathfinding.js`**: new `depotPlatformCells`; `buildingRailAccessCell`
+  special-cases Depot to use it (Train Yard unchanged, still
+  full-perimeter — it's an assembly point, not a place trains load/unload,
+  so the same real-world motivation a loading platform has doesn't apply
+  to it).
+- **`systems.js`**: new `resolveTrainDock` and `dockedPlatformCellCount`;
+  `startMovingToRail` and `tickTrainMovement`'s idle/blocked branch use
+  `resolveTrainDock` instead of the plain `buildingRailAccessCell`; the
+  loading/unloading branches scale `TRANSFER_RATE` by
+  `dockedPlatformCellCount`.
+- **`render.js`**: a Depot's valid platform side is highlighted in amber,
+  right against the footprint edge (reads like a Station's facing notch,
+  just for the whole side rather than one corner); the build-tool ghost
+  preview respects the chosen orientation.
+- **`ui.js`**: `currentDepotOrientation()`; the tool-button click listener
+  now targets `.tool-btn[data-tool]` specifically, since the toolbar's new
+  orientation dropdown isn't itself a map tool; the Depot inspector panel
+  shows platform length instead of a bare "connected"/"not connected".
+
+## Testing
+
+New `test/test-depot-platform.js` (4 sections, 13 checks): build-time
+rejection for no track / a short-end touch / a partial-length long-side
+run, acceptance on either long side and either orientation, the
+multi-cell transfer-rate math itself (`dockedCellCount * TRANSFER_RATE`,
+verified strictly greater than the old flat rate), and the
+already-docked-train-doesn't-shuttle regression described above.
+
+Every existing Depot placement across `test-rail.js` (8 of its 11
+sections) and `test-persistence.js` needed new coordinates to satisfy the
+new footprint/platform rule — each Depot now gets its own dedicated
+siding (rather than sitting flush against a shared through-line)
+specifically so touching it doesn't fragment that shared line's own
+block identity, which `test-rail.js`'s Test 1/Test 2 examine directly; a
+real platform siding is usually separate from the running line for
+exactly this reason. All 4 test files pass. Also verified end-to-end in a
+real browser: an out-of-bounds depot attempt is rejected with the
+parallel-track message, a valid build against a real siding charges
+correctly, the inspector shows the platform length, and an East-West
+oriented Depot renders with the swapped 4x2 footprint and the amber
+platform marker on the correct side, with no console errors.

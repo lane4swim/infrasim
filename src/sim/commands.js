@@ -155,7 +155,7 @@ function cmdToggleOneWay(x1,y1,x2,y2,layer){
 }
 function cmdBuildBuilding(type, x, y, tier, facing, resource){
   const def = BUILDING_DEFS[type];
-  const {w,h} = def.footprint;
+  const {w,h} = effectiveFootprint(type, def, facing);
   for(let dx=0; dx<w; dx++){
     for(let dy=0; dy<h; dy++){
       const cx = x+dx, cy = y+dy;
@@ -175,6 +175,18 @@ function cmdBuildBuilding(type, x, y, tier, facing, resource){
     // another station, forming the access chain vehicles actually use.
     if(!touchesIndustryOrStation(x, y, {w,h})){
       logEvent('A Station must touch a Mine, Town, or another Station.', 'warn');
+      return;
+    }
+  }
+  if(type==='depot'){
+    // A real loading platform runs alongside the track it serves for its
+    // whole length, not just touching it at one corner — see
+    // depotPlatformCells. Only one of the footprint's two LONG sides (the
+    // pair parallel to whichever of w/h is bigger) needs a full run; the
+    // short end caps never count, same as a real platform's end doesn't
+    // serve trains passing alongside it.
+    if(!depotPlatformCells(x, y, w, h)){
+      logEvent('A Rail Depot must run alongside a straight, unbroken length of track along one of its long sides.', 'warn');
       return;
     }
   }

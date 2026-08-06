@@ -308,8 +308,57 @@ function tickVehicles(){
   }
 }
 
+// A Rail Depot's dock is train-length-aware: reaching whichever end of the
+// platform (see depotPlatformCells) is FARTHER from the train — more path
+// hops, not straight-line distance — means the approach necessarily passes
+// through the nearer platform cells first, so by the time the train stops,
+// its trailing body (footprintKeysFor) already covers as much of the
+// platform as its own length allows, instead of stopping at the very first
+// platform cell reached with nothing of the platform actually behind it.
+// A Train Yard (or anything else without a platform) has no such choice to
+// make — this is just buildingRailAccessCell for it.
+function resolveTrainDock(train, building){
+  if(building.type !== 'depot') return buildingRailAccessCell(building);
+  const platform = depotPlatformCells(building.x, building.y, building.footprint.w, building.footprint.h);
+  if(!platform) return null;
+  // Already standing somewhere on the platform (e.g. re-evaluating the
+  // same order right after finishing a load/unload cycle) — stay exactly
+  // where it is. Without this, re-deriving "farther endpoint" from the
+  // train's CURRENT position would see whichever end it just arrived
+  // FROM as now being the farther one, sending an already-docked train
+  // shuttling back and forth across the platform every cycle instead of
+  // just staying put.
+  if(train.layer==='rail' && platform.some(c => c.x===train.x && c.y===train.y)) return {x:train.x, y:train.y, layer:'rail'};
+  const first = {x:platform[0].x, y:platform[0].y, layer:'rail'};
+  if(platform.length === 1) return first;
+  const last = {x:platform[platform.length-1].x, y:platform[platform.length-1].y, layer:'rail'};
+  const start = {x:train.x, y:train.y, layer:train.layer};
+  const pathToFirst = findRailPath(start, first);
+  const pathToLast = findRailPath(start, last);
+  if(!pathToFirst && !pathToLast) return null;
+  if(!pathToFirst) return last;
+  if(!pathToLast) return first;
+  return pathToFirst.length >= pathToLast.length ? first : last;
+}
+// A real platform loads/unloads its whole length at once, not through one
+// bottleneck point — so a train's per-tick transfer rate scales with how
+// many of its OWN currently-occupied cells (footprintKeysFor — the same
+// physical-length reservation used for collision) are actually alongside
+// the Depot's platform right now, not a flat constant. A Train Yard (or
+// any non-Depot target) has no platform concept, so it's always exactly 1
+// (today's flat rate, unchanged) — this only ever speeds up Depot transfers,
+// never anything else.
+function dockedPlatformCellCount(train, building){
+  if(building.type !== 'depot') return 1;
+  const platform = depotPlatformCells(building.x, building.y, building.footprint.w, building.footprint.h);
+  if(!platform) return 1;
+  const platformKeys = new Set(platform.map(c => posKey(c.x, c.y, 'rail')));
+  let count = 0;
+  for(const k of footprintKeysFor(train)) if(platformKeys.has(k)) count++;
+  return Math.max(1, count);
+}
 function startMovingToRail(train, building){
-  const dock = buildingRailAccessCell(building);
+  const dock = resolveTrainDock(train, building);
   if(!dock){ train.state='blocked'; return false; } // no rail track touches this building right now
   const path = findRailPath({x:train.x, y:train.y, layer:train.layer}, dock);
   if(!path){ train.state='blocked'; return false; }
@@ -338,7 +387,7 @@ function tickTrainMovement(){
     if(!target){ advanceOrder(v); v.path=null; continue; } // stop was demolished
 
     if(v.state==='idle' || v.state==='blocked'){
-      const dock = buildingRailAccessCell(target);
+      const dock = resolveTrainDock(v, target);
       if(!dock){ v.state='blocked'; continue; }
       if(v.x===dock.x && v.y===dock.y && v.layer===dock.layer){
         v.state = order.action==='load_full' ? 'loading' : 'unloading';
@@ -403,7 +452,8 @@ function tickTrainMovement(){
       if(source.outStock <= 0){ v.state='blocked'; continue; }
       const room = v.capacity - v.cargoAmount;
       if(room <= 0){ advanceOrder(v); v.state='idle'; continue; }
-      const amt = Math.min(TRANSFER_RATE, source.outStock, room);
+      const rate = TRANSFER_RATE * dockedPlatformCellCount(v, target);
+      const amt = Math.min(rate, source.outStock, room);
       source.outStock -= amt;
       v.cargoAmount += amt;
       if(v.cargoAmount >= v.capacity){ advanceOrder(v); v.state='idle'; }
@@ -416,7 +466,8 @@ function tickTrainMovement(){
       if(v.cargoAmount<=0){ advanceOrder(v); v.state='idle'; continue; }
       const room = dest.inCap - dest.inStock;
       if(room <= 0){ v.state='blocked'; continue; }
-      const amt = Math.min(TRANSFER_RATE, v.cargoAmount, room);
+      const rate = TRANSFER_RATE * dockedPlatformCellCount(v, target);
+      const amt = Math.min(rate, v.cargoAmount, room);
       dest.inStock += amt;
       v.cargoAmount -= amt;
       if(dest.consumer){

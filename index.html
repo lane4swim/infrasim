@@ -174,18 +174,25 @@
     <button class="tool-btn" data-tool="trackconnect"><span class="tool-swatch" style="background:var(--teal)"></span>Connect / Disconnect Track</button>
     <button class="tool-btn" data-tool="signal"><span class="tool-swatch" style="background:var(--amber)"></span>Toggle Signal Direction</button>
     <button class="tool-btn" data-tool="depot"><span class="tool-swatch" style="background:#6b5b95"></span>Build Rail Depot<span class="cost" id="depotCost">$300</span></button>
+    <select id="depotOrientationSelect">
+      <option value="ns">Platform runs North-South</option>
+      <option value="ew">Platform runs East-West</option>
+    </select>
     <select id="depotResourceSelect">
       <option value="ore">Depot handles: Ore</option>
       <option value="steel">Depot handles: Steel</option>
     </select>
-    <div class="hint-text">A Rail Depot works like a truck Station: build it touching an industry
-      (or a chain of Stations reaching one) and trains load/unload that
-      industry's own stock directly, same as a truck would. Left
-      unlinked, a Depot instead buffers its own real storage — handy for
-      letting a train drop off dozens of units at once while trucks draw
-      it down a few at a time elsewhere. Build a Station touching it for
-      road access, same as a Mine or Mill; track touching any side gives
-      it rail access, no facing needed.</div>
+    <div class="hint-text">A Rail Depot is a real loading platform: it must run alongside a
+      straight, unbroken stretch of track along one of its long sides
+      (highlighted in amber once built) — pick which way it's oriented
+      above. It works like a truck Station otherwise: build it touching an
+      industry (or a chain of Stations reaching one) and trains load/unload
+      that industry's own stock directly, same as a truck would. Left
+      unlinked, a Depot instead buffers its own real storage. A longer
+      train docked alongside more of the platform loads/unloads faster —
+      transfer scales with how much of the train's own length actually
+      overlaps the platform. Build a Station touching it for road access,
+      same as a Mine or Mill.</div>
     <button class="tool-btn" data-tool="trainyard"><span class="tool-swatch" style="background:#4a4a6a"></span>Build Train Yard<span class="cost" id="trainyardCost">$400</span></button>
     <button class="tool-btn" data-tool="assembletrain"><span class="tool-swatch" style="background:#9b6bd6"></span>Assemble Train</button>
     <select id="engineSelect">
@@ -304,7 +311,7 @@
     "mill":    { "buildCost": 220, "tiers": { "small": { "cap": 20, "add": 0 }, "large": { "cap": 50, "add": 120 } }, "color": "#8a4a3a", "label": "Steel Mill", "footprint": { "w": 3, "h": 2 }, "recipe": "smelt_steel" },
     "town":    { "buildCost": 100, "tiers": { "small": { "cap": 20, "add": 0, "population": 50 }, "large": { "cap": 50, "add": 80, "population": 150 } }, "color": "#3a6ea5", "label": "Town", "footprint": { "w": 3, "h": 2 } },
     "station": { "buildCost": 60,  "tiers": { "small": { "cap": 0, "add": 0 }, "large": { "cap": 0, "add": 0 } }, "color": "#c9a227", "label": "Station", "footprint": { "w": 1, "h": 1 } },
-    "depot":   { "buildCost": 300, "tiers": { "small": { "cap": 30, "add": 0 }, "large": { "cap": 80, "add": 150 } }, "color": "#6b5b95", "label": "Rail Depot", "footprint": { "w": 2, "h": 2 } },
+    "depot":   { "buildCost": 300, "tiers": { "small": { "cap": 30, "add": 0 }, "large": { "cap": 80, "add": 150 } }, "color": "#6b5b95", "label": "Rail Depot", "footprint": { "w": 2, "h": 4 } },
     "trainyard": { "buildCost": 400, "tiers": { "small": { "cap": 0, "add": 0 }, "large": { "cap": 0, "add": 0 } }, "color": "#4a4a6a", "label": "Train Yard", "footprint": { "w": 3, "h": 2 } }
   },
   "vehicles": {
