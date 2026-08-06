@@ -1120,3 +1120,77 @@ Build Rail Ramp, layer-aware Connect / Disconnect Track and Toggle Signal
 Direction) works via actual clicks, the elevated track cost label updates
 correctly (x2 multiplier), and the elevated crossing renders exactly like
 its ground counterpart — with no console errors.
+
+---
+
+# Addendum — road and rail merge into one grade-layer structure
+
+The previous two addenda gave rail its own ground/elevated split and its
+own perpendicular-crossing rule, but road and rail were still four
+entirely separate top-level grid layers (`ground`, `elevated`, `rail`,
+`railElevated`) under the hood, each pairing (ground↔rail, elevated↔
+railElevated) hand-named in a lookup table. That doesn't scale: a third
+infrastructure kind (a pipeline, a power line — §15's later transport
+modes) would have meant two MORE top-level layers, plus teaching every
+pairwise rule about the new combinations. Merged the grid itself so a new
+kind is genuinely one line of code, not a growing compatibility matrix.
+
+## What changed
+
+- **`world.js`**: a grade (`ground` or `elevated`) is now a bag of
+  *kinds* — `newGradeLayer()` returns `{road: newTrack(), rail:
+  newTrack()}` — instead of road and rail being independent top-level
+  layers. Adding a third kind later is exactly one more key in that
+  object; it automatically participates in every rule below with no
+  further code. `cell.ramp`/`cell.railRamp` similarly merged into
+  `cell.ramps = {road: false, rail: false}` — a Ramp of any kind links
+  that kind's own ground and elevated tiles, entirely independent of any
+  other kind's ramp.
+
+  The flat vehicle/command/render-facing vocabulary — `'ground'`,
+  `'elevated'`, `'rail'`, `'railElevated'` — didn't need to change at all;
+  renaming it everywhere would have been pure churn for no behavioral
+  gain. `LAYER_GRADE_KIND` (and its inverse, `GRADE_KIND_LAYER`) is the
+  one place that translates a flat layer name to the `(grade, kind)` pair
+  it's actually stored under, and `trackAt(x,y,layer)` is the one
+  function every piece of grid-reading/writing code goes through instead
+  of indexing `world.grid` by a flat name directly.
+
+- **`pathfinding.js`**: `findRoadPath` and `findRailPath` — which had
+  become near-identical once rail gained ground/elevated and a ramp
+  concept of its own (the last addendum) — are now thin wrappers over one
+  shared `findLayerPath`, since the only remaining difference (which
+  layer names, which ramp flag) is exactly what `trackAt`/
+  `GRADE_KIND_LAYER` already abstract.
+
+- **`commands.js`**: `directionClaimedByOtherNetwork` (the
+  perpendicular-crossing rule) now iterates every OTHER kind at a
+  layer's own grade, instead of naming one fixed counterpart — this is
+  the actual payoff: a future kind gets crossing protection against road
+  and rail (and they against it) automatically. `cmdBuildRoad` and
+  `cmdBuildTrack` share one `buildTrackTile` implementation (cost,
+  building-collision, auto-connect); `cmdBuildRamp` and
+  `cmdBuildRailRamp` share one `buildRamp`. `cmdBuildBuilding`'s overlap
+  check now asks "is ANY kind at ground grade occupying this cell"
+  (`Object.values(cell.layers.ground).some(t => t.track)`) instead of
+  naming road and rail specifically, for the same reason.
+
+- **`rail-blocks.js`**, **`systems.js`**, **`render.js`**, **`ui.js`**:
+  updated to read/write the grid through `trackAt`/`cell.ramps` instead
+  of the old flat `cell.layers.rail` / `cell.ramp` / `cell.railRamp`
+  shape. No behavior changed in any of these beyond the storage
+  indirection — block computation, train movement, rendering, and tool
+  wiring all work exactly as the previous two addenda described.
+
+## Testing
+
+No new tests — this was a pure internal restructuring, not a behavior
+change, so the existing 11 sections in `test-rail.js` (updated to read
+the grid through the new nested shape where they inspect it directly)
+passing unmodified *is* the regression check, the same principle the
+content-pack refactor and the Worker split both used. Also re-verified in
+a real browser: ground and elevated crossings, both ramp types, and the
+generalized "a building can't sit on any kind of ground-grade
+infrastructure" check (tried building a Mine on top of rail track — the
+same rejection message a road conflict already gave) all work via actual
+clicks, with no console errors.

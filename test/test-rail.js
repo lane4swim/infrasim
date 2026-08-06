@@ -65,7 +65,7 @@ section('Test 1 — block mutual exclusion', () => {
     run(ctx, `simTick();`);
     const a = run(ctx, `const a = world.entities.get(${trainAId}); return {x:a.x, currentBlock:a.currentBlock};`);
     if(a.x >= 7 && a.x <= 9){
-      block2Id = run(ctx, `return getCell(6,5).layers.rail.blockId.E;`);
+      block2Id = run(ctx, `return trackAt(6,5,'rail').blockId.E;`);
       check('train A holds block2 while crossing it', a.currentBlock === block2Id, `currentBlock=${a.currentBlock} block2Id=${block2Id}`);
       break;
     }
@@ -119,11 +119,11 @@ section('Test 2 — block computation correctness', () => {
   buildJunctionLine(ctx);
   const edges = run(ctx, `
     return {
-      block1_a: getCell(2,5).layers.rail.blockId.E,
-      block1_b: getCell(5,5).layers.rail.blockId.E,
-      block2_a: getCell(6,5).layers.rail.blockId.E,
-      block2_b: getCell(10,5).layers.rail.blockId.E,
-      branch:   getCell(6,5).layers.rail.blockId.S,
+      block1_a: trackAt(2,5,'rail').blockId.E,
+      block1_b: trackAt(5,5,'rail').blockId.E,
+      block2_a: trackAt(6,5,'rail').blockId.E,
+      block2_b: trackAt(10,5,'rail').blockId.E,
+      branch:   trackAt(6,5,'rail').blockId.S,
     };
   `);
   check('block1 is one consistent id across its whole span', edges.block1_a === edges.block1_b && edges.block1_a != null);
@@ -137,9 +137,9 @@ section('Test 2 — block computation correctness', () => {
   run(ctx, `cmdDemolish(4, 5, 'rail');`);
   const after = run(ctx, `
     return {
-      leftStub:  getCell(2,5).layers.rail.blockId.E,   // (2,5)-(3,5), now a dead end at x=3
-      rightStub: getCell(5,5).layers.rail.blockId.E,   // (5,5)-(6,5), unaffected span
-      gapGone:   getCell(4,5).layers.rail.track,
+      leftStub:  trackAt(2,5,'rail').blockId.E,   // (2,5)-(3,5), now a dead end at x=3
+      rightStub: trackAt(5,5,'rail').blockId.E,   // (5,5)-(6,5), unaffected span
+      gapGone:   trackAt(4,5,'rail').track,
     };
   `);
   check('the demolished tile is no longer track', after.gapGone === false);
@@ -454,12 +454,12 @@ section('Test 8 — road and rail cross only at a right angle, sharing the same 
     const eastOfCrossing = getCell(6,5);
 
     return {
-      roadConnectsThrough: crossing.layers.ground.edges.E && crossing.layers.ground.edges.W,
-      railConnectsThrough: crossing.layers.rail.edges.N && crossing.layers.rail.edges.S,
+      roadConnectsThrough: crossing.layers.ground.road.edges.E && crossing.layers.ground.road.edges.W,
+      railConnectsThrough: crossing.layers.ground.rail.edges.N && crossing.layers.ground.rail.edges.S,
       roadPathLength: roadPath ? roadPath.length : -1,
       railPathLength: railPath ? railPath.length : -1,
-      parallelRailTilePlaced: eastOfCrossing.layers.rail.track,
-      parallelRailBlockedAtCrossing: !crossing.layers.rail.edges.E && !eastOfCrossing.layers.rail.edges.W,
+      parallelRailTilePlaced: eastOfCrossing.layers.ground.rail.track,
+      parallelRailBlockedAtCrossing: !crossing.layers.ground.rail.edges.E && !eastOfCrossing.layers.ground.rail.edges.W,
     };
   `);
   check('the road still connects straight through the crossing cell (E-W)', s.roadConnectsThrough);
@@ -474,7 +474,7 @@ section('Test 8 — road and rail cross only at a right angle, sharing the same 
   // with Connect/Disconnect.
   const manual = run(ctx, `
     cmdToggleConnection(5,5, 6,5, 'rail');
-    return getCell(5,5).layers.rail.edges.E;
+    return trackAt(5,5,'rail').edges.E;
   `);
   check('manually connecting the same parallel overlap is rejected too', manual === false);
 });
@@ -591,12 +591,12 @@ section('Test 11 — rail also runs on ground and elevated layers, linked by its
     cmdBuildTrack(11, 0, 'railElevated', true);
     cmdBuildTrack(12, 0, 'railElevated', true);
     cmdToggleOneWay(10, 0, 11, 0, 'railElevated');
-    const elevatedBlockA = getCell(10,0).layers.railElevated.blockId.E;
-    const elevatedBlockB = getCell(11,0).layers.railElevated.blockId.E;
+    const elevatedBlockA = trackAt(10,0,'railElevated').blockId.E;
+    const elevatedBlockB = trackAt(11,0,'railElevated').blockId.E;
 
     return {
-      roadConnectsThrough: crossing.layers.elevated.edges.E && crossing.layers.elevated.edges.W,
-      railConnectsThrough: crossing.layers.railElevated.edges.N && crossing.layers.railElevated.edges.S,
+      roadConnectsThrough: crossing.layers.elevated.road.edges.E && crossing.layers.elevated.road.edges.W,
+      railConnectsThrough: crossing.layers.elevated.rail.edges.N && crossing.layers.elevated.rail.edges.S,
       elevatedBlocksSplitBySignal: elevatedBlockA !== elevatedBlockB && elevatedBlockA != null && elevatedBlockB != null,
     };
   `);

@@ -194,7 +194,7 @@ function handleClick(cell){
     // to that same grade's RAIL layer (ground->rail, elevated->railElevated).
     const roadLayer = currentLayer();
     const railLayer = currentRailLayer();
-    const layer = getCell(x,y).layers[roadLayer].track ? roadLayer : railLayer;
+    const layer = trackAt(x,y,roadLayer).track ? roadLayer : railLayer;
     postCommand('cmdDemolish', [x,y,layer]);
     return;
   }
@@ -217,7 +217,7 @@ function handleConnectClick(x,y){
   // rail track built with auto-connect off (or that's had a connection
   // manually severed) had no way back to being joined again.
   const layer = currentTool==='trackconnect' ? currentRailLayer() : currentLayer();
-  if(!getCell(x,y).layers[layer].track){
+  if(!trackAt(x,y,layer).track){
     logEvent(`No ${layer} track there.`, 'warn');
     connectFirst = null;
     document.getElementById('hint').textContent = toolHint(currentTool);
@@ -238,7 +238,7 @@ function handleOneWayClick(x,y){
   // same command, same two-click interaction, just on whichever rail layer
   // the shared Ground/Elevated dropdown maps to (currentRailLayer()).
   const layer = currentTool==='signal' ? currentRailLayer() : currentLayer();
-  if(!getCell(x,y).layers[layer].track){
+  if(!trackAt(x,y,layer).track){
     logEvent(`No ${layer} track there.`, 'warn');
     oneWayFirst = null;
     document.getElementById('hint').textContent = toolHint(currentTool);

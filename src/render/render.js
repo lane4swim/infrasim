@@ -100,7 +100,7 @@ function render(){
   // light purple, so the two are visibly distinguishable when a cell
   // happens to have both.
   for(const [k,cell] of world.grid){
-    if(!cell.ramp) continue;
+    if(!cell.ramps.road) continue;
     const [x,y] = k.split(',').map(Number);
     const cx = x*CELL+CELL/2, cy = y*CELL+CELL/2;
     ctx.save();
@@ -110,7 +110,7 @@ function render(){
     ctx.restore();
   }
   for(const [k,cell] of world.grid){
-    if(!cell.railRamp) continue;
+    if(!cell.ramps.rail) continue;
     const [x,y] = k.split(',').map(Number);
     const cx = x*CELL+CELL/2, cy = y*CELL+CELL/2;
     ctx.save();
@@ -144,17 +144,17 @@ function render(){
   }
 
   function drawRoadLayer(layerName, color, margin){
-    for(const [k,cell] of world.grid){
-      const track = cell.layers[layerName];
-      if(!track.track) continue;
+    for(const [k] of world.grid){
       const [x,y] = k.split(',').map(Number);
+      const track = trackAt(x,y,layerName);
+      if(!track.track) continue;
       const connectedDirs = ROAD_DIRS.filter(d => track.edges[d.dir]).map(d => d.dir);
       drawTrackCell(x, y, connectedDirs, color, margin);
       for(const {dir,dx,dy,opp} of ROAD_DIRS){
         if(!track.edges[dir]) continue;
         // One-way arrow: drawn only from the side that's still allowed to
         // depart, so each physical one-way edge gets exactly one arrow.
-        const nTrack = getCell(x+dx, y+dy).layers[layerName];
+        const nTrack = trackAt(x+dx, y+dy, layerName);
         const thisBlocked = track.oneWayBlocked[dir];
         const otherBlocked = nTrack.oneWayBlocked[opp];
         if(!thisBlocked && otherBlocked) drawOneWayArrow(x, y, dir, margin);

@@ -215,13 +215,15 @@ function markTrainCrossingsOccupied(occupied){
     for(const key of footprintKeysFor(train)){
       const [xStr,yStr,railLayer] = key.split(',');
       const x = Number(xStr), y = Number(yStr);
-      if(isRoadRailCrossing(x,y,railLayer)) occupied.set(posKey(x,y,RAIL_ROAD_COUNTERPART[railLayer]), `crossing-${id}`);
+      const [grade] = LAYER_GRADE_KIND[railLayer];
+      if(isRoadRailCrossing(x,y,railLayer)) occupied.set(posKey(x,y,GRADE_KIND_LAYER[grade].road), `crossing-${id}`);
     }
     if(train.path){
       for(let i=1; i<=LOOKAHEAD && train.pathIndex+i < train.path.length; i++){
         const node = train.path[train.pathIndex+i];
         const railLayer = node.layer!==undefined ? node.layer : train.layer;
-        if(isRoadRailCrossing(node.x, node.y, railLayer)) occupied.set(posKey(node.x, node.y, RAIL_ROAD_COUNTERPART[railLayer]), `crossing-${id}`);
+        const [grade] = LAYER_GRADE_KIND[railLayer];
+        if(isRoadRailCrossing(node.x, node.y, railLayer)) occupied.set(posKey(node.x, node.y, GRADE_KIND_LAYER[grade].road), `crossing-${id}`);
       }
     }
   }
@@ -370,14 +372,14 @@ function tickTrainMovement(){
         (cur,next) => {
           if(cur.layer !== next.layer) return true;
           const dir = dirBetween(cur,next).dir;
-          const blockId = getCell(cur.x,cur.y).layers[cur.layer].blockId[dir];
+          const blockId = trackAt(cur.x,cur.y,cur.layer).blockId[dir];
           const block = blockId!=null ? world.railBlocks.get(blockId) : null;
           return !block || block.occupiedBy===null || block.occupiedBy===v.id;
         },
         (cur,next) => {
           if(cur.layer !== next.layer) return;
           const dir = dirBetween(cur,next).dir;
-          const blockId = getCell(cur.x,cur.y).layers[cur.layer].blockId[dir];
+          const blockId = trackAt(cur.x,cur.y,cur.layer).blockId[dir];
           if(blockId !== v.currentBlock){
             releaseBlock(v);
             const block = blockId!=null ? world.railBlocks.get(blockId) : null;

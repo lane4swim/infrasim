@@ -19,26 +19,19 @@ const ROAD_DIRS = [
 function neighbors4(x,y){
   return [[x+1,y],[x-1,y],[x,y+1],[x,y-1]].filter(([nx,ny])=>inBounds(nx,ny));
 }
-function isRoad(x,y,layer){ return getCell(x,y).layers[layer||'ground'].track; }
-// Which road layer shares a physical grade with which rail layer (and vice
-// versa) — ground-level road with ground-level rail, elevated road with
-// elevated rail (a rail bridge), each pair only ever able to cross the
-// other perpendicular, never run parallel through the same cell (see
-// commands.js's directionClaimedByOtherNetwork). Elevated road and
-// ground-level rail (or the reverse) have no entry here and no
-// relationship at all — different physical heights, exactly like
-// ground/elevated road already don't interact absent a Ramp.
-const RAIL_ROAD_COUNTERPART = {ground:'rail', rail:'ground', elevated:'railElevated', railElevated:'elevated'};
-// A cell where a rail layer and its same-grade road layer physically
-// coexist — necessarily a perpendicular crossing. Used both for the
-// crossing marker (render.js) and for trains blocking road traffic
-// through it while they're physically there (see
-// markTrainCrossingsOccupied in systems.js). `railLayer` is 'rail'
-// (ground, the default) or 'railElevated'.
+function isRoad(x,y,layer){ return trackAt(x,y,layer||'ground').track; }
+// A cell where road and rail — the two kinds sharing a grade (see
+// newGradeLayer in world.js) — physically coexist at the SAME grade:
+// necessarily a perpendicular crossing. Used both for the crossing
+// marker (render.js) and for trains blocking road traffic through it
+// while they're physically there (see markTrainCrossingsOccupied in
+// systems.js). `railLayer` is 'rail' (ground, the default) or
+// 'railElevated'; its grade is where both kinds are checked.
 function isRoadRailCrossing(x,y,railLayer){
   railLayer = railLayer || 'rail';
-  const cell = getCell(x,y);
-  return cell.layers[RAIL_ROAD_COUNTERPART[railLayer]].track && cell.layers[railLayer].track;
+  const [grade] = LAYER_GRADE_KIND[railLayer];
+  const gradeLayer = getCell(x,y).layers[grade];
+  return gradeLayer.road.track && gradeLayer.rail.track;
 }
 
 // Every cell a building occupies, derived from its anchor (x,y) + footprint.
@@ -89,7 +82,7 @@ function buildingRailAccessCell(building){
   for(const cell of footprintCells(building)){
     for(const [nx,ny] of neighbors4(cell.x,cell.y)){
       if(own.has(nx+','+ny)) continue;
-      if(getCell(nx,ny).layers.rail.track) return {x:nx,y:ny,layer:'rail'};
+      if(trackAt(nx,ny,'rail').track) return {x:nx,y:ny,layer:'rail'};
     }
   }
   return null;
@@ -97,9 +90,14 @@ function buildingRailAccessCell(building){
 
 // BFS over {x,y,layer} nodes: lateral moves follow only established,
 // direction-allowed edges within a layer (respecting one-way blocks); a
-// vertical move between ground and elevated is only possible at a Ramp
-// cell. Returns an array of nodes from start to end (inclusive), or null.
-function findRoadPath(start, end){
+// vertical move to the other grade is only possible at a Ramp of that
+// SAME kind (a road Ramp for road, a Rail Ramp for rail — see
+// GRADE_KIND_LAYER in world.js). Returns an array of nodes from start to
+// end (inclusive), or null. findRoadPath and findRailPath used to be
+// near-identical separate functions (one difference: which of the two
+// flat layer names and which ramp flag); now that both are really just
+// "a kind, and its two grades," they're thin wrappers over this one body.
+function findLayerPath(start, end){
   const nodeKey = n => n.x+','+n.y+','+n.layer;
   if(start.x===end.x && start.y===end.y && start.layer===end.layer) return [start];
   const visited = new Set([nodeKey(start)]);
@@ -120,71 +118,24 @@ function findRoadPath(start, end){
   }
   while(queue.length){
     const cur = queue.shift();
-    const cell = getCell(cur.x, cur.y);
-    const track = cell.layers[cur.layer];
+    const track = trackAt(cur.x, cur.y, cur.layer);
     for(const {dir,dx,dy} of ROAD_DIRS){
       if(!track.edges[dir]) continue;          // no connection this way
       if(track.oneWayBlocked[dir]) continue;   // one-way: can't depart via this side
       const found = tryVisit({x:cur.x+dx, y:cur.y+dy, layer:cur.layer}, cur);
       if(found) return found;
     }
-    if(cell.ramp){
-      const otherLayer = cur.layer==='ground' ? 'elevated' : 'ground';
-      const found = tryVisit({x:cur.x, y:cur.y, layer:otherLayer}, cur);
+    const [grade, kind] = LAYER_GRADE_KIND[cur.layer];
+    if(getCell(cur.x,cur.y).ramps[kind]){
+      const otherGrade = grade==='ground' ? 'elevated' : 'ground';
+      const found = tryVisit({x:cur.x, y:cur.y, layer:GRADE_KIND_LAYER[otherGrade][kind]}, cur);
       if(found) return found;
     }
   }
   return null;
 }
-
-// Near-copy of findRoadPath for the rail network: same BFS (uniform edge
-// cost, so no need for A* — §10), same one-way/signal respect, and now the
-// same ramp/vertical-move concept too — a railRamp cell (rail's own Ramp,
-// entirely independent of the road one) links 'rail' and 'railElevated'
-// the same way a Ramp links 'ground' and 'elevated'. Kept as a separate
-// function rather than parameterizing findRoadPath because the two still
-// differ in what a layer even means (rail's two layers are peers of each
-// other the same way road's two are — this mirrors findRoadPath closely
-// enough now that the remaining difference is really just which two layer
-// names and which ramp flag, not worth collapsing into more branching in
-// one shared body).
-function findRailPath(start, end){
-  const nodeKey = n => n.x+','+n.y+','+n.layer;
-  if(start.x===end.x && start.y===end.y && start.layer===end.layer) return [start];
-  const visited = new Set([nodeKey(start)]);
-  const queue = [start];
-  const cameFrom = new Map();
-  function tryVisit(node, cur){
-    const k = nodeKey(node);
-    if(visited.has(k)) return null;
-    visited.add(k);
-    cameFrom.set(k, cur);
-    if(node.x===end.x && node.y===end.y && node.layer===end.layer){
-      let path = [node]; let c = cur;
-      while(c){ path.unshift(c); c = cameFrom.get(nodeKey(c)); }
-      return path;
-    }
-    queue.push(node);
-    return undefined;
-  }
-  while(queue.length){
-    const cur = queue.shift();
-    const cell = getCell(cur.x, cur.y);
-    const track = cell.layers[cur.layer];
-    for(const {dir,dx,dy} of ROAD_DIRS){
-      if(!track.edges[dir]) continue;
-      if(track.oneWayBlocked[dir]) continue; // a signal blocks departure this way
-      const found = tryVisit({x:cur.x+dx, y:cur.y+dy, layer:cur.layer}, cur);
-      if(found) return found;
-    }
-    if(cell.railRamp){
-      const otherLayer = cur.layer==='rail' ? 'railElevated' : 'rail';
-      const found = tryVisit({x:cur.x, y:cur.y, layer:otherLayer}, cur);
-      if(found) return found;
-    }
-  }
-  return null;
-}
+function findRoadPath(start, end){ return findLayerPath(start, end); }
+function findRailPath(start, end){ return findLayerPath(start, end); }
 
 // Direction (from ROAD_DIRS) from cell `a` to orthogonally-adjacent cell `b`.
 function dirBetween(a,b){ return ROAD_DIRS.find(r => b.x===a.x+r.dx && b.y===a.y+r.dy); }

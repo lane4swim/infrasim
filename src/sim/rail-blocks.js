@@ -6,22 +6,23 @@
 // any of its edges (a signal IS a boundary, not just a direction filter),
 // touches a Rail Depot or Train Yard (so a train's approach to either is
 // always its own segment, never shared with unrelated through-traffic), or
-// is a railRamp (the vertical transition to/from railElevated is as
-// natural a block boundary as a signal — see computeRailBlocks below for
-// why both rail layers get this treatment independently). Two trains can
+// has a Rail Ramp (cell.ramps.rail — the vertical transition to/from
+// railElevated is as natural a block boundary as a signal — see
+// computeRailBlocks below for why both rail layers get this treatment
+// independently). Two trains can
 // never hold the same block at once, regardless of the softer
 // velocity-gap spacing trains also use for smooth car-following — the
 // block is a hard guarantee on top of that, not a replacement for it (see
 // tickTrainMovement).
 // ---------------------------------------------------------------------
 function railCellDegree(x,y,layer){
-  const track = getCell(x,y).layers[layer];
+  const track = trackAt(x,y,layer);
   let n = 0;
   for(const {dir} of ROAD_DIRS) if(track.edges[dir]) n++;
   return n;
 }
 function railCellHasSignal(x,y,layer){
-  const track = getCell(x,y).layers[layer];
+  const track = trackAt(x,y,layer);
   for(const {dir} of ROAD_DIRS) if(track.edges[dir] && track.oneWayBlocked[dir]) return true;
   return false;
 }
@@ -51,7 +52,7 @@ function railCellTouchesYard(x,y){
   return false;
 }
 function railCellIsHub(x,y,layer){
-  return railCellDegree(x,y,layer) !== 2 || railCellHasSignal(x,y,layer) || railCellTouchesRailEndpoint(x,y) || getCell(x,y).railRamp;
+  return railCellDegree(x,y,layer) !== 2 || railCellHasSignal(x,y,layer) || railCellTouchesRailEndpoint(x,y) || getCell(x,y).ramps.rail;
 }
 
 // Computes blocks for one rail layer ('rail' or 'railElevated') into the
@@ -61,10 +62,10 @@ function railCellIsHub(x,y,layer){
 function computeRailBlocksForLayer(layer, blockIdCounter){
   const visitedEdge = new Set(); // "x,y,dir" — each directed edge is visited exactly once across both walking passes below
   const railCells = [];
-  for(const [k,cell] of world.grid){
-    const track = cell.layers[layer];
-    if(!track.track) continue;
+  for(const [k] of world.grid){
     const [x,y] = k.split(',').map(Number);
+    const track = trackAt(x,y,layer);
+    if(!track.track) continue;
     railCells.push({x,y});
     for(const {dir} of ROAD_DIRS) track.blockId[dir] = null; // stale ids from the previous topology
   }
@@ -78,12 +79,12 @@ function computeRailBlocksForLayer(layer, blockIdCounter){
     while(true){
       const d = ROAD_DIRS.find(r=>r.dir===dir);
       const nx = x+d.dx, ny = y+d.dy;
-      getCell(x,y).layers[layer].blockId[dir] = blockId;
-      getCell(nx,ny).layers[layer].blockId[d.opp] = blockId;
+      trackAt(x,y,layer).blockId[dir] = blockId;
+      trackAt(nx,ny,layer).blockId[d.opp] = blockId;
       visitedEdge.add(x+','+y+','+dir);
       visitedEdge.add(nx+','+ny+','+d.opp);
       if(railCellIsHub(nx,ny,layer)) break;
-      const track = getCell(nx,ny).layers[layer];
+      const track = trackAt(nx,ny,layer);
       const forward = ROAD_DIRS.find(r=>r.dir!==d.opp && track.edges[r.dir]);
       if(!forward || visitedEdge.has(nx+','+ny+','+forward.dir)) break; // dead end, or a hub-less loop closing back on itself
       x = nx; y = ny; dir = forward.dir;
@@ -92,7 +93,7 @@ function computeRailBlocksForLayer(layer, blockIdCounter){
   // Pass 1: every edge reachable from an actual hub.
   for(const {x,y} of railCells){
     if(!railCellIsHub(x,y,layer)) continue;
-    const track = getCell(x,y).layers[layer];
+    const track = trackAt(x,y,layer);
     for(const {dir} of ROAD_DIRS){
       if(!track.edges[dir] || visitedEdge.has(x+','+y+','+dir)) continue;
       walkBlock(x,y,dir);
@@ -103,7 +104,7 @@ function computeRailBlocksForLayer(layer, blockIdCounter){
   // becomes one block, split arbitrarily at whichever edge is encountered
   // first.
   for(const {x,y} of railCells){
-    const track = getCell(x,y).layers[layer];
+    const track = trackAt(x,y,layer);
     for(const {dir} of ROAD_DIRS){
       if(!track.edges[dir] || visitedEdge.has(x+','+y+','+dir)) continue;
       walkBlock(x,y,dir);
