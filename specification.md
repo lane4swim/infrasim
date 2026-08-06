@@ -156,6 +156,10 @@ without touching simulation code.
 > mechanic, "layers don't auto-connect" has no counterpart action for
 > "now deliberately connect them here" — worth generalizing to every future
 > layer pair (elevated↔ground, ground↔underground), not just this one.
+> That's the vertical axis (adjacent layers, same cell); §6.1 amends the
+> horizontal one — two *different* modes sharing the *same* layer, which
+> road and rail also ended up needing, and which is not guaranteed to
+> generalize to every future mode pair the way the ramp mechanic did.
 
 ---
 
@@ -270,6 +274,30 @@ mode — say, drones, or a monorail — means adding a data file plus a small
 TypeScript module implementing edge-cost and rendering hooks; the simulation
 loop, save system, and UI build-menu all pick it up automatically because
 they iterate the registry rather than switching on a hardcoded mode list.
+
+> **Amended in Phase 2 (Rail).** `allowedLayers` says which layers a mode
+> can occupy; `connectionRules` says how it connects to *itself*. Neither
+> says anything about whether it can share a cell with a **different**
+> mode already there — a gap the real rail milestone had to close, since
+> road and rail both needed to occupy the same ground layer without
+> silently fusing into one network. The rule that milestone landed on:
+> two modes sharing a layer may only cross at a right angle, never run
+> parallel through the same cell — enforced per direction (road claims
+> E/W, rail claims N/S; never the same side), not per tile, so a crossing
+> reads unambiguously. It generalizes to any number of modes cleanly (each
+> mode checks every *other* mode present at its own layer, not one
+> hardcoded counterpart), which is also exactly why it's easy to
+> over-generalize from: **a future mode pair is not guaranteed to be
+> crossable just because road and rail happened to be.** Some real-world
+> pairs can't cross without a dedicated structure (a pipeline passing
+> under a rail line needs a casing, not just an intersection); some
+> arguably shouldn't be allowed to cross at that layer at all, requiring a
+> ramp/tunnel detour to a different layer instead. `connectionRules`
+> should grow an explicit same-layer crossing policy per mode pair —
+> something like `crossableWith: ModeId[] | 'none' | 'all'` — rather than
+> assuming "any two modes may cross perpendicular" as a given once a
+> third mode (pipeline, powerline) actually arrives. Road/rail defaulting
+> to `'all'` is a special case, not the general rule.
 
 ### 6.2 Discrete networks (truck, train, ship, plane)
 
