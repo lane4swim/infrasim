@@ -206,5 +206,66 @@ section('Test 5 — effective transfer rate is the bottleneck: min(vehicle, Stat
     fallback.rate === Math.min(fallback.trainOwnRate, fallback.defaultRate), JSON.stringify(fallback));
 });
 
+section('Test 6 — configurable platform length', () => {
+  // Builds a Depot at (2,2), orientation 'ns', with a real 8-cell parallel
+  // track run available (west side, x=1, y=2..9) — plenty for any of the
+  // content pack's allowed lengths — and reports what actually got built.
+  function tryBuildWithLength(length){
+    const ctx = newGameContext();
+    return run(ctx, `
+      for(let y=2;y<=9;y++) cmdBuildTrack(1, y, 'rail', true);
+      cmdBuildBuilding('depot', 2, 2, 'large', 'ns', 'ore', ${length});
+      const d = [...world.entities.values()].find(e=>e.type==='depot');
+      return {
+        built: !!d,
+        footprint: d && {w:d.footprint.w, h:d.footprint.h},
+        platformLength: d && depotPlatformCells(d.x, d.y, d.footprint.w, d.footprint.h).length,
+        warnLogs: pendingLogs.filter(l=>l.cls==='warn').map(l=>l.msg),
+      };
+    `);
+  }
+
+  for(const length of [2, 4, 6, 8]){
+    const out = tryBuildWithLength(length);
+    check(`length ${length} builds with a ${length}-cell footprint and platform`,
+      out.built && out.footprint.h===length && out.platformLength===length, JSON.stringify(out));
+  }
+
+  const invalidLength = tryBuildWithLength(3);
+  check('a length not in the content pack\'s platformLengths is rejected', !invalidLength.built);
+  check('the rejection names the invalid length', invalidLength.warnLogs.some(m => /3/.test(m)), JSON.stringify(invalidLength.warnLogs));
+
+  // Not enough track for the CHOSEN length, even though the length itself
+  // is a valid option — only 4 cells available, but length 8 is requested.
+  const ctx = newGameContext();
+  const tooShort = run(ctx, `
+    for(let y=2;y<=5;y++) cmdBuildTrack(1, y, 'rail', true); // only 4 cells
+    cmdBuildBuilding('depot', 2, 2, 'large', 'ns', 'ore', 8);
+    return {built: [...world.entities.values()].some(e=>e.type==='depot'), warnLogs: pendingLogs.filter(l=>l.cls==='warn').map(l=>l.msg)};
+  `);
+  check('a valid length is still rejected if the actual track run is shorter than it', !tooShort.built, JSON.stringify(tooShort));
+
+  // Omitting length entirely falls back to the content pack's own
+  // footprint.h (4) — the pre-existing default, unchanged by this feature.
+  const omitted = run(newGameContext(), `
+    for(let y=2;y<=9;y++) cmdBuildTrack(1, y, 'rail', true);
+    cmdBuildBuilding('depot', 2, 2, 'large', 'ns', 'ore');
+    const d = [...world.entities.values()].find(e=>e.type==='depot');
+    return d && {w:d.footprint.w, h:d.footprint.h};
+  `);
+  check('omitting length falls back to the content pack\'s canonical default (4)', omitted && omitted.h===4, JSON.stringify(omitted));
+
+  // Length combines correctly with 'ew' orientation: the CHOSEN length
+  // becomes the width, not the height, once swapped.
+  const ewLength = run(newGameContext(), `
+    for(let x=2;x<=7;x++) cmdBuildTrack(x, 1, 'rail', true); // 6-cell horizontal run
+    cmdBuildBuilding('depot', 2, 2, 'large', 'ew', 'ore', 6);
+    const d = [...world.entities.values()].find(e=>e.type==='depot');
+    return d && {w:d.footprint.w, h:d.footprint.h};
+  `);
+  check('an "ew" Depot with length 6 is 6 wide, 2 tall (length becomes the swapped axis)',
+    ewLength && ewLength.w===6 && ewLength.h===2, JSON.stringify(ewLength));
+});
+
 console.log(failures===0 ? `\nAll checks passed.` : `\n${failures} check(s) FAILED.`);
 process.exit(failures===0 ? 0 : 1);

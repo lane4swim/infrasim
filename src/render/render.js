@@ -314,7 +314,7 @@ function render(){
     ctx.strokeStyle = getCss('--teal');
     ctx.lineWidth = 2;
     if(currentTool==='mine' || currentTool==='mill' || currentTool==='town' || currentTool==='station' || currentTool==='depot' || currentTool==='trainyard'){
-      const fp = currentTool==='depot' ? effectiveFootprint('depot', BUILDING_DEFS.depot, currentDepotOrientation()) : BUILDING_DEFS[currentTool].footprint;
+      const fp = currentTool==='depot' ? effectiveFootprint('depot', BUILDING_DEFS.depot, currentDepotOrientation(), currentDepotLength()) : BUILDING_DEFS[currentTool].footprint;
       ctx.strokeRect(hoverCell.x*CELL+1, hoverCell.y*CELL+1, fp.w*CELL-2, fp.h*CELL-2);
     } else if(currentTool==='road' || currentTool==='track' || currentTool==='bulktruck' || currentTool==='flatbedtruck' || currentTool==='assembletrain'){
       ctx.strokeRect(hoverCell.x*CELL+1, hoverCell.y*CELL+1, CELL-2, CELL-2);

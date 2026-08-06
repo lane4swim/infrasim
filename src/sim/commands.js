@@ -153,9 +153,16 @@ function cmdToggleOneWay(x1,y1,x2,y2,layer){
   }
   if(LAYER_GRADE_KIND[layer][1]==='rail') computeRailBlocks();
 }
-function cmdBuildBuilding(type, x, y, tier, facing, resource){
+function cmdBuildBuilding(type, x, y, tier, facing, resource, length){
   const def = BUILDING_DEFS[type];
-  const {w,h} = effectiveFootprint(type, def, facing);
+  if(type==='depot'){
+    if(length===undefined) length = def.footprint.h; // no explicit choice made -> the pack's own canonical default
+    if(def.platformLengths && !def.platformLengths.includes(length)){
+      logEvent(`${length} is not a valid platform length for ${def.label}.`, 'warn');
+      return;
+    }
+  }
+  const {w,h} = effectiveFootprint(type, def, facing, length);
   for(let dx=0; dx<w; dx++){
     for(let dy=0; dy<h; dy++){
       const cx = x+dx, cy = y+dy;
@@ -193,7 +200,7 @@ function cmdBuildBuilding(type, x, y, tier, facing, resource){
   const cost = def.buildCost + def.tiers[tier].add;
   if(!canAfford(cost)){ logEvent('Insufficient funds for construction.', 'warn'); return; }
   charge(cost, `${def.label} (${tier})`);
-  createBuilding(type, x, y, tier, facing, resource);
+  createBuilding(type, x, y, tier, facing, resource, length);
 }
 function cmdDemolish(x,y,layer){
   layer = layer || 'ground';

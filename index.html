@@ -178,17 +178,26 @@
       <option value="ns">Platform runs North-South</option>
       <option value="ew">Platform runs East-West</option>
     </select>
+    <select id="depotLengthSelect">
+      <option value="2">Platform length: 2 tiles</option>
+      <option value="4" selected>Platform length: 4 tiles</option>
+      <option value="6">Platform length: 6 tiles</option>
+      <option value="8">Platform length: 8 tiles</option>
+    </select>
     <select id="depotResourceSelect">
       <option value="ore">Depot handles: Ore</option>
       <option value="steel">Depot handles: Steel</option>
     </select>
     <div class="hint-text">A Rail Depot is a real loading platform: it must run alongside a
       straight, unbroken stretch of track along one of its long sides
-      (highlighted in amber once built) — pick which way it's oriented
-      above. It works like a truck Station otherwise: build it touching an
-      industry (or a chain of Stations reaching one) and trains load/unload
-      that industry's own stock directly, same as a truck would. Left
-      unlinked, a Depot instead buffers its own real storage. A longer
+      (highlighted in amber once built) — pick which way it's oriented and
+      how long it is above; a longer platform needs a longer stretch of
+      track waiting for it, but lets more of a long train dock (and load/
+      unload) at once. It works like a truck Station otherwise: build it
+      touching an industry (or a chain of Stations reaching one) and
+      trains load/unload that industry's own stock directly, same as a
+      truck would. Left unlinked, a Depot instead buffers its own real
+      storage. A longer
       train docked alongside more of the platform loads/unloads faster —
       transfer scales with how much of the train's own length actually
       overlaps the platform. Build a Station touching it for road access,
@@ -311,7 +320,7 @@
     "mill":    { "buildCost": 220, "tiers": { "small": { "cap": 20, "add": 0 }, "large": { "cap": 50, "add": 120 } }, "color": "#8a4a3a", "label": "Steel Mill", "footprint": { "w": 3, "h": 2 }, "recipe": "smelt_steel" },
     "town":    { "buildCost": 100, "tiers": { "small": { "cap": 20, "add": 0, "population": 50 }, "large": { "cap": 50, "add": 80, "population": 150 } }, "color": "#3a6ea5", "label": "Town", "footprint": { "w": 3, "h": 2 } },
     "station": { "buildCost": 60,  "tiers": { "small": { "cap": 0, "add": 0 }, "large": { "cap": 0, "add": 0 } }, "color": "#c9a227", "label": "Station", "footprint": { "w": 1, "h": 1 }, "transferRate": 4 },
-    "depot":   { "buildCost": 300, "tiers": { "small": { "cap": 30, "add": 0 }, "large": { "cap": 80, "add": 150 } }, "color": "#6b5b95", "label": "Rail Depot", "footprint": { "w": 2, "h": 4 }, "transferRate": 4 },
+    "depot":   { "buildCost": 300, "tiers": { "small": { "cap": 30, "add": 0 }, "large": { "cap": 80, "add": 150 } }, "color": "#6b5b95", "label": "Rail Depot", "footprint": { "w": 2, "h": 4 }, "transferRate": 4, "platformLengths": [2, 4, 6, 8] },
     "trainyard": { "buildCost": 400, "tiers": { "small": { "cap": 0, "add": 0 }, "large": { "cap": 0, "add": 0 } }, "color": "#4a4a6a", "label": "Train Yard", "footprint": { "w": 3, "h": 2 } }
   },
   "vehicles": {

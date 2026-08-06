@@ -1526,3 +1526,74 @@ end-to-end in a real browser: the content pack's new fields load
 correctly, and a full Mine → truck → Station → Town delivery still
 completes through the new `effectiveTransferRate` path with no console
 errors.
+
+---
+
+# Addendum — Configurable Depot platform length
+
+The parallel-track Depot addendum above gave a Depot a fixed 2x4
+footprint (or 4x2, rotated). A real platform isn't one fixed length,
+though — some sidings are short, some are long enough for a whole train —
+so the platform's length is now a build-time choice, validated against
+however much parallel track is actually there.
+
+## Design
+
+- **`platformLengths`** (new, optional content-pack field on `depot`):
+  `[2, 4, 6, 8]` in the shipped pack — the set of lengths a player can
+  pick from a new "Platform length" dropdown. Optional, not required,
+  same reasoning as `transferRate`'s building-side field: only Depot ever
+  reads it, so `validateContentPack` only checks its *shape* when present
+  (a non-empty array of positive integers), rather than forcing every
+  building type to define one.
+- **Threading the choice through**: `effectiveFootprint(type, def,
+  orientation, length)` (extended, `entities.js`) now takes a `length` —
+  when given, it replaces the content pack's own `footprint.h` as the
+  platform's long-axis size, swapped into `w` instead for `'ew'`
+  orientation exactly like before. Omitted (every pre-existing call site,
+  and every non-Depot building), it falls back to `def.footprint.h` —
+  the same 4 the game always used — so this is fully backward compatible:
+  not one existing test needed touching.
+- **Validation is still the command layer's job, not the UI's**: the
+  dropdown only ever offers valid choices, but `cmdBuildBuilding` (the
+  Worker-side authority — §7) independently checks the chosen `length`
+  against `platformLengths` before building, rejecting anything else —
+  the same posture `cmdAssembleTrain` already takes toward an invalid
+  engine/wagon count. A valid length with too little actual track behind
+  it is still rejected too, by the existing `depotPlatformCells` check,
+  unchanged.
+
+## What changed
+
+- **`index.html`**: `depot`'s content-pack entry gains
+  `"platformLengths": [2, 4, 6, 8]`; a new "Platform length" dropdown
+  next to the orientation one; updated hint text.
+- **`loader.js`**: `validateContentPack` shape-checks `platformLengths`
+  when present.
+- **`entities.js`**: `effectiveFootprint` and `createBuilding` gain a
+  `length` parameter.
+- **`commands.js`**: `cmdBuildBuilding` gains a `length` parameter,
+  defaults it to the pack's own `footprint.h` when omitted, and rejects
+  an explicit choice not present in `platformLengths`.
+- **`render.js`**: the build-tool ghost preview reads the selected length
+  too, so the hover outline matches what will actually get built.
+- **`ui.js`**: `currentDepotLength()`; the Depot build command and the
+  tool hint text both use it.
+
+## Testing
+
+New Test 6 in `test/test-depot-platform.js` (9 checks): each of the 4
+allowed lengths builds with exactly that footprint/platform size; an
+out-of-range length (3) is rejected, naming the bad value; a valid
+length is still rejected against a real track run shorter than it;
+omitting length entirely falls back to the canonical default (4); and
+length combines correctly with `'ew'` orientation (the chosen length
+becomes the swapped width, not the height). All 4 test files pass — the
+other 3 needed zero changes, since every pre-existing Depot placement
+omits `length` and gets the same default footprint it always did.
+Verified end-to-end in a real browser: the tool hint updates live as the
+length dropdown changes, an 8-tile Depot builds and renders correctly
+against a real 8-cell siding with the amber platform marker on the right
+side, and an invalid length sent directly via `postCommand` (bypassing
+the dropdown, which only ever offers valid choices) is rejected by the
+command layer with a clear log message, with no console errors.

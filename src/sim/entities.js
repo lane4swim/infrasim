@@ -45,16 +45,24 @@ function getVehicleStats(v){ return isTrain(v.id) ? getTrainStats(v.consist) : g
 // (see depotPlatformCells in pathfinding.js for why only the pair of sides
 // PARALLEL to the long axis can ever be its rail side); building it 'ew'
 // instead just swaps w/h, so the same footprint data serves either
-// orientation with no second content-pack entry. Every other building type
-// is unaffected — this is a no-op for them, returning the def's footprint
-// verbatim. Shared between createBuilding (below) and cmdBuildBuilding's
-// pre-creation bounds/overlap check (commands.js), so both agree on what
-// "this building's footprint" actually means before and after it exists.
-function effectiveFootprint(type, def, orientation){
-  if(type==='depot' && orientation==='ew') return {w:def.footprint.h, h:def.footprint.w};
-  return def.footprint;
+// orientation with no second content-pack entry. `length`, if given,
+// replaces the content pack's own `footprint.h` as the platform's long-axis
+// size (§ Depot configurable platform length) — a player picks however
+// long a platform they actually need, up to whatever `platformLengths`
+// the content pack allows; omitted (every other building type, or a
+// depot built by code that doesn't care), it falls back to the pack's own
+// `footprint.h`, so nothing that predates this parameter needs to change.
+// Every other building type is unaffected — this is a no-op for them,
+// returning the def's footprint verbatim. Shared between createBuilding
+// (below) and cmdBuildBuilding's pre-creation bounds/overlap check
+// (commands.js), so both agree on what "this building's footprint"
+// actually means before and after it exists.
+function effectiveFootprint(type, def, orientation, length){
+  if(type!=='depot') return def.footprint;
+  const h = length || def.footprint.h;
+  return orientation==='ew' ? {w:h, h:def.footprint.w} : {w:def.footprint.w, h};
 }
-function createBuilding(type, x, y, tier, facing, resource){
+function createBuilding(type, x, y, tier, facing, resource, length){
   const def = BUILDING_DEFS[type];
   const id = world.nextId++;
   addComponent(id, 'Identity', {kind:'building', type});
@@ -63,7 +71,7 @@ function createBuilding(type, x, y, tier, facing, resource){
   // road-facing side of their own (a Station touching one handles that,
   // same as any other industry), so the slot Station already uses this
   // parameter for was free to repurpose rather than adding a new one.
-  const fp = effectiveFootprint(type, def, facing);
+  const fp = effectiveFootprint(type, def, facing, length);
   addComponent(id, 'Footprint', {w:fp.w, h:fp.h}); // cells occupied, anchored at (x,y)
   if(type==='station'){
     addComponent(id, 'Facing', facing); // which single side can ever touch a road (Stations only)

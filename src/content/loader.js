@@ -88,6 +88,11 @@ function validateContentPack(pack){
     need(b.tiers && typeof b.tiers==='object', `building "${id}" is missing a tiers object`);
     need(b.footprint && typeof b.footprint.w==='number' && typeof b.footprint.h==='number', `building "${id}" is missing a valid footprint {w,h}`);
     if(b.recipe!==undefined) need(pack.recipes[b.recipe], `building "${id}" references undefined recipe "${b.recipe}"`);
+    // Optional — only a Rail Depot's build-time length choice ever reads
+    // this (§ Depot configurable platform length); every other building
+    // type just doesn't define it, same as `recipe` above.
+    if(b.platformLengths!==undefined) need(Array.isArray(b.platformLengths) && b.platformLengths.length>0 && b.platformLengths.every(n=>Number.isInteger(n) && n>0),
+      `building "${id}" has an invalid platformLengths — must be a nonempty array of positive integers`);
   }
   for(const [id, v] of Object.entries(pack.vehicles)){
     need(typeof v.purchaseCost==='number', `vehicle "${id}" is missing a numeric purchaseCost`);
