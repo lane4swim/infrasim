@@ -26,6 +26,7 @@ function getTrainStats(consist){
     sellFraction: engine.sellFraction,
     capacity: wagon.capacity * n,
     resource: wagon.resource,
+    transferRate: wagon.transferRate, // per-coupling rate, not summed across wagonCount — see effectiveTransferRate in systems.js
     maxSpeedTilesPerTick: engine.maxSpeedTilesPerTick,
     massEmpty: engine.massEmpty + wagon.massEmpty * n,
     engineForce: engine.engineForce,
@@ -141,7 +142,7 @@ function createTruck(x,y,vehicleType){
   addComponent(id, 'Movement', randomizedMovement(def));
   addComponent(id, 'Status', {state:'idle'}); // idle|moving|loading|unloading|blocked
   addComponent(id, 'Orders', {list:[], index:0}); // [{nodeId, action, resource}] — player authored, §6.6
-  addComponent(id, 'Cargo', {amount:0, capacity:def.capacity, resource:def.resource}); // fixed for this truck's life
+  addComponent(id, 'Cargo', {amount:0, capacity:def.capacity, resource:def.resource, transferRate:def.transferRate}); // fixed for this truck's life
   const handle = makeEntityHandle(id);
   world.entities.set(id, handle);
   return handle;
@@ -160,7 +161,7 @@ function createTrain(x,y,engineType,wagonType,wagonCount){
   addComponent(id, 'Movement', randomizedMovement(stats));
   addComponent(id, 'Status', {state:'idle'});
   addComponent(id, 'Orders', {list:[], index:0});
-  addComponent(id, 'Cargo', {amount:0, capacity:stats.capacity, resource:stats.resource}); // fixed by wagon type, like a truck
+  addComponent(id, 'Cargo', {amount:0, capacity:stats.capacity, resource:stats.resource, transferRate:stats.transferRate}); // fixed by wagon type, like a truck
   const handle = makeEntityHandle(id);
   world.entities.set(id, handle);
   return handle;

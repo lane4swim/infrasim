@@ -96,6 +96,7 @@ function validateContentPack(pack){
     need(typeof v.brakeForce==='number', `vehicle "${id}" is missing a numeric brakeForce`);
     need(v.brakeForce > v.engineForce, `vehicle "${id}" has brakeForce (${v.brakeForce}) <= engineForce (${v.engineForce}) — decel must exceed accel at any mass`);
     need(pack.resources[v.resource], `vehicle "${id}" references undefined resource "${v.resource}"`);
+    need(typeof v.transferRate==='number', `vehicle "${id}" is missing a numeric transferRate`);
   }
   for(const [id, t] of Object.entries(pack.rail)){
     need(typeof t.costPerTile==='number', `rail def "${id}" is missing a numeric costPerTile`);
@@ -117,6 +118,7 @@ function validateContentPack(pack){
     need(pack.resources[w.resource], `wagon "${id}" references undefined resource "${w.resource}"`);
     need(typeof w.massEmpty==='number', `wagon "${id}" is missing a numeric massEmpty`);
     need(typeof w.lengthTiles==='number', `wagon "${id}" is missing a numeric lengthTiles`);
+    need(typeof w.transferRate==='number', `wagon "${id}" is missing a numeric transferRate`);
   }
 }
 
@@ -130,7 +132,7 @@ function validateContentPack(pack){
 // happens on the first 'init' message (see worker-client.js's protocol
 // comment for why that has to be a separate later step).
 let CONTENT_PACK, RESOURCES, RESOURCE, RECIPES, BUILDING_DEFS, VEHICLE_DEFS, RAIL_DEFS, ENGINE_DEFS, WAGON_DEFS;
-let INITIAL_TREASURY, ROAD_COST_PER_TILE, ELEVATED_COST_MULTIPLIER, RAMP_COST, TRANSFER_RATE, TICK_MS, CONSUMPTION_PER_CAPITA;
+let INITIAL_TREASURY, ROAD_COST_PER_TILE, ELEVATED_COST_MULTIPLIER, RAMP_COST, DEFAULT_TRANSFER_RATE, TICK_MS, CONSUMPTION_PER_CAPITA;
 
 function initContentPack(pack){
   validateContentPack(pack);
@@ -148,7 +150,17 @@ function initContentPack(pack){
   ROAD_COST_PER_TILE = 10;
   ELEVATED_COST_MULTIPLIER = 2; // bridges cost more per tile (§16.2-style layer multiplier)
   RAMP_COST = 40;               // one-time cost to link ground<->elevated at a single cell
-  TRANSFER_RATE = 4;           // units moved per tick during load/unload
+  // Load/unload rate is now a per-vehicle (VEHICLE_DEFS/WAGON_DEFS
+  // transferRate) and per-Station/Depot (BUILDING_DEFS transferRate) content
+  // field — the effective rate is whichever is slower (§ adjustable transfer
+  // rate), modeling a real bottleneck: a vehicle can't unload faster than
+  // its own doors/pumps allow, and a dock can't load faster than its own
+  // crane/conveyor allows. transferRate is REQUIRED on every vehicle/wagon
+  // (validateContentPack) but optional on buildings — only Station and
+  // Depot ever actually use it, so forcing it onto Mine/Mill/Town/Train
+  // Yard would be a meaningless field on types nothing ever docks at; this
+  // is the fallback for a Station/Depot that omits it.
+  DEFAULT_TRANSFER_RATE = 4;
   TICK_MS = 300;               // fixed simulation timestep
   CONSUMPTION_PER_CAPITA = 0.02; // resource drained per tick, per resident (§16-style: data-defined rate)
 }

@@ -64,6 +64,22 @@ function advanceOrder(vehicle){
   vehicle.ordersIndex = (vehicle.ordersIndex + 1) % vehicle.orders.length;
 }
 
+// A vehicle's own load/unload rate (VEHICLE_DEFS/WAGON_DEFS transferRate,
+// fixed at creation on its Cargo component) and the Station/Depot it's
+// docked at (BUILDING_DEFS transferRate, optional — Mine/Mill/Town/Train
+// Yard never define one since nothing ever docks at them for this purpose)
+// are two independent real-world bottlenecks — a vehicle can't unload
+// faster than its own doors/pumps allow, and a dock can't load faster than
+// its own crane/conveyor allows — so the effective rate is whichever is
+// slower, not either one alone. `building` here is always the Station a
+// truck is docked at or the Depot a train is docked at (never Mine/Mill/
+// Town directly — see findLinkedIndustry), so DEFAULT_TRANSFER_RATE is
+// only ever reached for a Station/Depot that omits the optional field.
+function effectiveTransferRate(vehicle, building){
+  const buildingRate = BUILDING_DEFS[building.type].transferRate ?? DEFAULT_TRANSFER_RATE;
+  return Math.min(vehicle.transferRate, buildingRate);
+}
+
 // ---------------------------------------------------------------------
 // SHARED MOVEMENT ENGINE — the physics, queueing, and cell-crossing rules
 // below are identical for road vehicles and trains (§2.4/§2.7 test 4: reuse
@@ -277,7 +293,7 @@ function tickVehicles(){
       if(industry.outStock <= 0){ v.state='blocked'; continue; } // wait: source empty
       const room = v.capacity - v.cargoAmount;
       if(room <= 0){ advanceOrder(v); v.state='idle'; continue; } // full, move on
-      const amt = Math.min(TRANSFER_RATE, industry.outStock, room);
+      const amt = Math.min(effectiveTransferRate(v, target), industry.outStock, room);
       industry.outStock -= amt;
       v.cargoAmount += amt;
       if(v.cargoAmount >= v.capacity){ advanceOrder(v); v.state='idle'; }
@@ -292,7 +308,7 @@ function tickVehicles(){
       if(v.cargoAmount<=0){ advanceOrder(v); v.state='idle'; continue; }
       const room = industry.inCap - industry.inStock;
       if(room <= 0){ v.state='blocked'; continue; } // wait: destination full (§6.6)
-      const amt = Math.min(TRANSFER_RATE, v.cargoAmount, room);
+      const amt = Math.min(effectiveTransferRate(v, target), v.cargoAmount, room);
       industry.inStock += amt;
       v.cargoAmount -= amt;
       if(industry.consumer){
@@ -452,7 +468,7 @@ function tickTrainMovement(){
       if(source.outStock <= 0){ v.state='blocked'; continue; }
       const room = v.capacity - v.cargoAmount;
       if(room <= 0){ advanceOrder(v); v.state='idle'; continue; }
-      const rate = TRANSFER_RATE * dockedPlatformCellCount(v, target);
+      const rate = effectiveTransferRate(v, target) * dockedPlatformCellCount(v, target);
       const amt = Math.min(rate, source.outStock, room);
       source.outStock -= amt;
       v.cargoAmount += amt;
@@ -466,7 +482,7 @@ function tickTrainMovement(){
       if(v.cargoAmount<=0){ advanceOrder(v); v.state='idle'; continue; }
       const room = dest.inCap - dest.inStock;
       if(room <= 0){ v.state='blocked'; continue; }
-      const rate = TRANSFER_RATE * dockedPlatformCellCount(v, target);
+      const rate = effectiveTransferRate(v, target) * dockedPlatformCellCount(v, target);
       const amt = Math.min(rate, v.cargoAmount, room);
       dest.inStock += amt;
       v.cargoAmount -= amt;

@@ -98,33 +98,34 @@ section('Test 3 — a longer train docked alongside more of the platform loads f
 
   // Drive it until the train has actually docked (state === 'loading')
   // with its full body alongside the platform, then measure exactly how
-  // much cargo one further tick adds — this is TRANSFER_RATE multiplied by
-  // however many of the train's own cells overlap the platform right now.
-  let dockedCellCount = null, perTickGain = null;
+  // much cargo one further tick adds — this is the effective transfer
+  // rate (min of the train's own transferRate and the Depot's) multiplied
+  // by however many of the train's own cells overlap the platform right now.
+  let dockedCellCount = null, perTickGain = null, baseRate = null;
   for(let i=0;i<200;i++){
     run(ctx, `simTick();`);
     const s = run(ctx, `
       const t = world.entities.get(${ids.trainId});
       const d = world.entities.get(${ids.depotId});
-      return {state: t.state, docked: dockedPlatformCellCount(t, d), cargo: t.cargoAmount};
+      return {state: t.state, docked: dockedPlatformCellCount(t, d), cargo: t.cargoAmount, rate: effectiveTransferRate(t, d)};
     `);
     if(s.state === 'loading' && s.docked > 1){
       const before = s.cargo;
       run(ctx, `simTick();`);
       const after = run(ctx, `return world.entities.get(${ids.trainId}).cargoAmount;`);
       dockedCellCount = s.docked;
+      baseRate = s.rate;
       perTickGain = after - before;
       break;
     }
   }
-  const transferRate = run(ctx, `return TRANSFER_RATE;`);
   check('the train ends up docked with more than 1 of its own cells alongside the platform', dockedCellCount !== null && dockedCellCount > 1,
     `dockedCellCount=${dockedCellCount}`);
-  check('one tick of loading transfers dockedCellCount * TRANSFER_RATE, not a flat TRANSFER_RATE',
-    perTickGain !== null && Math.abs(perTickGain - dockedCellCount * transferRate) < 1e-9,
-    `perTickGain=${perTickGain} dockedCellCount=${dockedCellCount} TRANSFER_RATE=${transferRate}`);
-  check('the multi-cell rate is genuinely faster than the old flat single-cell rate would have been',
-    perTickGain !== null && perTickGain > transferRate, `perTickGain=${perTickGain} TRANSFER_RATE=${transferRate}`);
+  check('one tick of loading transfers dockedCellCount * effectiveTransferRate, not a flat rate',
+    perTickGain !== null && Math.abs(perTickGain - dockedCellCount * baseRate) < 1e-9,
+    `perTickGain=${perTickGain} dockedCellCount=${dockedCellCount} baseRate=${baseRate}`);
+  check('the multi-cell rate is genuinely faster than the single-cell base rate would have been',
+    perTickGain !== null && perTickGain > baseRate, `perTickGain=${perTickGain} baseRate=${baseRate}`);
 });
 
 section('Test 4 — a docked train stays put on re-evaluation instead of shuttling across the platform', () => {
@@ -169,6 +170,40 @@ section('Test 4 — a docked train stays put on re-evaluation instead of shuttli
   check('a full, already-docked train never re-enters "moving" just from re-evaluating its own repeating order',
     !sawMovingAfterFull);
   check('the train settles into a stable idle/loading state, not oscillating', settledStateStreak > 50, `streak=${settledStateStreak}`);
+});
+
+section('Test 5 — effective transfer rate is the bottleneck: min(vehicle, Station/Depot)', () => {
+  // Truck <-> Station: a slow truck through a fast Station is capped by the
+  // truck; a fast truck through a slow Station is capped by the Station.
+  function truckRate(truckTransferRate, stationTransferRate){
+    const ctx = newGameContext();
+    return run(ctx, `
+      VEHICLE_DEFS.bulk.transferRate = ${truckTransferRate};
+      BUILDING_DEFS.station.transferRate = ${stationTransferRate};
+      cmdBuildBuilding('mine', 0, 0, 'large');
+      cmdBuildBuilding('station', 2, 1, 'small', 'S', 'ore');
+      cmdBuildRoad(2, 2, 'ground', true);
+      cmdPurchaseVehicle(2, 2, 'bulk');
+      const truck = [...world.entities.values()].find(e=>e.kind==='vehicle');
+      const station = [...world.entities.values()].find(e=>e.type==='station');
+      return effectiveTransferRate(truck, station);
+    `);
+  }
+  check('a slow truck through a fast Station is capped by the truck', truckRate(2, 10) === 2);
+  check('a fast truck through a slow Station is capped by the Station', truckRate(10, 2) === 2);
+  check('equal rates pass through unchanged', truckRate(5, 5) === 5);
+
+  // A Depot that omits transferRate entirely falls back to DEFAULT_TRANSFER_RATE.
+  const fallback = run(newGameContext(), `
+    delete BUILDING_DEFS.depot.transferRate;
+    for(let y=0;y<=3;y++) cmdBuildTrack(4,y,'rail',true);
+    cmdBuildBuilding('depot', 2, 0, 'large', 'ns', 'ore');
+    const depot = [...world.entities.values()].find(e=>e.type==='depot');
+    const train = createTrain(4, 0, 'diesel', 'ore_wagon', 1);
+    return {rate: effectiveTransferRate(train, depot), defaultRate: DEFAULT_TRANSFER_RATE, trainOwnRate: train.transferRate};
+  `);
+  check('a Depot with no transferRate field falls back to DEFAULT_TRANSFER_RATE',
+    fallback.rate === Math.min(fallback.trainOwnRate, fallback.defaultRate), JSON.stringify(fallback));
 });
 
 console.log(failures===0 ? `\nAll checks passed.` : `\n${failures} check(s) FAILED.`);

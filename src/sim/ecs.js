@@ -68,6 +68,7 @@ const FIELD_MAP = {
   state:['Status','state'],
   orders:['Orders','list'], ordersIndex:['Orders','index'],
   cargoAmount:['Cargo','amount'], capacity:['Cargo','capacity'], cargoResource:['Cargo','resource'],
+  transferRate:['Cargo','transferRate'], // this vehicle's own load/unload rate — see effectiveTransferRate in systems.js
   consist:['Consist', null], // {engineType,wagonType,wagonCount} — trains only, see getTrainStats
 };
 // Storage is a resource-typed pair of slots — {out, in} — rather than one

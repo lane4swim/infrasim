@@ -75,6 +75,14 @@ section('Test 2 — validateContentPack rejects deliberately-broken fixtures', (
   expectThrow('a wagon referencing an undefined resource is rejected',
     pack => { pack.wagons.ore_wagon.resource = 'unobtanium'; },
     'unobtanium');
+
+  expectThrow('a vehicle missing transferRate is rejected',
+    pack => { delete pack.vehicles.bulk.transferRate; },
+    'transferRate');
+
+  expectThrow('a wagon missing transferRate is rejected',
+    pack => { delete pack.wagons.ore_wagon.transferRate; },
+    'transferRate');
 });
 
 // §3.3.3 — a second, small content pack (one new resource + one new
@@ -94,12 +102,12 @@ section('Test 3 — a modder-authored content pack works with zero code changes'
   moddedPack.vehicles.coaltruck = {
     purchaseCost:210, runningCostPerTick:1, capacity:10, sellFraction:0.4,
     label:'Coal Truck', resource:'coal', color:'#444444',
-    maxSpeedTilesPerTick:1.2, massEmpty:5, engineForce:0.6, brakeForce:1.8, lengthTiles:1.3,
+    maxSpeedTilesPerTick:1.2, massEmpty:5, engineForce:0.6, brakeForce:1.8, lengthTiles:1.3, transferRate:4,
   };
   // A new wagon type too — the Train Yard content sections should be just
   // as extensible as the older ones, not a special case.
   moddedPack.wagons.coal_wagon = {
-    purchaseCost:140, capacity:18, resource:'coal', label:'Coal Wagon', color:'#333333', massEmpty:6, lengthTiles:2.5,
+    purchaseCost:140, capacity:18, resource:'coal', label:'Coal Wagon', color:'#333333', massEmpty:6, lengthTiles:2.5, transferRate:4,
   };
 
   const ctx = newGameContext({contentPackJson: JSON.stringify(moddedPack)});

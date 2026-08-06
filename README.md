@@ -1439,3 +1439,90 @@ parallel-track message, a valid build against a real siding charges
 correctly, the inspector shows the platform length, and an East-West
 oriented Depot renders with the swapped 4x2 footprint and the amber
 platform marker on the correct side, with no console errors.
+
+---
+
+# Addendum — Transfer rate is now a content-pack field, not a constant
+
+Loading/unloading used to run at one hardcoded `TRANSFER_RATE = 4`
+(`src/content/loader.js`) shared by every vehicle and every Station/Depot
+in the game, with no way for a modder to make e.g. a fast pneumatic
+unloader or a slow manual dock without editing the JS. It's now a
+per-vehicle and per-Station/Depot content-pack field, with the effective
+rate being whichever side is the real bottleneck.
+
+## Design
+
+- **Two independent numbers, not one.** `VEHICLE_DEFS`/`WAGON_DEFS` each
+  get their own `transferRate` (how fast THIS vehicle's own doors/pumps
+  can move cargo), and `BUILDING_DEFS.station`/`BUILDING_DEFS.depot` get
+  their own `transferRate` (how fast THIS dock's own crane/conveyor can).
+  `effectiveTransferRate(vehicle, building)` (new, in `systems.js`) is
+  just `Math.min` of the two — a real bottleneck model: a vehicle can't
+  unload faster than its own capability allows, and a dock can't load
+  faster than its own equipment allows, so whichever is slower sets the
+  pace, the same way a real supply chain's throughput is capped by its
+  slowest stage.
+- **Required vs. optional.** `transferRate` is a **required** numeric
+  field on every vehicle and wagon (`validateContentPack`), alongside the
+  other required physical stats (`capacity`, `engineForce`, ...) — the
+  same category of "this vehicle's own numbers." It's **optional** on
+  buildings: only Station and Depot ever actually get read this way (a
+  vehicle only ever docks at one of those two — `findLinkedIndustry`
+  forwards through them to whatever industry they're touching, but the
+  RATE is the dock's own throughput, not the industry's), so forcing a
+  meaningless `transferRate` onto Mine/Mill/Town/Train Yard would just be
+  clutter. `DEFAULT_TRANSFER_RATE = 4` (loader.js) is what a Station or
+  Depot that omits the field falls back to.
+- **Depot's platform bonus stacks on top, unchanged**: `effectiveTransferRate(...)
+  * dockedPlatformCellCount(...)` — the min-of-two bottleneck sets the
+  rate per loading point, and the platform-cell multiplier (§ Depot
+  parallel-track) still says how many of those points are active at once
+  for a given train. Neither replaces the other.
+- **Where it lives on an entity**: fixed at creation on the `Cargo`
+  component (`transferRate`, alongside the already-fixed `capacity`/
+  `resource`) — same reasoning as those: a vehicle's own numbers don't
+  change over its life, so they're set once, not re-derived from
+  `VEHICLE_DEFS`/`getTrainStats` every tick. For a train, `getTrainStats`
+  reads the WAGON's `transferRate` (a per-coupling throughput), not
+  multiplied by `wagonCount` — capacity scales with wagon count because
+  more wagons genuinely hold more cargo, but transfer throughput scaling
+  with train length is exactly what the Depot platform-cell multiplier
+  already models separately; summing both would double-count the same effect.
+
+## What changed
+
+- **`index.html`**: `"transferRate": 4` added to `vehicles.bulk`,
+  `vehicles.flatbed`, `wagons.ore_wagon`, `wagons.steel_wagon`,
+  `buildings.station`, `buildings.depot` — chosen so `min(4,4)=4`
+  everywhere, matching the old flat rate exactly; existing game balance
+  is unchanged unless these values are edited.
+- **`loader.js`**: `validateContentPack` requires `transferRate` on every
+  vehicle/wagon; the old flat `TRANSFER_RATE` constant is gone, replaced
+  by the `DEFAULT_TRANSFER_RATE` building fallback.
+- **`ecs.js`**: `FIELD_MAP` gains `transferRate` -> `Cargo.transferRate`.
+- **`entities.js`**: `createTruck` seeds `Cargo.transferRate` from
+  `VEHICLE_DEFS`; `getTrainStats` returns the wagon's `transferRate`;
+  `createTrain` seeds it from there.
+- **`systems.js`**: new `effectiveTransferRate(vehicle, building)`; all
+  four load/unload call sites (truck loading/unloading at a Station,
+  train loading/unloading at a Depot) use it instead of the old flat
+  constant.
+
+## Testing
+
+New Test 5 in `test/test-depot-platform.js` (4 checks): a slow
+truck/fast Station is capped by the truck, a fast truck/slow Station is
+capped by the Station, equal rates pass through unchanged, and a Depot
+missing `transferRate` falls back to `DEFAULT_TRANSFER_RATE` — all
+verified by reading `effectiveTransferRate` directly, not just inferring
+it from simulated stock changes. `test-content-pack.js` gained two new
+rejection-case checks (a vehicle or wagon missing `transferRate` is
+rejected) and its modder-pack fixture (Test 3) now includes the field on
+its new vehicle/wagon types. All 4 test files pass unchanged otherwise —
+the chosen default values reproduce the old flat rate exactly, so no
+existing test needed its expected numbers touched. Also verified
+end-to-end in a real browser: the content pack's new fields load
+correctly, and a full Mine → truck → Station → Town delivery still
+completes through the new `effectiveTransferRate` path with no console
+errors.
