@@ -612,6 +612,20 @@ which is also the seam a modding UI could hook into later.
   with an older recipe/resource set can be migrated or flagged incompatible
   gracefully rather than crashing.
 
+> **Validated in Phase 2 (Persistence).** Implemented the export/import
+> half of this section exactly as described: a save is the whole world
+> (grid, ECS component tables, treasury, tick, rail-block state) as plain
+> JSON, downloaded/re-imported as a file, versioned against the content
+> pack it was made with (a mismatch warns rather than refuses to load,
+> consistent with a content pack always being just data — §3.3.3/§9). Both
+> directions round-trip through the simulation Worker (§8), not the main
+> thread, for the same reason every world mutation already does — see the
+> README's "Phase 2 — Persistence" addendum for the message protocol and
+> `sim/persistence.js`'s exact serialize/deserialize shape. The
+> IndexedDB auto-save half is NOT yet implemented — only the explicit
+> export-to-file/import-from-file path exists so far; auto-save remains
+> future work.
+
 ---
 
 ## 13. Extensibility Summary

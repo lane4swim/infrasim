@@ -7,9 +7,15 @@
 //   -> {type:'init', contentPack}       sent once, right after construction
 //   -> {type:'command', name, args}     one per player action (was a direct
 //                                        cmdXxx(...) call pre-Worker-split)
+//   -> {type:'save'}                    request a serialized copy of the
+//                                        whole world (§12 — see persistence.js)
+//   -> {type:'load', data}              replace the whole world with a
+//                                        previously saved/loaded data blob
 //   <- {type:'snapshot', treasury, tick, grid, components, railBlocks,
 //       entityIds, logs}                sent after 'init' and after every
-//                                        command and every tick
+//                                        command, every tick, and every
+//                                        'load'
+//   <- {type:'saveData', data}          reply to 'save'
 //
 // Why a Blob-constructed Worker, not `new Worker('src/worker/....js')`:
 // a same-origin-looking relative path is rejected under file:// — every
@@ -79,6 +85,7 @@ const WORKER_SIM_URLS = [
   'src/sim/entities.js',
   'src/sim/commands.js',
   'src/sim/systems.js',
+  'src/sim/persistence.js',
 ].map(abs);
 
 const workerBootstrap = `
@@ -113,6 +120,11 @@ self.onmessage = function(evt){
     }
     self[msg.name](...args);
     postSnapshot();
+  } else if(msg.type === 'save'){
+    postMessage({type:'saveData', data: serializeWorld()});
+  } else if(msg.type === 'load'){
+    deserializeWorld(msg.data);
+    postSnapshot();
   }
 };
 `;
@@ -126,6 +138,10 @@ worker.onerror = function(e){
 
 worker.onmessage = function(evt){
   const msg = evt.data;
+  if(msg.type === 'saveData'){
+    downloadSave(msg.data);
+    return;
+  }
   if(msg.type !== 'snapshot') return;
   world.treasury = msg.treasury;
   world.tick = msg.tick;
@@ -138,6 +154,30 @@ worker.onmessage = function(evt){
 
 function postCommand(name, args){
   worker.postMessage({type:'command', name, args: args || []});
+}
+
+function postSave(){
+  worker.postMessage({type:'save'});
+}
+
+function postLoad(data){
+  worker.postMessage({type:'load', data});
+}
+
+// Triggers a browser file download of a save blob — a throwaway <a
+// download> element is the standard no-dependency way to do this without a
+// server (§12's "export to file"), and it works the same under file://
+// since it's just a Blob URL, not a network request.
+function downloadSave(data){
+  const blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `infrasim-save-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // Overrides economy.js's queue-based logEvent (the definition the Worker

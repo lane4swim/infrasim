@@ -1194,3 +1194,126 @@ generalized "a building can't sit on any kind of ground-grade
 infrastructure" check (tried building a Mine on top of rail track — the
 same rejection message a road conflict already gave) all work via actual
 clicks, with no console errors.
+
+---
+
+# Phase 2 — Persistence
+
+The last of the four Phase 2 workstreams (content-pack refactor, Worker
+split, rail, persistence — §12). Save exports the whole world to a JSON
+file; Load replaces the whole world with a previously saved one. No
+autosave/IndexedDB layer yet — just the explicit export/import §12
+already called the baseline.
+
+## Design
+
+Both directions round-trip through the Worker, not the main thread, for
+the same reason every mutation already does: the Worker holds the real
+`world`, the main thread only ever has a shadow copy rebuilt from
+snapshots. Two new message types, symmetric with the existing
+`'init'`/`'command'`/`'snapshot'` protocol:
+
+- `-> {type:'save'}` — the Worker serializes its own `world` and replies
+  `<- {type:'saveData', data}`; the main thread turns that into a file
+  download.
+- `-> {type:'load', data}` — the Worker replaces `world` wholesale from
+  `data`, then sends a normal `'snapshot'` so the main thread's shadow
+  copy (and the canvas) catch up immediately, exactly like after any
+  command.
+
+**`sim/persistence.js`** is a new file, Worker-only — loaded via
+`importScripts` (and by the test harness) exactly like `commands.js`,
+never added to `index.html`'s own `<script>` list, since serializing/
+deserializing `world` only ever needs to happen where `world` actually
+lives. It's two functions:
+
+- `serializeWorld()` walks every Map on `world` (`grid`, `railBlocks`,
+  each `components[name]`) and turns it into a plain `[key,value][]`
+  array via `.entries()` — Maps aren't JSON-safe, so this is a stricter
+  requirement than the snapshot protocol's structured-clone safety
+  (structured clone preserves Maps natively; a save file has to survive
+  an actual `JSON.stringify`/`JSON.parse` round trip, since it's written
+  to and read back from disk). `world.entities` isn't saved directly
+  either, for the same reason snapshots don't ship it — just the id list,
+  same as `entityIds` in a snapshot. Rail block state doesn't need
+  recomputing on load: each rail edge's `blockId` (in `world.grid`) and
+  `world.railBlocks`'s `occupiedBy` state are saved and restored
+  together, so they stay mutually consistent as of save time, with no
+  extra work.
+- `deserializeWorld(data)` is the exact inverse — rebuilds every Map with
+  `new Map(...)`, restores `treasury`/`tick`/`nextId` directly, and
+  rebuilds `world.entities` with `makeEntityHandle` from the saved id
+  list, same as a snapshot does on the main thread.
+
+The content pack gained an optional `"version"` field (currently `"1"`).
+A save records `contentPackVersion` alongside its own
+`saveFormatVersion`; loading a save made under a different content-pack
+version doesn't refuse to load (a modder's pack is still just data — see
+the content-pack refactor addendum — refusing outright would undercut
+that), but the UI logs a warning naming both versions, since a real
+mismatch (a resource/building/vehicle id the save references but the
+current pack lacks) will otherwise surface as a much more confusing
+failure somewhere else instead.
+
+## What changed
+
+- **`sim/persistence.js`** (new): `serializeWorld()`/`deserializeWorld()`
+  as described above.
+- **`content-pack` JSON block** (`index.html`): gained `"version": "1"`.
+  `validateContentPack` deliberately does *not* require it, so the
+  modder-pack test fixture (which has no version field) still validates —
+  a save simply records `null` for `contentPackVersion` if the pack
+  it was made against never had one.
+- **`worker-client.js`**: `WORKER_SIM_URLS` gained `persistence.js`; the
+  Worker's `self.onmessage` gained the `'save'`/`'load'` branches above;
+  the main thread gained `postSave()`/`postLoad(data)` (mirroring
+  `postCommand`) and `downloadSave(data)`, which triggers a real browser
+  file download via a throwaway `<a download>` element and a Blob URL —
+  no server involved, works the same under `file://` since nothing about
+  it is a network request.
+- **`index.html`**: a new "Game" toolbar section with Save Game / Load
+  Game buttons and a hidden `<input type="file">` for Load. These use the
+  existing `.tool-btn` visual style but deliberately aren't map tools —
+  `ui.js`'s tool-selecting click listener now targets
+  `.tool-btn[data-tool]` specifically (Save/Load buttons have no
+  `data-tool`), so clicking either one doesn't fight over `currentTool`
+  or the "active" tool highlight the way an actual tool button does.
+- **`ui.js`**: Save just calls `postSave()`. Load click opens the hidden
+  file input; its `change` handler reads the file via `FileReader`,
+  `JSON.parse`s it (rejecting non-JSON and non-save-shaped files with a
+  clear log message before ever handing them to the Worker), warns on a
+  content-pack version mismatch, clears `selected` (it may hold a handle
+  to an entity the loaded world doesn't have — the same reason a sold
+  vehicle already clears it), and calls `postLoad(data)`.
+- **`test/harness.js`**: `SIM_SCRIPT_FILES` gained `persistence.js`, same
+  position/reasoning as `commands.js`.
+
+## Testing
+
+New `test/test-persistence.js` (2 sections, 19 checks): builds a
+genuinely nontrivial world (road+rail networks, every building kind, a
+truck and a train each with real orders, 60 real `simTick()`s so
+treasury/cargo/stock/rail-block state are all nonzero) and verifies —
+
+- `serializeWorld()`'s output survives an actual `JSON.parse(JSON.
+  stringify(...))` round trip with zero data loss (not just structured-
+  clone safety, which every Map/Proxy in the codebase already had before
+  this feature — genuine JSON-safety is the new requirement here).
+- `deserializeWorld()` into a **fresh** context (deliberately not the
+  same one that saved) restores treasury, tick, `nextId`, entity count,
+  rail block count, truck cargo, and mine stock exactly.
+- Post-load continuity: `simTick()` keeps running with no error, orders
+  on both the restored truck and train survived, and pathfinding still
+  works against the restored grid — proving every system operates
+  correctly on the restored world, not just that the raw fields landed
+  right.
+- A newly created entity after load gets the exact restored `nextId`
+  (not just a non-colliding one by luck), proving `world.nextId` itself
+  round-tripped, not only the entity table.
+
+All 3 test files (`test-content-pack.js`, `test-rail.js`,
+`test-persistence.js`) pass. Also verified end-to-end in a real browser:
+built a Mine, clicked Save Game (a real file download), built something
+else, clicked Load Game and selected the saved file — the extra
+post-save building disappeared and the Mine (with its accumulated stock)
+came back exactly as saved, treasury included, with no console errors.

@@ -210,6 +210,15 @@
       truck). Pick engine/wagon/count, then click a track tile touching a
       Yard to assemble and pay for the train there.</div>
 
+    <div class="section-label">Game</div>
+    <button class="tool-btn" id="saveGameBtn"><span class="tool-swatch" style="background:var(--teal)"></span>Save Game</button>
+    <button class="tool-btn" id="loadGameBtn"><span class="tool-swatch" style="background:var(--amber)"></span>Load Game</button>
+    <input type="file" id="loadFileInput" accept="application/json" style="display:none;">
+    <div class="hint-text">Save downloads the whole world (buildings, vehicles, orders, rail
+      block state, treasury) as a JSON file (§12). Load replaces the
+      current world with a previously saved file — there's no undo, so
+      save first if you want to keep what you have.</div>
+
     <div class="section-label">About</div>
     <div class="hint-text">
       Trucks load and unload at Stations, never at a Mine, Mill, or Town
@@ -281,6 +290,7 @@
 -->
 <script type="application/json" id="content-pack">
 {
+  "version": "1",
   "resources": {
     "ore":   { "id": "ore",   "name": "Ore",   "baseValue": 6,  "unitWeight": 0.4 },
     "steel": { "id": "steel", "name": "Steel", "baseValue": 14, "unitWeight": 0.6 }

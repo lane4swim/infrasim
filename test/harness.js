@@ -43,6 +43,7 @@ const SIM_SCRIPT_FILES = [
   'src/sim/entities.js',
   'src/sim/commands.js',
   'src/sim/systems.js',
+  'src/sim/persistence.js',
 ];
 
 // Concatenates the simulation core's files (resolved relative to

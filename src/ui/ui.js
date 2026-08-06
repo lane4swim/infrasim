@@ -8,7 +8,7 @@ let oneWayFirst = null;    // first tile picked for the One-Way tool, awaiting a
 let connectFirst = null;   // first tile picked for the Connect/Disconnect tool, awaiting a second click
 let hoverCell = null;
 
-document.querySelectorAll('.tool-btn').forEach(btn=>{
+document.querySelectorAll('.tool-btn[data-tool]').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     document.querySelectorAll('.tool-btn').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
@@ -437,5 +437,46 @@ document.getElementById('layerSelect').addEventListener('change', updateRoadCost
 document.getElementById('layerSelect').addEventListener('change', updateTrackCostLabel);
 updateRoadCostLabel();
 updateTrackCostLabel();
+
+// Save/Load (§12) — Save just asks the Worker to serialize+download; Load
+// reads the chosen file, does light shape validation (real corruption still
+// gets caught by deserializeWorld/the Worker choking on it, but this catches
+// "picked the wrong file" before it ever reaches there), clears `selected`
+// since it may hold a handle to an entity the loaded world doesn't have, and
+// hands the parsed data to the Worker to replace the whole world with.
+document.getElementById('saveGameBtn').addEventListener('click', ()=>{
+  postSave();
+  logEvent('Save started — check your downloads.', null);
+});
+document.getElementById('loadGameBtn').addEventListener('click', ()=>{
+  document.getElementById('loadFileInput').click();
+});
+document.getElementById('loadFileInput').addEventListener('change', evt=>{
+  const file = evt.target.files[0];
+  evt.target.value = '';
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    let data;
+    try{
+      data = JSON.parse(reader.result);
+    } catch(e){
+      logEvent('Load failed: not valid JSON.', 'warn');
+      return;
+    }
+    if(!data || !Array.isArray(data.entityIds) || !data.components || !Array.isArray(data.grid)){
+      logEvent('Load failed: not an infrasim save file.', 'warn');
+      return;
+    }
+    if(data.contentPackVersion !== undefined && data.contentPackVersion !== null && CONTENT_PACK.version !== undefined && data.contentPackVersion !== CONTENT_PACK.version){
+      logEvent(`Warning: save was made with content-pack version ${data.contentPackVersion}, current is ${CONTENT_PACK.version}. Loading anyway.`, 'warn');
+    }
+    selected = null;
+    renderSelection();
+    postLoad(data);
+    logEvent('Game loaded.', null);
+  };
+  reader.readAsText(file);
+});
 
 requestAnimationFrame(frame);
