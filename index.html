@@ -143,7 +143,11 @@
     <select id="layerSelect">
       <option value="ground">Ground layer</option>
       <option value="elevated">Elevated layer (bridge, x2 cost)</option>
-      <option value="underground">Underground layer (tunnel, x3 cost)</option>
+      <!-- One "Underground level N" option per UNDERGROUND_LEVELS is
+           injected here at load time by ui.js (§ Multi-level tunnels) —
+           generated from the same constant the game logic uses, rather
+           than duplicated by hand, so retuning UNDERGROUND_LEVELS in
+           loader.js never leaves this dropdown out of sync. -->
       <option value="deepUnderground">Deep Underground layer (flat, x5 cost)</option>
       <option value="airspace">Airspace layer (flat, x4 cost)</option>
     </select>
@@ -167,30 +171,34 @@
       <option value="ore">Station handles: Ore</option>
       <option value="steel">Station handles: Steel</option>
     </select>
-    <div class="hint-text">The five-option dropdown applies to Road, Ramp, Tunnel Ramp, Connect,
-      One-Way, Demolish, and — since rail also runs on all five layers —
-      Build Track, Connect / Disconnect Track, and Toggle Signal Direction
-      too. Ground/Elevated/Underground follow local terrain (see the
-      Terrain section above); Deep Underground and Airspace are flat
-      global layers that ignore it entirely — reserved for future modes
-      (planes, mines) with their own way to reach them, so there's no ramp
-      linking either to the rest of the network yet; road/rail can still be
-      built there ahead of that. A Tunnel Ramp is different from a
-      (bridge) Ramp: it doesn't link both grades at
-      one cell, it slopes between two ADJACENT tiles — a ground tile and its
-      underground neighbor one step over — so click the ground tile then the
-      underground tile next to it (or the reverse order). It only works
-      along a straight stretch: neither tile may have any other connection
-      except the straight-through continuation, so a ramp never sits at a
-      turn or junction. Two adjacent Ground/Elevated/Underground tiles also
-      can't connect (auto- or manually) if their terrain differs by more
-      than 1 level — shown as a dark cliff edge on the map. Uncheck
-      auto-connect to lay road tiles side by side without joining them —
-      handy for parallel one-way streets — then use Connect / Disconnect to
-      wire up (or sever) specific edges by hand. Facing sets the single side
-      of the next Station that can ever touch a road; a Mill needs two
-      Stations — one handling Ore for delivery, one handling Steel for
-      pickup.</div>
+    <div class="hint-text">The dropdown applies to Road, Ramp, Tunnel Ramp, Connect, One-Way,
+      Demolish, and — since rail also runs on every layer — Build Track,
+      Connect / Disconnect Track, and Toggle Signal Direction too. Ground
+      and Elevated follow local terrain (see the Terrain section above),
+      and so does every Underground level — each one exactly one level
+      below the level above it (Underground level 1 below Ground, level 2
+      below level 1, and so on). Deep Underground and Airspace are flat
+      global layers that ignore terrain entirely — reserved for future
+      modes (planes, mines) with their own way to reach them, so there's no
+      ramp linking either to the rest of the network yet; road/rail can
+      still be built there ahead of that. A Tunnel Ramp is different from a
+      (bridge) Ramp: it doesn't link both grades at one cell, it slopes
+      between two ADJACENT tiles — the tile at the layer selected above,
+      and its neighbor one level down, one step over — so click one tile
+      then the adjacent tile at the next level down (or the reverse order);
+      select the deeper of the two levels first to build a ramp further
+      down the stack, one level at a time — there's no way to skip a level
+      in a single ramp. It only works along a straight stretch: neither
+      tile may have any other connection except the straight-through
+      continuation, so a ramp never sits at a turn or junction. Two
+      adjacent tiles at the same terrain-following layer also can't connect
+      (auto- or manually) if their terrain differs by more than 1 level —
+      shown as a dark cliff edge on the map. Uncheck auto-connect to lay
+      road tiles side by side without joining them — handy for parallel
+      one-way streets — then use Connect / Disconnect to wire up (or sever)
+      specific edges by hand. Facing sets the single side of the next
+      Station that can ever touch a road; a Mill needs two Stations — one
+      handling Ore for delivery, one handling Steel for pickup.</div>
 
     <div class="section-label">Vehicles</div>
     <button class="tool-btn" data-tool="bulktruck"><span class="tool-swatch" style="background:#e0a840"></span>Buy Bulk Truck (Ore)<span class="cost">$200</span></button>
@@ -289,23 +297,27 @@
       same cell — but only at a right angle (marked with a white X), like a
       real level crossing; a track running the same direction as an
       existing road there won't connect through it.
-      Underground is a third grade for road and rail alike, drawn dashed
-      and dimmed since it's beneath everything else — a Tunnel Ramp slopes
-      down to it from an adjacent ground tile (not a same-cell link like a
-      Ramp), and only ever along a straight stretch: no turns or junctions
-      right at the ramp itself. There's no direct elevated-underground
-      ramp — going from one to the other always passes through ground in
-      between, one ramp at a time.
+      Underground is a stack of one or more grades for road and rail alike
+      (Underground level 1, level 2, ...), each drawn dashed and dimmed a
+      bit more than the level above it since it's further beneath
+      everything else — a Tunnel Ramp slopes down from one level to the
+      next from an adjacent tile (not a same-cell link like a Ramp), one
+      level at a time, never skipping one, and only ever along a straight
+      stretch: no turns or junctions right at the ramp itself. There's no
+      direct elevated-underground (or level-1-to-level-3) ramp — going
+      between any two levels always passes through every level between
+      them, one ramp at a time.
       Every cell also has a terrain height (Terrain section) — Ground,
-      Elevated, and Underground all follow it, moving up or down together
-      wherever the land does, while Deep Underground and Airspace are flat
-      global layers, always the same height everywhere. Neither has a ramp
-      connecting it to the rest of the network yet — they're reserved for
-      future modes (airplanes, mines) that will reach them their own way.
-      Two adjacent Ground/Elevated/Underground tiles can only connect if
-      the terrain doesn't change by more than one level between them — too
-      big a jump reads as a cliff, and needs terraforming (or a longer
-      detour) before a road or track can cross it.
+      Elevated, and every Underground level all follow it, moving up or
+      down together wherever the land does, while Deep Underground and
+      Airspace are flat global layers, always the same height everywhere.
+      Neither has a ramp connecting it to the rest of the network yet —
+      they're reserved for future modes (airplanes, mines) that will reach
+      them their own way. Two adjacent tiles at the same terrain-following
+      layer can only connect if the terrain doesn't change by more than one
+      level between them — too big a jump reads as a cliff, and needs
+      terraforming (or a longer detour) before a road or track can cross
+      it.
     </div>
   </div>
 

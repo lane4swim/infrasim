@@ -164,10 +164,10 @@ function findLayerPath(start, end){
     }
     const [grade, kind] = LAYER_GRADE_KIND[cur.layer];
     // Same-cell vertical ramps (§ Terrain elevation) — any RAMP_PAIRS entry
-    // touching this grade (world.js): ground<->elevated, elevated<->airspace,
-    // or underground<->deepUnderground. A cell can have more than one at
-    // once (independently, per kind), so this doesn't stop at the first
-    // match — each is its own candidate BFS move.
+    // touching this grade (world.js) — currently just ground<->elevated.
+    // A cell can have more than one at once (independently, per kind), so
+    // this doesn't stop at the first match — each is its own candidate BFS
+    // move.
     const ramps = getCell(cur.x,cur.y).ramps[kind];
     for(const pair of RAMP_PAIRS){
       if(grade !== pair.lo && grade !== pair.hi) continue;
@@ -176,13 +176,19 @@ function findLayerPath(start, end){
       const found = tryVisit({x:cur.x, y:cur.y, layer:GRADE_KIND_LAYER[otherGrade][kind]}, cur);
       if(found) return found;
     }
-    // Lateral ramp edge — ground<->underground, one step over at whichever
-    // direction(s) this cell's track has rampEdge set (never true for
-    // elevated track, so this is a harmless no-op there).
+    // Lateral ramp edge (§ Underground layer; § Multi-level tunnels) — one
+    // step over at whichever direction(s) this cell's track has rampEdge
+    // set (never set on elevated/airspace/deepUnderground track, so this
+    // is a harmless no-op there). Unlike the same-cell ramps above,
+    // rampEdge[dir] stores the target GRADE directly rather than a
+    // boolean, since a cell partway down the underground stack can have a
+    // ramp edge going up a level in one direction and a different one
+    // going down a level in another — there's no fixed "the other grade"
+    // to swap to the way ground<->underground alone could assume.
     for(const {dir,dx,dy} of ROAD_DIRS){
-      if(!track.rampEdge[dir]) continue;
-      const otherGrade = grade==='ground' ? 'underground' : 'ground';
-      const found = tryVisit({x:cur.x+dx, y:cur.y+dy, layer:GRADE_KIND_LAYER[otherGrade][kind]}, cur);
+      const targetGrade = track.rampEdge[dir];
+      if(!targetGrade) continue;
+      const found = tryVisit({x:cur.x+dx, y:cur.y+dy, layer:GRADE_KIND_LAYER[targetGrade][kind]}, cur);
       if(found) return found;
     }
   }

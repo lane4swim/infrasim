@@ -56,8 +56,8 @@ section('Test 1 — underground track costs more, and a Tunnel Ramp needs real a
     };
   `);
   check('a valid ramp charges UNDERGROUND_RAMP_COST', valid.spent === run(newGameContext(),`return UNDERGROUND_RAMP_COST;`), JSON.stringify(valid));
-  check('sets rampEdge on the ground cell toward the underground neighbor', valid.groundRampEdge === true);
-  check('sets rampEdge on the underground cell back toward the ground neighbor', valid.undergroundRampEdge === true);
+  check('sets rampEdge on the ground cell toward the underground neighbor', valid.groundRampEdge === 'underground', JSON.stringify(valid));
+  check('sets rampEdge on the underground cell back toward the ground neighbor', valid.undergroundRampEdge === 'ground', JSON.stringify(valid));
   check('no warnings on a valid build', valid.warnLogs.length === 0, JSON.stringify(valid.warnLogs));
 });
 
@@ -69,7 +69,7 @@ section('Test 2 — a Tunnel Ramp works with the clicks in either order', () => 
     cmdBuildUndergroundRamp(2, 3, 2, 2); // underground cell clicked FIRST
     return {groundRampEdge: trackAt(2,2,'ground').rampEdge.S, warnLogs: pendingLogs.filter(l=>l.cls==='warn')};
   `);
-  check('order-independent: underground-first still builds correctly', out.groundRampEdge === true, JSON.stringify(out));
+  check('order-independent: underground-first still builds correctly', out.groundRampEdge === 'underground', JSON.stringify(out));
   check('no warnings', out.warnLogs.length === 0, JSON.stringify(out.warnLogs));
 });
 
@@ -228,7 +228,7 @@ section('Test 8 — demolishing either side of a ramp clears rampEdge symmetrica
     return {undergroundSideCleared: trackAt(2,3,'underground').rampEdge.N};
   `);
   check('demolishing the GROUND side clears the ramp edge on the underground side too',
-    afterDemolishGround.undergroundSideCleared === false, JSON.stringify(afterDemolishGround));
+    afterDemolishGround.undergroundSideCleared === null, JSON.stringify(afterDemolishGround));
 
   // Rebuild and demolish from the other side this time.
   const afterDemolishUnderground = run(ctx, `
@@ -238,7 +238,7 @@ section('Test 8 — demolishing either side of a ramp clears rampEdge symmetrica
     return {groundSideCleared: trackAt(2,2,'ground').rampEdge.S};
   `);
   check('demolishing the UNDERGROUND side clears the ramp edge on the ground side too',
-    afterDemolishUnderground.groundSideCleared === false, JSON.stringify(afterDemolishUnderground));
+    afterDemolishUnderground.groundSideCleared === null, JSON.stringify(afterDemolishUnderground));
 });
 
 console.log(failures===0 ? `\nAll checks passed.` : `\n${failures} check(s) FAILED.`);

@@ -9,6 +9,24 @@ let connectFirst = null;   // first tile picked for the Connect/Disconnect tool,
 let undergroundRampFirst = null; // first tile picked for the Tunnel Ramp tool, awaiting a second click
 let hoverCell = null;
 
+// Underground level dropdown options (§ Multi-level tunnels) — generated
+// from UNDERGROUND_LEVELS (loader.js) rather than hand-written in
+// index.html, inserted right before Deep Underground so the list keeps
+// reading top-to-bottom as the vertical stack it represents. Runs before
+// any of the cost-label wiring below, which reads currentLayer() and
+// needs these options to already exist.
+(function injectUndergroundLayerOptions(){
+  const select = document.getElementById('layerSelect');
+  const deepOption = select.querySelector('option[value="deepUnderground"]');
+  for(let level=1; level<=UNDERGROUND_LEVELS; level++){
+    const opt = document.createElement('option');
+    opt.value = undergroundGradeName(level);
+    const label = UNDERGROUND_LEVELS>1 ? `Underground level ${level} layer` : 'Underground layer';
+    opt.textContent = `${label} (tunnel, x${costMultiplierForUndergroundLevel(level)} cost)`;
+    select.insertBefore(opt, deepOption);
+  }
+})();
+
 document.querySelectorAll('.tool-btn[data-tool]').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     document.querySelectorAll('.tool-btn').forEach(b=>b.classList.remove('active'));
@@ -27,8 +45,8 @@ function toolHint(t){
     road:'Click or drag to build road on the selected layer ($10/tile, x2 elevated). Uncheck auto-connect to place tiles without joining them. On the ground layer, crosses rail track at a right angle only — it won\'t connect through track running the same direction.',
     ramp:'Click a cell that already has both a ground and an elevated road tile to link them ($40).',
     railramp:'Click a cell that already has both a rail and an elevated rail tile to link them ($40) — rail\'s own Ramp, entirely independent of the road one.',
-    tunnelramp:`Click a ground road tile, then click an adjacent underground road tile ($${UNDERGROUND_RAMP_COST}) — a sloped link, not a same-cell one. Only works along a straight stretch: neither tile may have any other connection besides the straight-through continuation.`,
-    railtunnelramp:`Click a ground rail tile, then click an adjacent underground rail tile ($${UNDERGROUND_RAMP_COST}) — rail's own Tunnel Ramp, entirely independent of the road one. Same straight-through-only rule.`,
+    tunnelramp:(()=>{ const level = currentUndergroundLevel(); const upper = level===1 ? 'ground' : `underground level ${level-1}`; return `Click a ${upper} road tile, then click an adjacent underground level ${level} road tile ($${rampCostForUndergroundLevel(level)}) — a sloped link, not a same-cell one. Select the deeper of the two levels above to build a ramp further down the stack. Only works along a straight stretch: neither tile may have any other connection besides the straight-through continuation.`; })(),
+    railtunnelramp:(()=>{ const level = currentUndergroundLevel(); const upper = level===1 ? 'ground' : `underground level ${level-1}`; return `Click a ${upper} rail tile, then click an adjacent underground level ${level} rail tile ($${rampCostForUndergroundLevel(level)}) — rail's own Tunnel Ramp, entirely independent of the road one. Same straight-through-only rule.`; })(),
     raiseterrain:`Click a cell to raise its terrain by one level ($${TERRAFORM_COST}). Requires the cell be clear of all track and buildings first.`,
     lowerterrain:`Click a cell to lower its terrain by one level ($${TERRAFORM_COST}). Requires the cell be clear of all track and buildings first.`,
     connect:'Click a road tile, then click an adjacent road tile on the same layer — connects them if not joined, disconnects them if they are.',
@@ -54,14 +72,25 @@ function currentLayer(){ return document.getElementById('layerSelect').value; }
 // The same Ground/Elevated/Underground dropdown road tools already read,
 // translated to rail's own layer names — one shared "Network" layer
 // selector governs every track-laying tool (Road AND Track), rather than
-// rail needing a second dropdown of its own.
+// rail needing a second dropdown of its own. Underground levels go through
+// undergroundRailLayerName (world.js) rather than a hardcoded name, so a
+// new level added via UNDERGROUND_LEVELS needs no change here.
 function currentRailLayer(){
   const layer = currentLayer();
+  const level = undergroundLevelOfGrade(layer);
+  if(level) return undergroundRailLayerName(level);
   return layer==='elevated' ? 'railElevated'
-    : layer==='underground' ? 'railUnderground'
     : layer==='deepUnderground' ? 'railDeepUnderground'
     : layer==='airspace' ? 'railAirspace'
     : 'rail';
+}
+// Which Tunnel Ramp level the currently-selected layer implies (§
+// Multi-level tunnels) — level 1 (ground<->underground) whenever the
+// dropdown isn't actually on an underground level, so picking the Tunnel
+// Ramp tool with "Ground layer" selected (the default) still behaves
+// exactly like it always did before multi-level tunnels existed.
+function currentUndergroundLevel(){
+  return undergroundLevelOfGrade(currentLayer()) || 1;
 }
 function currentFacing(){ return document.getElementById('facingSelect').value; }
 function currentAutoConnect(){ return document.getElementById('autoConnect').checked; }
@@ -253,26 +282,31 @@ function handleConnectClick(x,y){
 
 function handleUndergroundRampClick(x,y){
   // Unlike Connect/OneWay, the two clicks aren't on the same layer — one is
-  // a ground tile, the other its underground neighbor, in either order
+  // the upper tile, the other its lower neighbor, in either order
   // (cmdBuildUndergroundRamp/cmdBuildRailUndergroundRamp auto-detect which
   // is which) — so there's no single "layer" to check for track against
   // here; the command itself validates grade/adjacency/straight-through
-  // once both clicks are in.
+  // once both clicks are in. WHICH pair of grades (level 1 = ground<->
+  // underground, level N>1 = one level deeper — § Multi-level tunnels) is
+  // fixed by currentUndergroundLevel() at the moment the FIRST click
+  // lands, so switching the layer dropdown mid-click can't retarget an
+  // already-started ramp.
   const kind = currentTool==='railtunnelramp' ? 'rail' : 'road';
-  const groundLayer = GRADE_KIND_LAYER.ground[kind], undergroundLayer = GRADE_KIND_LAYER.underground[kind];
-  if(!trackAt(x,y,groundLayer).track && !trackAt(x,y,undergroundLayer).track){
-    logEvent(`No ground or underground ${kind} tile there.`, 'warn');
-    undergroundRampFirst = null;
-    document.getElementById('hint').textContent = toolHint(currentTool);
-    return;
-  }
   if(!undergroundRampFirst){
-    undergroundRampFirst = {x,y};
-    document.getElementById('hint').textContent = 'Now click the adjacent ground or underground tile to link.';
+    const level = currentUndergroundLevel();
+    const upperGrade = level===1 ? 'ground' : undergroundGradeName(level-1);
+    const lowerGrade = undergroundGradeName(level);
+    if(!trackAt(x,y,GRADE_KIND_LAYER[upperGrade][kind]).track && !trackAt(x,y,GRADE_KIND_LAYER[lowerGrade][kind]).track){
+      logEvent(`No ${upperGrade} or ${lowerGrade} ${kind} tile there.`, 'warn');
+      document.getElementById('hint').textContent = toolHint(currentTool);
+      return;
+    }
+    undergroundRampFirst = {x,y,level};
+    document.getElementById('hint').textContent = `Now click the adjacent ${upperGrade} or ${lowerGrade} tile to link.`;
     return;
   }
   const cmd = currentTool==='railtunnelramp' ? 'cmdBuildRailUndergroundRamp' : 'cmdBuildUndergroundRamp';
-  postCommand(cmd, [undergroundRampFirst.x, undergroundRampFirst.y, x, y]);
+  postCommand(cmd, [undergroundRampFirst.x, undergroundRampFirst.y, x, y, undergroundRampFirst.level]);
   undergroundRampFirst = null;
   document.getElementById('hint').textContent = toolHint(currentTool);
 }
@@ -465,15 +499,14 @@ document.getElementById('townCost').textContent = '$' + BUILDING_DEFS.town.build
 document.getElementById('stationCost').textContent = '$' + BUILDING_DEFS.station.buildCost;
 document.getElementById('rampCost').textContent = '$' + RAMP_COST;
 document.getElementById('railRampCost').textContent = '$' + RAMP_COST;
-document.getElementById('tunnelRampCost').textContent = '$' + UNDERGROUND_RAMP_COST;
-document.getElementById('railTunnelRampCost').textContent = '$' + UNDERGROUND_RAMP_COST;
 document.getElementById('raiseTerrainCost').textContent = '$' + TERRAFORM_COST;
 document.getElementById('lowerTerrainCost').textContent = '$' + TERRAFORM_COST;
 document.getElementById('depotCost').textContent = '$' + BUILDING_DEFS.depot.buildCost;
 document.getElementById('trainyardCost').textContent = '$' + BUILDING_DEFS.trainyard.buildCost;
 function costMultiplierFor(layer){
+  const undergroundLevel = undergroundLevelOfGrade(layer);
   return layer==='elevated' ? ELEVATED_COST_MULTIPLIER
-    : layer==='underground' ? UNDERGROUND_COST_MULTIPLIER
+    : undergroundLevel ? costMultiplierForUndergroundLevel(undergroundLevel)
     : layer==='deepUnderground' ? DEEP_UNDERGROUND_COST_MULTIPLIER
     : layer==='airspace' ? AIRSPACE_COST_MULTIPLIER
     : 1;
@@ -486,10 +519,21 @@ function updateTrackCostLabel(){
   document.getElementById('trackCost').textContent =
     '$' + (RAIL_DEFS.track.costPerTile * costMultiplierFor(currentLayer())) + '/tile';
 }
+// The Tunnel Ramp cost depends on WHICH level is selected (§ Multi-level
+// tunnels — deeper levels cost more per rampCostForUndergroundLevel in
+// world.js), so unlike the other one-time-cost labels above, this one has
+// to stay live on every layer change, the same way the per-tile labels do.
+function updateTunnelRampCostLabel(){
+  const cost = rampCostForUndergroundLevel(currentUndergroundLevel());
+  document.getElementById('tunnelRampCost').textContent = '$' + cost;
+  document.getElementById('railTunnelRampCost').textContent = '$' + cost;
+}
 document.getElementById('layerSelect').addEventListener('change', updateRoadCostLabel);
 document.getElementById('layerSelect').addEventListener('change', updateTrackCostLabel);
+document.getElementById('layerSelect').addEventListener('change', updateTunnelRampCostLabel);
 updateRoadCostLabel();
 updateTrackCostLabel();
+updateTunnelRampCostLabel();
 
 // Save/Load (§12) — Save just asks the Worker to serialize+download; Load
 // reads the chosen file, does light shape validation (real corruption still

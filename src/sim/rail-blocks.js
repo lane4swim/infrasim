@@ -130,17 +130,18 @@ function computeRailBlocksForLayer(layer, blockIdCounter){
     }
   }
 }
-// Rail's five layers ('rail', 'railElevated', 'railUnderground',
-// 'railDeepUnderground', 'railAirspace' — see world.js) each get their own
-// independent block graph — a ramp cell (same-cell vertical ramp OR a
-// ground<->underground ramp edge) is a hub on BOTH layers it touches (see
+// Rail's layers — 'rail', 'railElevated', one 'railUnderground'[N] per
+// underground level (§ Multi-level tunnels), 'railDeepUnderground', and
+// 'railAirspace' (see world.js) — each get their own independent block
+// graph — a ramp cell (same-cell vertical ramp OR a ramp edge between two
+// underground-stack grades) is a hub on BOTH layers it touches (see
 // railCellIsHub above), so a train transitioning between any two of them
 // always crosses a block boundary there anyway; there's no need for one
 // combined graph spanning the transition itself (tickTrainMovement treats
 // a layer-changing step as always allowed, with no edge/block of its own —
 // see its canEnter/onEnter callbacks, which key off `cur.layer !==
 // next.layer` regardless of whether that step also changed x/y, as a
-// ramp-edge step does). All five layers' blocks share one world.railBlocks
+// ramp-edge step does). Every layer's blocks share one world.railBlocks
 // map and one continuous id sequence, exactly like before this existed for
 // a single layer.
 function computeRailBlocks(){
@@ -148,7 +149,9 @@ function computeRailBlocks(){
   const blockIdCounter = {next: 1};
   computeRailBlocksForLayer('rail', blockIdCounter);
   computeRailBlocksForLayer('railElevated', blockIdCounter);
-  computeRailBlocksForLayer('railUnderground', blockIdCounter);
+  for(let level=1; level<=UNDERGROUND_LEVELS; level++){
+    computeRailBlocksForLayer(undergroundRailLayerName(level), blockIdCounter);
+  }
   computeRailBlocksForLayer('railDeepUnderground', blockIdCounter);
   computeRailBlocksForLayer('railAirspace', blockIdCounter);
 }

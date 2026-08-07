@@ -92,8 +92,9 @@ function buildTrackTile(x,y,layer,autoConnect,costPerTile,label){
   const track = trackAt(x,y,layer);
   if(track.track) return false;
   if(grade==='ground' && cell.buildingId) return false; // can't lay ground-level track under a building
+  const undergroundLevel = undergroundLevelOfGrade(grade);
   const multiplier = grade==='elevated' ? ELEVATED_COST_MULTIPLIER
-    : grade==='underground' ? UNDERGROUND_COST_MULTIPLIER
+    : undergroundLevel ? costMultiplierForUndergroundLevel(undergroundLevel)
     : grade==='airspace' ? AIRSPACE_COST_MULTIPLIER
     : grade==='deepUnderground' ? DEEP_UNDERGROUND_COST_MULTIPLIER
     : 1;
@@ -184,56 +185,70 @@ function cmdBuildRamp(x,y){ buildVerticalRamp(x,y,'road','groundElevated',RAMP_C
 // a (road) Ramp links `ground` and `elevated`, entirely independent of it.
 function cmdBuildRailRamp(x,y){ buildVerticalRamp(x,y,'rail','groundElevated',RAMP_COST,'Rail Ramp'); }
 // A Tunnel Ramp is geometrically different from the (road) Ramp / Rail Ramp
-// above: those link a kind's ground and elevated tiles at the SAME cell (a
-// vehicle transitions via a same-cell, different-layer step). A ramp to
-// underground instead slopes between two ADJACENT cells on different
-// grades — the ground tile approaching it, and the underground tile it
+// above: those link a kind's two tiles at the SAME cell (a vehicle
+// transitions via a same-cell, different-layer step). A ramp into the
+// underground stack instead slopes between two ADJACENT cells on
+// different grades — the upper tile approaching it, and the lower tile it
 // descends into one step over — since "both grades occupy the same physical
 // point" doesn't read as a real ramp the way "the bridge passes overhead"
 // does; a tunnel mouth is a stretch of track/road you drive down, not a
 // teleport (see rampEdge in world.js).
 //
+// `level` (§ Multi-level tunnels) picks WHICH pair of adjacent grades this
+// ramp connects: level 1 (the default, and the only option before
+// multi-level tunnels existed) is ground<->underground; level N>1 is
+// underground-level-(N-1)<->underground-level-N — always exactly one level
+// at a time, never skipping one, the same way there's no direct
+// elevated<->underground ramp.
+//
 // Constraints: (a) the two cells must be orthogonally adjacent (b) one must
-// have GROUND-grade track of this kind, the other UNDERGROUND-grade track
-// of this kind — which cell is which is auto-detected, order-independent
-// (c) each cell's existing same-grade `edges` (and any OTHER ramp edge) must
-// be limited to the straight-through axis the ramp itself sits on, so the
-// ground-ramp-underground line always reads as one continuous straight run,
-// never a turn or junction at the transition itself.
-function buildUndergroundRamp(x1,y1,x2,y2,kind,label){
+// have the UPPER grade's track of this kind, the other the LOWER grade's —
+// which cell is which is auto-detected, order-independent (c) each cell's
+// existing same-grade `edges` (and any OTHER ramp edge) must be limited to
+// the straight-through axis the ramp itself sits on, so the upper-ramp-
+// lower line always reads as one continuous straight run, never a turn or
+// junction at the transition itself.
+function buildUndergroundRamp(x1,y1,x2,y2,kind,label,level){
+  const upperGrade = level===1 ? 'ground' : undergroundGradeName(level-1);
+  const lowerGrade = undergroundGradeName(level);
   const d = ROAD_DIRS.find(r => x1+r.dx===x2 && y1+r.dy===y2);
   if(!d){ logEvent(`A ${label} only works between two orthogonally adjacent tiles.`, 'warn'); return; }
-  let groundX, groundY, undergroundX, undergroundY, dir;
-  if(trackAt(x1,y1,GRADE_KIND_LAYER.ground[kind]).track && trackAt(x2,y2,GRADE_KIND_LAYER.underground[kind]).track){
-    groundX=x1; groundY=y1; undergroundX=x2; undergroundY=y2; dir=d.dir;
-  } else if(trackAt(x1,y1,GRADE_KIND_LAYER.underground[kind]).track && trackAt(x2,y2,GRADE_KIND_LAYER.ground[kind]).track){
-    groundX=x2; groundY=y2; undergroundX=x1; undergroundY=y1; dir=d.opp;
+  let upperX, upperY, lowerX, lowerY, dir;
+  if(trackAt(x1,y1,GRADE_KIND_LAYER[upperGrade][kind]).track && trackAt(x2,y2,GRADE_KIND_LAYER[lowerGrade][kind]).track){
+    upperX=x1; upperY=y1; lowerX=x2; lowerY=y2; dir=d.dir;
+  } else if(trackAt(x1,y1,GRADE_KIND_LAYER[lowerGrade][kind]).track && trackAt(x2,y2,GRADE_KIND_LAYER[upperGrade][kind]).track){
+    upperX=x2; upperY=y2; lowerX=x1; lowerY=y1; dir=d.opp;
   } else {
-    logEvent(`A ${label} needs a ground ${kind} tile on one side and an underground ${kind} tile on the other.`, 'warn');
+    logEvent(`A ${label} needs a ${upperGrade} ${kind} tile on one side and a ${lowerGrade} ${kind} tile on the other.`, 'warn');
     return;
   }
   const opp = ROAD_DIRS.find(r=>r.dir===dir).opp;
-  const groundTrack = trackAt(groundX, groundY, GRADE_KIND_LAYER.ground[kind]);
-  const undergroundTrack = trackAt(undergroundX, undergroundY, GRADE_KIND_LAYER.underground[kind]);
-  if(groundTrack.rampEdge[dir] || undergroundTrack.rampEdge[opp]){ logEvent(`There is already a ${label} here.`, 'warn'); return; }
+  const upperTrack = trackAt(upperX, upperY, GRADE_KIND_LAYER[upperGrade][kind]);
+  const lowerTrack = trackAt(lowerX, lowerY, GRADE_KIND_LAYER[lowerGrade][kind]);
+  if(upperTrack.rampEdge[dir] || lowerTrack.rampEdge[opp]){ logEvent(`There is already a ${label} here.`, 'warn'); return; }
   // Only ever ONE direction may carry a connection (edge or ramp edge) other
   // than the ramp's own straight-through pair — checked on both sides.
   const onlyStraightThrough = (track, allowedDir) => ROAD_DIRS.every(r => r.dir===allowedDir || (!track.edges[r.dir] && !track.rampEdge[r.dir]));
-  if(!onlyStraightThrough(groundTrack, opp) || !onlyStraightThrough(undergroundTrack, dir)){
+  if(!onlyStraightThrough(upperTrack, opp) || !onlyStraightThrough(lowerTrack, dir)){
     logEvent(`A ${label} can only run along a straight stretch of track — no turns or junctions at the ramp itself.`, 'warn');
     return;
   }
-  if(!canAfford(UNDERGROUND_RAMP_COST)){ logEvent(`Insufficient funds for ${label.toLowerCase()}.`, 'warn'); return; }
-  charge(UNDERGROUND_RAMP_COST, label.toLowerCase());
-  groundTrack.rampEdge[dir] = true;
-  undergroundTrack.rampEdge[opp] = true;
+  const cost = rampCostForUndergroundLevel(level);
+  if(!canAfford(cost)){ logEvent(`Insufficient funds for ${label.toLowerCase()}.`, 'warn'); return; }
+  charge(cost, label.toLowerCase());
+  // Each direction stores the GRADE it leads to (not just a boolean) — a
+  // cell partway down the underground stack can have one ramp edge going
+  // up a level and a different one going down a level, in different
+  // directions, so pathfinding needs to know which grade each one is
+  // rather than guessing from a fixed swap (see findLayerPath).
+  upperTrack.rampEdge[dir] = lowerGrade;
+  lowerTrack.rampEdge[opp] = upperGrade;
   if(kind==='rail') computeRailBlocks(); // an underground ramp cell is a hub — see railCellIsHub
 }
-function cmdBuildUndergroundRamp(x1,y1,x2,y2){ buildUndergroundRamp(x1,y1,x2,y2,'road','Tunnel Ramp'); }
-// Rail's own tunnel ramp — links `rail` and `railUnderground` between two
-// adjacent cells exactly like a (road) Tunnel Ramp links `ground` and
-// `underground`, entirely independent of it.
-function cmdBuildRailUndergroundRamp(x1,y1,x2,y2){ buildUndergroundRamp(x1,y1,x2,y2,'rail','Rail Tunnel Ramp'); }
+function cmdBuildUndergroundRamp(x1,y1,x2,y2,level){ buildUndergroundRamp(x1,y1,x2,y2,'road',level>1 ? `Level ${level} Tunnel Ramp` : 'Tunnel Ramp', level||1); }
+// Rail's own tunnel ramp — links two adjacent underground-stack grades
+// exactly like a (road) Tunnel Ramp does, entirely independent of it.
+function cmdBuildRailUndergroundRamp(x1,y1,x2,y2,level){ buildUndergroundRamp(x1,y1,x2,y2,'rail',level>1 ? `Level ${level} Rail Tunnel Ramp` : 'Rail Tunnel Ramp', level||1); }
 function cmdToggleOneWay(x1,y1,x2,y2,layer){
   // Also doubles as rail's "Toggle Signal Direction" (layer='rail' or
   // 'railElevated') — same mechanism, since a signal is exactly a one-way
@@ -322,20 +337,22 @@ function cmdDemolish(x,y,layer){
     const [grade, kind] = LAYER_GRADE_KIND[layer];
     // Sever this tile's edges from whichever neighbors it was connected to,
     // so they don't retain a connection to track that no longer exists.
-    // A ramp edge (§ Underground layer) is a cross-layer connection, not a
-    // same-layer one — its partner lives on the SAME neighbor cell but the
-    // OTHER grade (ground's partner is at the neighbor's underground, and
-    // the reverse), so it needs its own lookup rather than trackAt(...,layer).
-    const otherGrade = grade==='ground' ? 'underground' : grade==='underground' ? 'ground' : null;
+    // A ramp edge (§ Underground layer; § Multi-level tunnels) is a
+    // cross-layer connection, not a same-layer one — its partner lives on
+    // the SAME neighbor cell but a DIFFERENT grade, and rampEdge[dir]
+    // already stores exactly which one (see buildUndergroundRamp), so no
+    // guessing is needed here the way an older ground<->underground-only
+    // version would have had to.
     for(const {dir,dx,dy,opp} of ROAD_DIRS){
       if(track.edges[dir]) trackAt(x+dx, y+dy, layer).edges[opp] = false;
-      if(otherGrade && track.rampEdge[dir]) trackAt(x+dx, y+dy, GRADE_KIND_LAYER[otherGrade][kind]).rampEdge[opp] = false;
+      const targetGrade = track.rampEdge[dir];
+      if(targetGrade) trackAt(x+dx, y+dy, GRADE_KIND_LAYER[targetGrade][kind]).rampEdge[opp] = null;
     }
     track.track = false;
     track.edges = {N:false, S:false, E:false, W:false};
     track.oneWayBlocked = {N:false, S:false, E:false, W:false};
     track.blockId = {N:null, S:null, E:null, W:null};
-    track.rampEdge = {N:false, S:false, E:false, W:false};
+    track.rampEdge = {N:null, S:null, E:null, W:null};
     // This kind's same-cell vertical ramps need one of THEIR OWN two grades
     // present — demolishing this grade's track invalidates every RAMP_PAIRS
     // entry that touches it (elevated touches both groundElevated as its

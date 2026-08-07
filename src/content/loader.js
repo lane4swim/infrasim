@@ -149,7 +149,7 @@ function validateContentPack(pack){
 // happens on the first 'init' message (see worker-client.js's protocol
 // comment for why that has to be a separate later step).
 let CONTENT_PACK, RESOURCES, RESOURCE, RECIPES, BUILDING_DEFS, VEHICLE_DEFS, RAIL_DEFS, ENGINE_DEFS, WAGON_DEFS;
-let INITIAL_TREASURY, ROAD_COST_PER_TILE, ELEVATED_COST_MULTIPLIER, RAMP_COST, UNDERGROUND_COST_MULTIPLIER, UNDERGROUND_RAMP_COST, DEEP_UNDERGROUND_COST_MULTIPLIER, AIRSPACE_COST_MULTIPLIER, TERRAFORM_COST, DEFAULT_TRANSFER_RATE, TICK_MS, CONSUMPTION_PER_CAPITA;
+let INITIAL_TREASURY, ROAD_COST_PER_TILE, ELEVATED_COST_MULTIPLIER, RAMP_COST, UNDERGROUND_COST_MULTIPLIER, UNDERGROUND_RAMP_COST, UNDERGROUND_LEVELS, UNDERGROUND_LEVEL_COST_STEP, UNDERGROUND_RAMP_LEVEL_STEP, DEEP_UNDERGROUND_COST_MULTIPLIER, AIRSPACE_COST_MULTIPLIER, TERRAFORM_COST, DEFAULT_TRANSFER_RATE, TICK_MS, CONSUMPTION_PER_CAPITA;
 
 function initContentPack(pack){
   validateContentPack(pack);
@@ -169,6 +169,17 @@ function initContentPack(pack){
   UNDERGROUND_COST_MULTIPLIER = 3; // tunneling costs even more per tile than bridging
   RAMP_COST = 40;               // one-time cost to link ground<->elevated at a single cell
   UNDERGROUND_RAMP_COST = 80;   // one-time cost for a sloped ground<->underground ramp (§ Underground layer) — a tunnel entrance costs more than a bridge Ramp
+  // Multi-level tunnels (§ Multi-level tunnels) — how many underground
+  // grades stack below ground, each one reached from the one above it by
+  // its own Tunnel Ramp, never skipping a level. Level 1 is the original
+  // 'underground' grade (UNDERGROUND_COST_MULTIPLIER/UNDERGROUND_RAMP_COST
+  // above, unchanged); level N>1 costs progressively more per tile and per
+  // ramp, reflecting that digging deeper is harder — see
+  // costMultiplierForUndergroundLevel/rampCostForUndergroundLevel in
+  // world.js, the one place these two step constants are actually applied.
+  UNDERGROUND_LEVELS = 3;
+  UNDERGROUND_LEVEL_COST_STEP = 1;    // added to UNDERGROUND_COST_MULTIPLIER per level beyond 1 (level 3 tunneling ends up as costly per-tile as the reserved deepUnderground grade — a deliberate signal that level 3 is about as deep as "regular" tunneling reasonably goes)
+  UNDERGROUND_RAMP_LEVEL_STEP = 20;   // added to UNDERGROUND_RAMP_COST per level beyond 1
   // Terrain elevation (§ Terrain elevation) — deepUnderground and airspace
   // are flat global planes reserved for future non-road/rail modes (a
   // Plane mode, a Mine reaching into deepUnderground — see RAMP_PAIRS in

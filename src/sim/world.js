@@ -5,7 +5,7 @@ const GRID_W = 22, GRID_H = 14, CELL = 40;
 const world = {
   treasury: INITIAL_TREASURY,
   tick: 0,
-  grid: new Map(),          // "x,y" -> { buildingId, ramps, layers:{ground,elevated,underground} }
+  grid: new Map(),          // "x,y" -> { buildingId, elevation, ramps, layers:{ground,elevated,airspace,deepUnderground,underground[,underground2,...]} }
   entities: new Map(),      // id -> entity handle (see makeEntityHandle below)
   components: {},           // componentName -> Map<entityId, componentData> — the real storage
   // blockId -> {occupiedBy: entityId|null}. Rail's mutual-exclusion state
@@ -22,6 +22,44 @@ const world = {
 };
 
 function cellKey(x,y){ return x+','+y; }
+// Multi-level tunnels (§ Multi-level tunnels) — the underground stack is
+// no longer a single grade: UNDERGROUND_LEVELS (loader.js) of them, level
+// 1 nearest the surface. Level 1 keeps the ORIGINAL 'underground'/
+// 'railUnderground' names (every save file, test, and piece of code
+// written before multi-level tunnels existed already means "level 1" by
+// that name); level N>1 is 'underground'+N / 'railUnderground'+N. These
+// two functions are the one place that naming convention lives — every
+// other file goes through them (or through LAYER_GRADE_KIND/
+// GRADE_KIND_LAYER, which are themselves built from these below) rather
+// than constructing the string itself.
+function undergroundGradeName(level){
+  return level===1 ? 'underground' : 'underground'+level;
+}
+function undergroundRailLayerName(level){
+  return level===1 ? 'railUnderground' : 'railUnderground'+level;
+}
+// The inverse — given a grade name, which underground level is it (1 for
+// the original 'underground', 2 for 'underground2', ...)? Returns null for
+// a grade that isn't part of the underground stack at all (ground,
+// elevated, airspace, deepUnderground). Used wherever code needs to go
+// from "the layer the player has selected" to "which Tunnel Ramp level
+// pair that implies" (see cmdBuildUndergroundRamp's level param and
+// currentUndergroundLevel in ui.js).
+function undergroundLevelOfGrade(grade){
+  if(grade==='underground') return 1;
+  const m = /^underground(\d+)$/.exec(grade);
+  return m ? parseInt(m[1],10) : null;
+}
+// Deeper underground levels cost more, both per-tile and per-ramp — see
+// UNDERGROUND_LEVEL_COST_STEP/UNDERGROUND_RAMP_LEVEL_STEP (loader.js) for
+// why. Level 1 always resolves to exactly UNDERGROUND_COST_MULTIPLIER/
+// UNDERGROUND_RAMP_COST, unchanged from before multi-level tunnels existed.
+function costMultiplierForUndergroundLevel(level){
+  return UNDERGROUND_COST_MULTIPLIER + (level-1)*UNDERGROUND_LEVEL_COST_STEP;
+}
+function rampCostForUndergroundLevel(level){
+  return UNDERGROUND_RAMP_COST + (level-1)*UNDERGROUND_RAMP_LEVEL_STEP;
+}
 // `track` (was `road` in Phase 1) is a generic "is there a network tile
 // here" flag — the same {track,edges,oneWayBlocked} shape backs every
 // kind of infrastructure at every grade (road and rail today; whatever
@@ -35,20 +73,31 @@ function newTrack(){
     edges:{N:false,S:false,E:false,W:false},
     oneWayBlocked:{N:false,S:false,E:false,W:false},
     blockId:{N:null,S:null,E:null,W:null},
-    // A ramp edge (§ Underground layer) is a DIFFERENT thing from a normal
-    // `edges` connection: it's a sloped transition to the SAME kind's track
-    // one grade away, at the ADJACENT cell in that direction — ground track
-    // descending into its neighbor's underground track, or the reverse —
-    // rather than a same-grade connection at the same neighbor. Deliberately
-    // kept out of `edges` (which stays "same-grade connectivity" everywhere
-    // else — degree counts, one-way, Connect/Disconnect) rather than
-    // overloading it, so every piece of code that already reads `edges` for
-    // same-grade purposes doesn't need to learn a new exception. Only ever
-    // set on ground-grade or underground-grade track — never elevated, since
-    // a ramp edge always steps toward/away from underground specifically
-    // (see connectNewTileEdges/cmdBuildUndergroundRamp in commands.js and
-    // findLayerPath in pathfinding.js for the two places this is read).
-    rampEdge:{N:false,S:false,E:false,W:false},
+    // A ramp edge (§ Underground layer; § Multi-level tunnels) is a
+    // DIFFERENT thing from a normal `edges` connection: it's a sloped
+    // transition to the SAME kind's track one grade away, at the ADJACENT
+    // cell in that direction — ground track descending into its neighbor's
+    // underground track, or underground level 1 descending into its
+    // neighbor's level 2, or the reverse of either — rather than a
+    // same-grade connection at the same neighbor. Deliberately kept out of
+    // `edges` (which stays "same-grade connectivity" everywhere else —
+    // degree counts, one-way, Connect/Disconnect) rather than overloading
+    // it, so every piece of code that already reads `edges` for same-grade
+    // purposes doesn't need to learn a new exception.
+    //
+    // Each direction holds the NAME of the grade it connects to (e.g.
+    // 'underground2'), not just a boolean — a cell in the underground
+    // stack can have a ramp edge going UP one level and a completely
+    // different one going DOWN one level (in different directions), so
+    // pathfinding needs to know which grade each direction actually leads
+    // to rather than guessing from a fixed ground<->underground swap. null
+    // means no ramp edge that way. Only ever set on ground-grade or
+    // underground-grade (any level) track — never elevated/airspace/
+    // deepUnderground, since a ramp edge always steps toward/away from the
+    // underground stack specifically (see connectNewTileEdges/
+    // cmdBuildUndergroundRamp in commands.js and findLayerPath in
+    // pathfinding.js for the two places this is read).
+    rampEdge:{N:null,S:null,E:null,W:null},
   };
 }
 // Terrain elevation (§ Terrain elevation) — an integer height per (x,y)
@@ -80,11 +129,16 @@ const MAX_ELEVATION_DELTA = 1;
 // matter how the terrain is shaped.
 const DEEP_UNDERGROUND_Z = -1000;
 const AIRSPACE_Z = 1000;
-// elevated is always exactly one level above local ground, underground
-// exactly one below — see ELEVATION_MIN/MAX above for why "one level" is
-// the unit. Only these three grades read cell.elevation at all; deepUnderground/
-// airspace ignore it entirely (see elevationAt below).
-const ELEVATION_OFFSET = { ground: 0, elevated: 1, underground: -1 };
+// elevated is always exactly one level above local ground; each
+// underground level is exactly that many levels below (level 1 is -1,
+// level 2 is -2, ...) — see ELEVATION_MIN/MAX above for why "one level" is
+// the unit. Only ground/elevated/the underground stack read cell.elevation
+// at all; deepUnderground/airspace ignore it entirely (see elevationAt
+// below).
+const ELEVATION_OFFSET = { ground: 0, elevated: 1 };
+for(let level=1; level<=UNDERGROUND_LEVELS; level++){
+  ELEVATION_OFFSET[undergroundGradeName(level)] = -level;
+}
 // The real height of one grade's track at one cell — the one function
 // every elevation-aware piece of code (the connectivity cap, terrain/cliff
 // rendering) should call rather than reaching into cell.elevation or the
@@ -139,23 +193,24 @@ function newGradeLayer(){
 // actually stores it under, and trackAt is the one place every piece of
 // grid-reading/writing code should go through instead of indexing
 // world.grid directly by a flat name.
-// Five grades now (§ Terrain elevation): deepUnderground, underground,
-// ground, elevated, airspace — in that vertical order. A ramp, of either
-// kind (same-cell vertical Ramp — RAMP_PAIRS above — or sloped
-// ground<->underground ramp edge — see rampEdge below), only ever links
-// two ADJACENT grades; there is no direct elevated<->underground (or
-// underground<->airspace, or deepUnderground<->ground, etc.) transition,
-// only via two-or-more ramps in series through the grades between — the
-// natural consequence of every ramp reading its "other grade" as literally
-// the neighboring entry in this same vertical order, never skipping one.
+// (UNDERGROUND_LEVELS + 4) grades now (§ Terrain elevation; § Multi-level
+// tunnels): deepUnderground, then UNDERGROUND_LEVELS underground grades
+// (deepest first), then ground, elevated, airspace — in that vertical
+// order. A ramp, of either kind (same-cell vertical Ramp — RAMP_PAIRS
+// above — or sloped ramp edge between adjacent underground levels, or
+// between ground and the topmost underground level — see rampEdge below),
+// only ever links two ADJACENT grades; there is no direct elevated<->
+// underground (or underground level 1 <-> level 3, or deepUnderground<->
+// ground, etc.) transition, only via two-or-more ramps in series through
+// the grades between — the natural consequence of every ramp reading its
+// "other grade" as literally the neighboring entry in this same vertical
+// order, never skipping one.
 const LAYER_GRADE_KIND = {
   deepUnderground: ['deepUnderground', 'road'],
-  underground: ['underground', 'road'],
   ground: ['ground', 'road'],
   elevated: ['elevated', 'road'],
   airspace: ['airspace', 'road'],
   railDeepUnderground: ['deepUnderground', 'rail'],
-  railUnderground: ['underground', 'rail'],
   rail: ['ground', 'rail'],
   railElevated: ['elevated', 'rail'],
   railAirspace: ['airspace', 'rail'],
@@ -165,23 +220,50 @@ const LAYER_GRADE_KIND = {
 // other grade" (see findLayerPath in pathfinding.js).
 const GRADE_KIND_LAYER = {
   deepUnderground: { road: 'deepUnderground', rail: 'railDeepUnderground' },
-  underground: { road: 'underground', rail: 'railUnderground' },
   ground: { road: 'ground', rail: 'rail' },
   elevated: { road: 'elevated', rail: 'railElevated' },
   airspace: { road: 'airspace', rail: 'railAirspace' },
 };
+// Underground levels are generated rather than listed by hand, one entry
+// per level 1..UNDERGROUND_LEVELS — level 1 resolves to the original
+// 'underground'/'railUnderground' names via undergroundGradeName/
+// undergroundRailLayerName above, so this is a pure extension of what
+// already existed, not a rename.
+for(let level=1; level<=UNDERGROUND_LEVELS; level++){
+  const grade = undergroundGradeName(level);
+  const railLayer = undergroundRailLayerName(level);
+  LAYER_GRADE_KIND[grade] = [grade, 'road'];
+  LAYER_GRADE_KIND[railLayer] = [grade, 'rail'];
+  GRADE_KIND_LAYER[grade] = { road: grade, rail: railLayer };
+}
 function trackAt(x,y,layer){
   const [grade, kind] = LAYER_GRADE_KIND[layer];
   return getCell(x,y).layers[grade][kind];
 }
 function newRampState(){
-  // One boolean per RAMP_PAIRS entry (groundElevated/elevatedAirspace/
-  // undergroundDeep) — a cell can have any combination of the three,
-  // entirely independently, the same way a cell's road and rail track are
-  // independent at a given grade.
+  // One boolean per RAMP_PAIRS entry (currently just groundElevated — see
+  // RAMP_PAIRS above for why deepUnderground/airspace don't get one) — a
+  // cell can have any combination, entirely independently, the same way a
+  // cell's road and rail track are independent at a given grade.
   const state = {};
   for(const pair of RAMP_PAIRS) state[pair.key] = false;
   return state;
+}
+function newLayersObject(){
+  // deepUnderground/ground/elevated/airspace plus one entry per
+  // underground level (§ Multi-level tunnels) — generated the same way
+  // LAYER_GRADE_KIND's underground entries are, so a cell always has
+  // exactly the grades LAYER_GRADE_KIND knows about.
+  const layers = {
+    deepUnderground: newGradeLayer(),
+    ground: newGradeLayer(),
+    elevated: newGradeLayer(),
+    airspace: newGradeLayer(),
+  };
+  for(let level=1; level<=UNDERGROUND_LEVELS; level++){
+    layers[undergroundGradeName(level)] = newGradeLayer();
+  }
+  return layers;
 }
 function getCell(x,y){
   const k = cellKey(x,y);
@@ -192,13 +274,7 @@ function getCell(x,y){
     // road and rail ramps are entirely independent (a cell can have
     // either, both, or neither), same as road/rail track itself.
     ramps: { road: newRampState(), rail: newRampState() },
-    layers: {
-      deepUnderground: newGradeLayer(),
-      underground: newGradeLayer(),
-      ground: newGradeLayer(),
-      elevated: newGradeLayer(),
-      airspace: newGradeLayer(),
-    },
+    layers: newLayersObject(),
   });
   return world.grid.get(k);
 }
