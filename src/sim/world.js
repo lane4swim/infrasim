@@ -5,7 +5,7 @@ const GRID_W = 22, GRID_H = 14, CELL = 40;
 const world = {
   treasury: INITIAL_TREASURY,
   tick: 0,
-  grid: new Map(),          // "x,y" -> { buildingId, ramps, layers:{ground,elevated} }
+  grid: new Map(),          // "x,y" -> { buildingId, ramps, layers:{ground,elevated,underground} }
   entities: new Map(),      // id -> entity handle (see makeEntityHandle below)
   components: {},           // componentName -> Map<entityId, componentData> — the real storage
   // blockId -> {occupiedBy: entityId|null}. Rail's mutual-exclusion state
@@ -35,6 +35,20 @@ function newTrack(){
     edges:{N:false,S:false,E:false,W:false},
     oneWayBlocked:{N:false,S:false,E:false,W:false},
     blockId:{N:null,S:null,E:null,W:null},
+    // A ramp edge (§ Underground layer) is a DIFFERENT thing from a normal
+    // `edges` connection: it's a sloped transition to the SAME kind's track
+    // one grade away, at the ADJACENT cell in that direction — ground track
+    // descending into its neighbor's underground track, or the reverse —
+    // rather than a same-grade connection at the same neighbor. Deliberately
+    // kept out of `edges` (which stays "same-grade connectivity" everywhere
+    // else — degree counts, one-way, Connect/Disconnect) rather than
+    // overloading it, so every piece of code that already reads `edges` for
+    // same-grade purposes doesn't need to learn a new exception. Only ever
+    // set on ground-grade or underground-grade track — never elevated, since
+    // a ramp edge always steps toward/away from underground specifically
+    // (see connectNewTileEdges/cmdBuildUndergroundRamp in commands.js and
+    // findLayerPath in pathfinding.js for the two places this is read).
+    rampEdge:{N:false,S:false,E:false,W:false},
   };
 }
 // One physical grade (ground or elevated) holds every KIND of
@@ -64,18 +78,28 @@ function newGradeLayer(){
 // actually stores it under, and trackAt is the one place every piece of
 // grid-reading/writing code should go through instead of indexing
 // world.grid directly by a flat name.
+// Three grades now (§ Underground layer): underground, ground, elevated —
+// in that vertical order. A ramp, of either kind (same-cell elevated Ramp
+// or sloped underground ramp edge — see rampEdge above), only ever links
+// two ADJACENT grades; there is no direct elevated<->underground
+// transition, only elevated<->ground<->underground via two ramps in series
+// — the natural consequence of every ramp reading its "other grade" as
+// literally the neighboring entry in this same list, never skipping one.
 const LAYER_GRADE_KIND = {
   ground: ['ground', 'road'],
   elevated: ['elevated', 'road'],
+  underground: ['underground', 'road'],
   rail: ['ground', 'rail'],
   railElevated: ['elevated', 'rail'],
+  railUnderground: ['underground', 'rail'],
 };
 // The inverse of LAYER_GRADE_KIND — given a (grade, kind), which flat
-// layer name is that? Used wherever a vertical (ramp) move needs "the
-// same kind, the other grade" (see findLayerPath in pathfinding.js).
+// layer name is that? Used wherever a ramp move needs "the same kind, the
+// other grade" (see findLayerPath in pathfinding.js).
 const GRADE_KIND_LAYER = {
   ground: { road: 'ground', rail: 'rail' },
   elevated: { road: 'elevated', rail: 'railElevated' },
+  underground: { road: 'underground', rail: 'railUnderground' },
 };
 function trackAt(x,y,layer){
   const [grade, kind] = LAYER_GRADE_KIND[layer];
@@ -91,8 +115,8 @@ function getCell(x,y){
     // independent at a given grade. One map instead of a `ramp` +
     // `railRamp` boolean pair for the same reason layers merged: a third
     // kind just adds a third key here, not a third named boolean.
-    ramps: { road: false, rail: false },
-    layers: { ground: newGradeLayer(), elevated: newGradeLayer() },
+    ramps: { road: false, rail: false }, // ground<->elevated only — see rampEdge (above) for ground<->underground
+    layers: { ground: newGradeLayer(), elevated: newGradeLayer(), underground: newGradeLayer() },
   });
   return world.grid.get(k);
 }

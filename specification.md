@@ -160,6 +160,27 @@ without touching simulation code.
 > horizontal one — two *different* modes sharing the *same* layer, which
 > road and rail also ended up needing, and which is not guaranteed to
 > generalize to every future mode pair the way the ramp mechanic did.
+>
+> **Amended in Phase 2 (Underground layer).** A third grade — underground
+> — is now implemented for both road and rail, but the ground↔underground
+> transition deliberately does **not** reuse the same-cell `Ramp` from
+> Phase 1. A `Ramp` links two grades that occupy the *same* (x,y); a
+> ground↔underground transition instead needed to look like a real sloped
+> tunnel mouth, so it's modeled as a **`Tunnel Ramp`**: a sloped connector
+> between two *adjacent* cells on *different* grades (e.g. the ground cell
+> at (x,y) and the underground cell at (x+1,y)), stored as a per-direction
+> `rampEdge` flag kept separate from ordinary `edges` connections. Both
+> ends of a Tunnel Ramp are constrained to straight-through track only —
+> no turn or junction may touch a ramp cell, enforced at build time and
+> retroactively against later connection attempts — matching the request
+> that ramps only sit on straight east-west/north-south infrastructure.
+> There is no direct elevated↔underground ramp; transitions always pass
+> through ground one ramp at a time, which falls out naturally from the
+> grade ordering rather than needing a special case. Pathfinding, rail
+> block signaling, and vehicle movement all generalized to the new grade
+> with almost no code change, because the existing logic already keyed off
+> "did the layer change" rather than "did x/y change" — a sign the Phase 1
+> layer abstraction was sound.
 
 ---
 
@@ -708,12 +729,15 @@ src/
    Station (§6.5) deliberately isn't a true cross-mode handoff yet.
 3. **Continuous network** (pipeline or power) to validate the flow-resolver
    split from the discrete resolver.
-4. **Multi-layer construction** (bridges/tunnels/pylons): partially proven
-   early — ground/elevated road crossings and an explicit Ramp mechanic
-   (§4.1) work now, ahead of schedule, because it turned out to be a small
-   addition on top of per-edge road connectivity rather than needing the
-   rest of the game to exist first. Underground layers and non-road modes
-   using layers are still open.
+4. **Multi-layer construction** (bridges/tunnels/pylons): further along than
+   scheduled — ground/elevated road crossings and an explicit Ramp mechanic
+   (§4.1) work, and an initial underground layer (road + rail) is now
+   implemented with a separate sloped `Tunnel Ramp` mechanic connecting
+   ground and underground track (§4.3 amendment). None of it needed the
+   rest of the game to exist first — it built cleanly on top of per-edge
+   road/rail connectivity. Non-road modes (pipeline/power) using layers,
+   and underground buildings (the Depot remains ground-only by design),
+   are still open.
 5. **Remaining modes** (ship, plane) — should mostly be data + a thin
    mode-module given the abstraction is proven.
 6. **Content/extensibility pass**: JSON Schema validation, content-pack

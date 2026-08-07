@@ -51,8 +51,17 @@ function railCellTouchesYard(x,y){
   }
   return false;
 }
+// A rail cell with any ramp edge (§ Underground layer) is a boundary for
+// the same reason a same-cell Rail Ramp is: the transition itself is
+// always its own segment, shared with no unrelated through-traffic —
+// see railCellIsHub.
+function railCellHasRampEdge(x,y,layer){
+  const track = trackAt(x,y,layer);
+  for(const {dir} of ROAD_DIRS) if(track.rampEdge[dir]) return true;
+  return false;
+}
 function railCellIsHub(x,y,layer){
-  return railCellDegree(x,y,layer) !== 2 || railCellHasSignal(x,y,layer) || railCellTouchesRailEndpoint(x,y) || getCell(x,y).ramps.rail;
+  return railCellDegree(x,y,layer) !== 2 || railCellHasSignal(x,y,layer) || railCellTouchesRailEndpoint(x,y) || getCell(x,y).ramps.rail || railCellHasRampEdge(x,y,layer);
 }
 
 // Computes blocks for one rail layer ('rail' or 'railElevated') into the
@@ -111,20 +120,24 @@ function computeRailBlocksForLayer(layer, blockIdCounter){
     }
   }
 }
-// Rail's two layers ('rail' and 'railElevated', see world.js) each get
-// their own independent block graph — a railRamp cell is a hub on BOTH
-// (see railCellIsHub above), so a train transitioning between them always
-// crosses a block boundary there anyway; there's no need for one
-// combined graph spanning the vertical move itself (tickTrainMovement
-// treats a layer-changing step as always allowed, with no edge/block of
-// its own — see its canEnter/onEnter callbacks). Both layers' blocks
-// share one world.railBlocks map and one continuous id sequence, exactly
-// like before this existed for a single layer.
+// Rail's three layers ('rail', 'railElevated', 'railUnderground' — see
+// world.js) each get their own independent block graph — a ramp cell
+// (same-cell Rail Ramp OR a ground<->underground ramp edge) is a hub on
+// BOTH layers it touches (see railCellIsHub above), so a train
+// transitioning between any two of them always crosses a block boundary
+// there anyway; there's no need for one combined graph spanning the
+// transition itself (tickTrainMovement treats a layer-changing step as
+// always allowed, with no edge/block of its own — see its canEnter/
+// onEnter callbacks, which key off `cur.layer !== next.layer` regardless
+// of whether that step also changed x/y, as a ramp-edge step does). All
+// three layers' blocks share one world.railBlocks map and one continuous
+// id sequence, exactly like before this existed for a single layer.
 function computeRailBlocks(){
   world.railBlocks = new Map();
   const blockIdCounter = {next: 1};
   computeRailBlocksForLayer('rail', blockIdCounter);
   computeRailBlocksForLayer('railElevated', blockIdCounter);
+  computeRailBlocksForLayer('railUnderground', blockIdCounter);
 }
 function releaseBlock(v){
   if(v.currentBlock==null) return;

@@ -81,6 +81,14 @@ function render(){
   // distinct color so a crossing (both layers occupying the same cell
   // without connecting) is visible as two independent lines rather than
   // one merged road.
+  // Underground is drawn FIRST and dashed — a first-pass visualization,
+  // not a real "which level am I looking at" toggle (§ Underground layer;
+  // that's open follow-up work). Ground/elevated content painted after it
+  // naturally covers it wherever both exist at the same cell, so an
+  // underground line only actually shows through where the ground above
+  // it is empty — a deliberately muted "X-ray" hint rather than a full
+  // second view.
+  drawRoadLayer('underground', '#5a4a3a', 6, true);
   drawRoadLayer('ground', getCss('--road'), 8);
   drawRoadLayer('elevated', '#7fb8c9', 12);
   // Rail reuses drawRoadLayer entirely unchanged — same {track,edges,
@@ -89,7 +97,9 @@ function render(){
   // independent lines (different layer key, never auto-connected).
   // railElevated is rail's own bridge layer (rail ramps, not roads) — a
   // lighter tint of rail's purple, the same relationship elevated road's
-  // light blue has to ground road's gray.
+  // light blue has to ground road's gray. railUnderground is the same
+  // dashed/muted treatment as underground road, just rail's own hue.
+  drawRoadLayer('railUnderground', '#4a3a5a', 8, true);
   drawRoadLayer('rail', '#9b6bd6', 10);
   drawRoadLayer('railElevated', '#c9a8e8', 13);
 
@@ -120,6 +130,28 @@ function render(){
     ctx.restore();
   }
 
+  // Tunnel ramp markers (§ Underground layer) — a ramp edge is a property
+  // of one specific direction on one specific cell (not the whole cell,
+  // like the same-cell Ramp diamonds above), so its marker sits at the
+  // edge port the ramp actually descends through, not the cell center —
+  // visually distinct in both position and shape (a smaller diamond right
+  // at the boundary the vehicle actually crosses).
+  for(const [k,cell] of world.grid){
+    const [x,y] = k.split(',').map(Number);
+    for(const {dir} of ROAD_DIRS){
+      if(cell.layers.ground.road.rampEdge[dir]) drawTunnelRampMarker(x,y,dir,'#5a4a3a');
+      if(cell.layers.ground.rail.rampEdge[dir]) drawTunnelRampMarker(x,y,dir,'#4a3a5a');
+    }
+  }
+  function drawTunnelRampMarker(x,y,dir,color){
+    const [px,py] = trackPort(x,y,dir);
+    ctx.save();
+    ctx.translate(px,py); ctx.rotate(Math.PI/4);
+    ctx.fillStyle = color;
+    ctx.fillRect(-4,-4,8,8);
+    ctx.restore();
+  }
+
   // level crossings — a small white X marking a cell where a road layer and
   // its same-grade rail layer physically share the same grid cell
   // (necessarily crossing at a right angle; see
@@ -133,7 +165,7 @@ function render(){
   // "vehicles may have to wait here."
   for(const [k] of world.grid){
     const [x,y] = k.split(',').map(Number);
-    if(!isRoadRailCrossing(x,y,'rail') && !isRoadRailCrossing(x,y,'railElevated')) continue;
+    if(!isRoadRailCrossing(x,y,'rail') && !isRoadRailCrossing(x,y,'railElevated') && !isRoadRailCrossing(x,y,'railUnderground')) continue;
     const cx = x*CELL+CELL/2, cy = y*CELL+CELL/2;
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 2;
@@ -143,7 +175,8 @@ function render(){
     ctx.stroke();
   }
 
-  function drawRoadLayer(layerName, color, margin){
+  function drawRoadLayer(layerName, color, margin, dashed){
+    if(dashed) ctx.setLineDash([5,4]); // underground/railUnderground only — see the call sites above
     for(const [k] of world.grid){
       const [x,y] = k.split(',').map(Number);
       const track = trackAt(x,y,layerName);
@@ -160,6 +193,7 @@ function render(){
         if(!thisBlocked && otherBlocked) drawOneWayArrow(x, y, dir, margin);
       }
     }
+    if(dashed) ctx.setLineDash([]);
   }
   function drawOneWayArrow(x, y, dir, margin){
     const cx = x*CELL+CELL/2, cy = y*CELL+CELL/2;
@@ -302,6 +336,16 @@ function render(){
       // vehicle's own elevated layer), so one shared visual cue is enough.
       ctx.strokeStyle='#7fb8c9'; ctx.lineWidth=2;
       ctx.strokeRect(cx-w/2-2, cy-h/2-2, w+4, h+4);
+    }
+    if(v.layer==='underground' || v.layer==='railUnderground'){
+      // Same idea as the bridge outline, dashed instead of solid — "in a
+      // tunnel" reads as the opposite of "on a bridge" (below vs. above),
+      // and the dash matches the dashed underground track itself.
+      ctx.save();
+      ctx.setLineDash([4,3]);
+      ctx.strokeStyle='#8a7a6a'; ctx.lineWidth=2;
+      ctx.strokeRect(cx-w/2-2, cy-h/2-2, w+4, h+4);
+      ctx.restore();
     }
     if(v===selected){
       ctx.strokeStyle='#fff'; ctx.lineWidth=2;

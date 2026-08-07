@@ -1665,3 +1665,129 @@ the two touched files needed changes. Verified end-to-end in a real
 browser: 10 purchased trucks and an assembled 3-wagon train all report
 quarter-tile lengths (with real variety among the trucks), with no
 console errors.
+
+---
+
+# Phase 2 — Underground layer (initial implementation)
+
+A third grade, alongside ground and elevated — the last piece of §15's
+milestone 4 ("underground layers... still open"). Geometrically different
+from the road Ramp / Rail Ramp that already link ground and elevated: a
+Tunnel Ramp doesn't share a cell with both grades, it slopes between two
+ADJACENT cells — a ground tile and its underground neighbor one step
+over — and only ever along a straight stretch of track, never at a turn
+or junction.
+
+## Design
+
+- **A third grade, not a fourth pair of top-level layers.** `world.js`'s
+  `layers` object gains `underground: newGradeLayer()` alongside
+  `ground`/`elevated` — the same grade×kind structure the road/rail merge
+  (an earlier addendum) built specifically so a new grade or kind is a
+  small, local addition, not a new compatibility matrix. Flat layer names
+  follow the existing convention: `'underground'` (road) and
+  `'railUnderground'` (rail), both registered in `LAYER_GRADE_KIND`/
+  `GRADE_KIND_LAYER`.
+- **Two genuinely different kinds of ramp, both real.** The existing
+  (road) Ramp / Rail Ramp — one cell, both grades physically present,
+  transition via a same-cell vertical step — stays exactly as it was,
+  unchanged, for ground<->elevated. A new `rampEdge:{N,S,E,W}` field on
+  `newTrack()` represents the second kind: a sloped, directional
+  transition to the SAME kind's track one cell over, at the adjacent
+  grade — set on ground-grade or underground-grade track only, never
+  elevated (there is no direct elevated<->underground ramp; getting
+  between them always passes through ground, one ramp at a time — the
+  natural result of a ramp only ever reading "the other grade" as the
+  literal neighboring entry in `LAYER_GRADE_KIND`'s ground/elevated/
+  underground ordering, never skipping one). Deliberately kept out of the
+  existing `edges` field (which stays "same-grade connectivity" exactly
+  as it always meant, everywhere it's already read) rather than
+  overloading it with a new meaning.
+- **The straight-through constraint** ("ramps should be constrained to
+  infrastructure along east-west, north-south edges; no other edges may
+  be connected") is enforced two ways: at build time
+  (`cmdBuildUndergroundRamp`/`cmdBuildRailUndergroundRamp` reject a ramp
+  attempt unless BOTH cells' existing connections — `edges` and any other
+  `rampEdge` — are limited to the ramp's own straight-through axis), and
+  ongoing (`connectNewTileEdges`/`cmdToggleConnection` reject a NEW
+  perpendicular connection at a cell that already has a ramp edge, so the
+  constraint can't be violated retroactively by building around it). The
+  two cells are auto-detected (whichever has ground track vs. underground
+  track), so the player can click either one first.
+- **Pathfinding, blocks, and movement needed surprisingly little.**
+  `findLayerPath` gained one new candidate-move loop (a lateral step
+  through a `rampEdge` direction, alongside the existing same-cell Ramp
+  vertical step) — everything downstream (`tickTrainMovement`'s block
+  canEnter/onEnter, `advanceAlongPath`'s footprint/trail bookkeeping)
+  already keyed off `cur.layer !== next.layer` generically, which is
+  equally true whether the layer change happens at the same cell (the old
+  Ramp) or an adjacent one (the new ramp edge) — so those needed zero
+  changes. `railCellIsHub` gained one more hub condition (any `rampEdge`
+  present), and `computeRailBlocks` now runs a third independent block
+  graph for `railUnderground`, exactly like `railElevated` already does.
+
+## What changed
+
+- **`world.js`**: `underground` grade; `rampEdge` field on `newTrack()`;
+  `'underground'`/`'railUnderground'` in `LAYER_GRADE_KIND`/
+  `GRADE_KIND_LAYER`.
+- **`loader.js`**: `UNDERGROUND_COST_MULTIPLIER` (3x — tunneling costs
+  more than bridging) and `UNDERGROUND_RAMP_COST` ($80, vs. a Ramp's $40).
+- **`commands.js`**: new `directionBlockedByRamp` guard, used by
+  `connectNewTileEdges`/`cmdToggleConnection`; new
+  `buildUndergroundRamp`/`cmdBuildUndergroundRamp`/
+  `cmdBuildRailUndergroundRamp`; `buildTrackTile`'s cost formula and
+  `cmdDemolish`'s edge-severing both generalized for the third grade
+  (demolishing either side of a ramp clears `rampEdge` on both sides
+  symmetrically, the same way demolishing normal track already clears
+  `edges` on its neighbor).
+- **`pathfinding.js`**: `findLayerPath` gained the lateral ramp-edge move;
+  the existing same-cell Ramp move is now explicitly guarded to
+  ground/elevated only (it was implicitly safe before underground
+  existed, since `cell.ramps` had no other meaning to collide with).
+- **`rail-blocks.js`**: `railCellHasRampEdge`; `railCellIsHub` and
+  `computeRailBlocks` both extended for the third grade.
+- **`render.js`**: underground/`railUnderground` track render dashed and
+  in a muted, earthy color, drawn FIRST so ground/elevated content
+  naturally covers it wherever both exist at a cell — a deliberate
+  first-pass simplification (an "X-ray hint" through empty ground, not a
+  real per-layer visibility toggle; see Known limitation below). A small
+  edge-positioned marker (distinct from the same-cell Ramp's center
+  diamond) marks each ramp edge; a vehicle on either underground layer
+  gets a dashed outline (the "in a tunnel" counterpart to the elevated
+  layers' solid "on a bridge" outline).
+- **`ui.js`/`index.html`**: the Network layer selector gained an
+  Underground option; new Build Tunnel Ramp / Build Rail Tunnel Ramp
+  tools using the same two-click interaction as Connect/Disconnect (click
+  a ground tile, then the adjacent underground tile, or the reverse
+  order); cost labels and hint text updated throughout.
+
+## Known limitation
+
+Rendering is a genuine first pass, not a solved problem: underground
+track only shows through where the ground above it happens to be empty,
+since there's no dedicated "which level am I looking at" view yet — a
+busy ground-level map could visually bury an underground line entirely
+even though it's still fully functional underneath. A real
+layer-visibility toggle is natural follow-up work, not attempted here.
+
+## Testing
+
+New `test/test-underground.js` (8 sections, 22 checks): cost/adjacency/
+both-grades validation, order-independence of the two clicks, the
+straight-through constraint rejecting a perpendicular connection on
+either side (and the valid straight-continuation case), the
+after-the-fact guard against adding a new perpendicular connection once
+a ramp exists (both auto-connect and manual Connect), pathfinding
+actually crossing the ramp (and confirming no direct elevated<->
+underground path exists), rail blocks treating a ramp cell as a hub on
+both layers with distinct block ids, a real train's full
+ground->underground->ground round trip delivering cargo end to end via
+`simTick()`, and demolishing either side of a ramp correctly clearing it
+on both sides. All 6 test files pass. Also verified end-to-end in a real
+browser: the Underground layer selection updates the road cost label
+live ($30/tile, 3x), the two-click Tunnel Ramp tool builds correctly with
+live hint-text feedback, `findRoadPath` confirms a real crossable path,
+and the dashed underground rendering with its edge-positioned ramp marker
+renders correctly beneath the ground-level content, with no console
+errors.

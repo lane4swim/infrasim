@@ -6,6 +6,7 @@ let selected = null;       // selected building or vehicle
 let pickingStopFor = null; // {vehicle, action} awaiting a click on a building to add that stop
 let oneWayFirst = null;    // first tile picked for the One-Way tool, awaiting a second click
 let connectFirst = null;   // first tile picked for the Connect/Disconnect tool, awaiting a second click
+let undergroundRampFirst = null; // first tile picked for the Tunnel Ramp tool, awaiting a second click
 let hoverCell = null;
 
 document.querySelectorAll('.tool-btn[data-tool]').forEach(btn=>{
@@ -16,6 +17,7 @@ document.querySelectorAll('.tool-btn[data-tool]').forEach(btn=>{
     pickingStopFor = null;
     oneWayFirst = null;
     connectFirst = null;
+    undergroundRampFirst = null;
     document.getElementById('hint').textContent = toolHint(currentTool);
   });
 });
@@ -25,6 +27,8 @@ function toolHint(t){
     road:'Click or drag to build road on the selected layer ($10/tile, x2 elevated). Uncheck auto-connect to place tiles without joining them. On the ground layer, crosses rail track at a right angle only — it won\'t connect through track running the same direction.',
     ramp:'Click a cell that already has both a ground and an elevated road tile to link them ($40).',
     railramp:'Click a cell that already has both a rail and an elevated rail tile to link them ($40) — rail\'s own Ramp, entirely independent of the road one.',
+    tunnelramp:`Click a ground road tile, then click an adjacent underground road tile ($${UNDERGROUND_RAMP_COST}) — a sloped link, not a same-cell one. Only works along a straight stretch: neither tile may have any other connection besides the straight-through continuation.`,
+    railtunnelramp:`Click a ground rail tile, then click an adjacent underground rail tile ($${UNDERGROUND_RAMP_COST}) — rail's own Tunnel Ramp, entirely independent of the road one. Same straight-through-only rule.`,
     connect:'Click a road tile, then click an adjacent road tile on the same layer — connects them if not joined, disconnects them if they are.',
     oneway:'Click a road tile, then click an adjacent connected tile — traffic will only be allowed from the first to the second.',
     mine:`Click the top-left cell for a Mine (${BUILDING_DEFS.mine.footprint.w}x${BUILDING_DEFS.mine.footprint.h}). Always produces Ore. It doesn't need to touch a road itself — build a Station touching it for trucks to use.`,
@@ -45,11 +49,14 @@ function toolHint(t){
 
 function currentTier(){ return document.getElementById('tierSelect').value; }
 function currentLayer(){ return document.getElementById('layerSelect').value; }
-// The same Ground/Elevated dropdown road tools already read, translated
-// to rail's own layer names — one shared "Network" layer selector governs
-// every track-laying tool (Road AND Track), rather than rail needing a
-// second dropdown of its own.
-function currentRailLayer(){ return currentLayer()==='elevated' ? 'railElevated' : 'rail'; }
+// The same Ground/Elevated/Underground dropdown road tools already read,
+// translated to rail's own layer names — one shared "Network" layer
+// selector governs every track-laying tool (Road AND Track), rather than
+// rail needing a second dropdown of its own.
+function currentRailLayer(){
+  const layer = currentLayer();
+  return layer==='elevated' ? 'railElevated' : layer==='underground' ? 'railUnderground' : 'rail';
+}
 function currentFacing(){ return document.getElementById('facingSelect').value; }
 function currentAutoConnect(){ return document.getElementById('autoConnect').checked; }
 function currentTownResource(){ return document.getElementById('townResourceSelect').value; }
@@ -184,6 +191,7 @@ function handleClick(cell){
   if(currentTool==='road'){ postCommand('cmdBuildRoad', [x,y,currentLayer(),currentAutoConnect()]); return; }
   if(currentTool==='ramp'){ postCommand('cmdBuildRamp', [x,y]); return; }
   if(currentTool==='railramp'){ postCommand('cmdBuildRailRamp', [x,y]); return; }
+  if(currentTool==='tunnelramp' || currentTool==='railtunnelramp'){ handleUndergroundRampClick(x,y); return; }
   if(currentTool==='connect'){ handleConnectClick(x,y); return; }
   if(currentTool==='oneway'){ handleOneWayClick(x,y); return; }
   if(currentTool==='mine'){ postCommand('cmdBuildBuilding', ['mine', x, y, currentTier()]); return; }
@@ -232,6 +240,32 @@ function handleConnectClick(x,y){
   }
   postCommand('cmdToggleConnection', [connectFirst.x, connectFirst.y, x, y, layer]);
   connectFirst = null;
+  document.getElementById('hint').textContent = toolHint(currentTool);
+}
+
+function handleUndergroundRampClick(x,y){
+  // Unlike Connect/OneWay, the two clicks aren't on the same layer — one is
+  // a ground tile, the other its underground neighbor, in either order
+  // (cmdBuildUndergroundRamp/cmdBuildRailUndergroundRamp auto-detect which
+  // is which) — so there's no single "layer" to check for track against
+  // here; the command itself validates grade/adjacency/straight-through
+  // once both clicks are in.
+  const kind = currentTool==='railtunnelramp' ? 'rail' : 'road';
+  const groundLayer = GRADE_KIND_LAYER.ground[kind], undergroundLayer = GRADE_KIND_LAYER.underground[kind];
+  if(!trackAt(x,y,groundLayer).track && !trackAt(x,y,undergroundLayer).track){
+    logEvent(`No ground or underground ${kind} tile there.`, 'warn');
+    undergroundRampFirst = null;
+    document.getElementById('hint').textContent = toolHint(currentTool);
+    return;
+  }
+  if(!undergroundRampFirst){
+    undergroundRampFirst = {x,y};
+    document.getElementById('hint').textContent = 'Now click the adjacent ground or underground tile to link.';
+    return;
+  }
+  const cmd = currentTool==='railtunnelramp' ? 'cmdBuildRailUndergroundRamp' : 'cmdBuildUndergroundRamp';
+  postCommand(cmd, [undergroundRampFirst.x, undergroundRampFirst.y, x, y]);
+  undergroundRampFirst = null;
   document.getElementById('hint').textContent = toolHint(currentTool);
 }
 
@@ -423,17 +457,20 @@ document.getElementById('townCost').textContent = '$' + BUILDING_DEFS.town.build
 document.getElementById('stationCost').textContent = '$' + BUILDING_DEFS.station.buildCost;
 document.getElementById('rampCost').textContent = '$' + RAMP_COST;
 document.getElementById('railRampCost').textContent = '$' + RAMP_COST;
+document.getElementById('tunnelRampCost').textContent = '$' + UNDERGROUND_RAMP_COST;
+document.getElementById('railTunnelRampCost').textContent = '$' + UNDERGROUND_RAMP_COST;
 document.getElementById('depotCost').textContent = '$' + BUILDING_DEFS.depot.buildCost;
 document.getElementById('trainyardCost').textContent = '$' + BUILDING_DEFS.trainyard.buildCost;
+function costMultiplierFor(layer){
+  return layer==='elevated' ? ELEVATED_COST_MULTIPLIER : layer==='underground' ? UNDERGROUND_COST_MULTIPLIER : 1;
+}
 function updateRoadCostLabel(){
-  const elevated = currentLayer()==='elevated';
   document.getElementById('roadCost').textContent =
-    '$' + (ROAD_COST_PER_TILE * (elevated ? ELEVATED_COST_MULTIPLIER : 1)) + '/tile';
+    '$' + (ROAD_COST_PER_TILE * costMultiplierFor(currentLayer())) + '/tile';
 }
 function updateTrackCostLabel(){
-  const elevated = currentLayer()==='elevated';
   document.getElementById('trackCost').textContent =
-    '$' + (RAIL_DEFS.track.costPerTile * (elevated ? ELEVATED_COST_MULTIPLIER : 1)) + '/tile';
+    '$' + (RAIL_DEFS.track.costPerTile * costMultiplierFor(currentLayer())) + '/tile';
 }
 document.getElementById('layerSelect').addEventListener('change', updateRoadCostLabel);
 document.getElementById('layerSelect').addEventListener('change', updateTrackCostLabel);

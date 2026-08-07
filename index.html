@@ -131,6 +131,7 @@
     <select id="layerSelect">
       <option value="ground">Ground layer</option>
       <option value="elevated">Elevated layer (bridge, x2 cost)</option>
+      <option value="underground">Underground layer (tunnel, x3 cost)</option>
     </select>
     <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-dim);margin:2px 0 8px;">
       <input type="checkbox" id="autoConnect" checked style="margin:0;">
@@ -138,6 +139,7 @@
     </label>
     <button class="tool-btn" data-tool="road"><span class="tool-swatch" style="background:var(--road)"></span>Build Road<span class="cost" id="roadCost">$10/tile</span></button>
     <button class="tool-btn" data-tool="ramp"><span class="tool-swatch" style="background:#7fb8c9"></span>Build Ramp<span class="cost" id="rampCost">$40</span></button>
+    <button class="tool-btn" data-tool="tunnelramp"><span class="tool-swatch" style="background:#5a4a3a"></span>Build Tunnel Ramp<span class="cost" id="tunnelRampCost">$80</span></button>
     <button class="tool-btn" data-tool="connect"><span class="tool-swatch" style="background:var(--teal)"></span>Connect / Disconnect</button>
     <button class="tool-btn" data-tool="oneway"><span class="tool-swatch" style="background:var(--amber)"></span>Toggle One-Way</button>
     <button class="tool-btn" data-tool="station"><span class="tool-swatch" style="background:#c9a227"></span>Build Station<span class="cost" id="stationCost">$60</span></button>
@@ -151,9 +153,16 @@
       <option value="ore">Station handles: Ore</option>
       <option value="steel">Station handles: Steel</option>
     </select>
-    <div class="hint-text">Ground/Elevated applies to Road, Ramp, Connect, One-Way, Demolish, and
-      — since rail also runs on both layers now — Build Track, Connect /
-      Disconnect Track, and Toggle Signal Direction too. Uncheck
+    <div class="hint-text">Ground/Elevated/Underground applies to Road, Ramp, Tunnel Ramp,
+      Connect, One-Way, Demolish, and — since rail also runs on all three
+      layers — Build Track, Connect / Disconnect Track, and Toggle Signal
+      Direction too. A Tunnel Ramp is different from a (bridge) Ramp: it
+      doesn't link both grades at one cell, it slopes between two ADJACENT
+      tiles — a ground tile and its underground neighbor one step over —
+      so click the ground tile then the underground tile next to it (or
+      the reverse order). It only works along a straight stretch: neither
+      tile may have any other connection except the straight-through
+      continuation, so a ramp never sits at a turn or junction. Uncheck
       auto-connect to lay road tiles side by side without joining them —
       handy for parallel one-way streets — then use Connect / Disconnect to
       wire up (or sever) specific edges by hand. Facing sets the single side
@@ -171,6 +180,7 @@
     <div class="section-label">Rail</div>
     <button class="tool-btn" data-tool="track"><span class="tool-swatch" style="background:#9b6bd6"></span>Build Track<span class="cost" id="trackCost">$25/tile</span></button>
     <button class="tool-btn" data-tool="railramp"><span class="tool-swatch" style="background:#c9a8e8"></span>Build Rail Ramp<span class="cost" id="railRampCost">$40</span></button>
+    <button class="tool-btn" data-tool="railtunnelramp"><span class="tool-swatch" style="background:#4a3a5a"></span>Build Rail Tunnel Ramp<span class="cost" id="railTunnelRampCost">$80</span></button>
     <button class="tool-btn" data-tool="trackconnect"><span class="tool-swatch" style="background:var(--teal)"></span>Connect / Disconnect Track</button>
     <button class="tool-btn" data-tool="signal"><span class="tool-swatch" style="background:var(--amber)"></span>Toggle Signal Direction</button>
     <button class="tool-btn" data-tool="depot"><span class="tool-swatch" style="background:#6b5b95"></span>Build Rail Depot<span class="cost" id="depotCost">$300</span></button>
@@ -257,6 +267,13 @@
       same cell — but only at a right angle (marked with a white X), like a
       real level crossing; a track running the same direction as an
       existing road there won't connect through it.
+      Underground is a third grade for road and rail alike, drawn dashed
+      and dimmed since it's beneath everything else — a Tunnel Ramp slopes
+      down to it from an adjacent ground tile (not a same-cell link like a
+      Ramp), and only ever along a straight stretch: no turns or junctions
+      right at the ramp itself. There's no direct elevated-underground
+      ramp — going from one to the other always passes through ground in
+      between, one ramp at a time.
     </div>
   </div>
 

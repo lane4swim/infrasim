@@ -149,7 +149,7 @@ function validateContentPack(pack){
 // happens on the first 'init' message (see worker-client.js's protocol
 // comment for why that has to be a separate later step).
 let CONTENT_PACK, RESOURCES, RESOURCE, RECIPES, BUILDING_DEFS, VEHICLE_DEFS, RAIL_DEFS, ENGINE_DEFS, WAGON_DEFS;
-let INITIAL_TREASURY, ROAD_COST_PER_TILE, ELEVATED_COST_MULTIPLIER, RAMP_COST, DEFAULT_TRANSFER_RATE, TICK_MS, CONSUMPTION_PER_CAPITA;
+let INITIAL_TREASURY, ROAD_COST_PER_TILE, ELEVATED_COST_MULTIPLIER, RAMP_COST, UNDERGROUND_COST_MULTIPLIER, UNDERGROUND_RAMP_COST, DEFAULT_TRANSFER_RATE, TICK_MS, CONSUMPTION_PER_CAPITA;
 
 function initContentPack(pack){
   validateContentPack(pack);
@@ -166,7 +166,9 @@ function initContentPack(pack){
   INITIAL_TREASURY = 5000; // starting cash — bumped up from 1000 now that a Mine->Mill->Town chain needs multiple buildings, stations, and trucks before any income comes in
   ROAD_COST_PER_TILE = 10;
   ELEVATED_COST_MULTIPLIER = 2; // bridges cost more per tile (§16.2-style layer multiplier)
+  UNDERGROUND_COST_MULTIPLIER = 3; // tunneling costs even more per tile than bridging
   RAMP_COST = 40;               // one-time cost to link ground<->elevated at a single cell
+  UNDERGROUND_RAMP_COST = 80;   // one-time cost for a sloped ground<->underground ramp (§ Underground layer) — a tunnel entrance costs more than a bridge Ramp
   // Load/unload rate is now a per-vehicle (VEHICLE_DEFS/WAGON_DEFS
   // transferRate) and per-Station/Depot (BUILDING_DEFS transferRate) content
   // field — the effective rate is whichever is slower (§ adjustable transfer

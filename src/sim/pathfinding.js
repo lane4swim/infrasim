@@ -121,14 +121,19 @@ function buildingRailAccessCell(building){
 }
 
 // BFS over {x,y,layer} nodes: lateral moves follow only established,
-// direction-allowed edges within a layer (respecting one-way blocks); a
-// vertical move to the other grade is only possible at a Ramp of that
-// SAME kind (a road Ramp for road, a Rail Ramp for rail — see
-// GRADE_KIND_LAYER in world.js). Returns an array of nodes from start to
-// end (inclusive), or null. findRoadPath and findRailPath used to be
-// near-identical separate functions (one difference: which of the two
-// flat layer names and which ramp flag); now that both are really just
-// "a kind, and its two grades," they're thin wrappers over this one body.
+// direction-allowed edges within a layer (respecting one-way blocks). A
+// grade change happens one of two ways, both restricted to the SAME kind
+// (a road Ramp for road, a Rail Ramp for rail — see GRADE_KIND_LAYER in
+// world.js): a same-cell vertical step at a (road/rail) Ramp between
+// ground and elevated, or a lateral step at a ramp edge (§ Underground
+// layer) between a ground cell and its underground neighbor one direction
+// over — the two are structurally different (one stays at the same x,y,
+// the other moves to an adjacent cell) but both just add another
+// candidate {x,y,layer} node to the same BFS. Returns an array of nodes
+// from start to end (inclusive), or null. findRoadPath and findRailPath
+// used to be near-identical separate functions (one difference: which of
+// the two flat layer names and which ramp flag); now that both are really
+// just "a kind, and its two grades," they're thin wrappers over this one body.
 function findLayerPath(start, end){
   const nodeKey = n => n.x+','+n.y+','+n.layer;
   if(start.x===end.x && start.y===end.y && start.layer===end.layer) return [start];
@@ -158,9 +163,20 @@ function findLayerPath(start, end){
       if(found) return found;
     }
     const [grade, kind] = LAYER_GRADE_KIND[cur.layer];
-    if(getCell(cur.x,cur.y).ramps[kind]){
+    // Same-cell vertical Ramp — ground<->elevated only; never triggered for
+    // underground (cell.ramps is exclusively the elevated Ramp's flag).
+    if((grade==='ground' || grade==='elevated') && getCell(cur.x,cur.y).ramps[kind]){
       const otherGrade = grade==='ground' ? 'elevated' : 'ground';
       const found = tryVisit({x:cur.x, y:cur.y, layer:GRADE_KIND_LAYER[otherGrade][kind]}, cur);
+      if(found) return found;
+    }
+    // Lateral ramp edge — ground<->underground, one step over at whichever
+    // direction(s) this cell's track has rampEdge set (never true for
+    // elevated track, so this is a harmless no-op there).
+    for(const {dir,dx,dy} of ROAD_DIRS){
+      if(!track.rampEdge[dir]) continue;
+      const otherGrade = grade==='ground' ? 'underground' : 'ground';
+      const found = tryVisit({x:cur.x+dx, y:cur.y+dy, layer:GRADE_KIND_LAYER[otherGrade][kind]}, cur);
       if(found) return found;
     }
   }
