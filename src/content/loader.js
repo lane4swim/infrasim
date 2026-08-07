@@ -67,6 +67,14 @@
 function validateContentPack(pack){
   const fail = msg => { throw new Error('Content pack invalid: ' + msg); };
   const need = (cond, msg) => { if(!cond) fail(msg); };
+  // A vehicle's physical length is quantized to quarter-tile increments —
+  // real rolling stock/trucks come in standard length classes, not
+  // arbitrary continuous sizes, and it keeps every rendered/reserved
+  // footprint (§ shared movement engine's footprintKeysFor) a "clean"
+  // number instead of an arbitrary float. Floating-point-safe: compares
+  // the rounded quarter-count back against the original rather than
+  // testing divisibility directly.
+  const isQuarterTile = n => Math.abs(Math.round(n*4) - n*4) < 1e-9;
   for(const section of ['resources','recipes','buildings','vehicles','rail','engines','wagons']){
     need(pack && typeof pack[section]==='object' && pack[section]!==null, `missing "${section}" section`);
   }
@@ -102,6 +110,8 @@ function validateContentPack(pack){
     need(v.brakeForce > v.engineForce, `vehicle "${id}" has brakeForce (${v.brakeForce}) <= engineForce (${v.engineForce}) — decel must exceed accel at any mass`);
     need(pack.resources[v.resource], `vehicle "${id}" references undefined resource "${v.resource}"`);
     need(typeof v.transferRate==='number', `vehicle "${id}" is missing a numeric transferRate`);
+    need(typeof v.lengthTiles==='number', `vehicle "${id}" is missing a numeric lengthTiles`);
+    need(isQuarterTile(v.lengthTiles), `vehicle "${id}" lengthTiles (${v.lengthTiles}) must be a multiple of 0.25`);
   }
   for(const [id, t] of Object.entries(pack.rail)){
     need(typeof t.costPerTile==='number', `rail def "${id}" is missing a numeric costPerTile`);
@@ -116,6 +126,7 @@ function validateContentPack(pack){
     need(typeof e.maxSpeedTilesPerTick==='number', `engine "${id}" is missing a numeric maxSpeedTilesPerTick`);
     need(typeof e.massEmpty==='number', `engine "${id}" is missing a numeric massEmpty`);
     need(typeof e.lengthTiles==='number', `engine "${id}" is missing a numeric lengthTiles`);
+    need(isQuarterTile(e.lengthTiles), `engine "${id}" lengthTiles (${e.lengthTiles}) must be a multiple of 0.25`);
   }
   for(const [id, w] of Object.entries(pack.wagons)){
     need(typeof w.purchaseCost==='number', `wagon "${id}" is missing a numeric purchaseCost`);
@@ -123,6 +134,7 @@ function validateContentPack(pack){
     need(pack.resources[w.resource], `wagon "${id}" references undefined resource "${w.resource}"`);
     need(typeof w.massEmpty==='number', `wagon "${id}" is missing a numeric massEmpty`);
     need(typeof w.lengthTiles==='number', `wagon "${id}" is missing a numeric lengthTiles`);
+    need(isQuarterTile(w.lengthTiles), `wagon "${id}" lengthTiles (${w.lengthTiles}) must be a multiple of 0.25`);
     need(typeof w.transferRate==='number', `wagon "${id}" is missing a numeric transferRate`);
   }
 }

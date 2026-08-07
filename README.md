@@ -1597,3 +1597,71 @@ against a real 8-cell siding with the amber platform marker on the right
 side, and an invalid length sent directly via `postCommand` (bypassing
 the dropdown, which only ever offers valid choices) is rejected by the
 command layer with a clear log message, with no console errors.
+
+---
+
+# Addendum — Vehicle lengths are quantized to quarter tiles
+
+Every truck, engine, and wagon's physical length (`lengthTiles`) — and
+each individual vehicle instance's own randomized length, derived from it
+— is now required to be a multiple of 0.25 tiles, not an arbitrary
+number. Real rolling stock/trucks come in standard length classes, not
+continuous sizes; this makes the game's numbers match that.
+
+## Design
+
+- **Content pack**: `validateContentPack` now requires `lengthTiles` on
+  every `VEHICLE_DEFS`/`ENGINE_DEFS`/`WAGON_DEFS` entry to be a multiple
+  of 0.25 (a new `isQuarterTile` helper, floating-point-safe — compares
+  the rounded quarter-count back against the original rather than testing
+  divisibility directly). This also closed a real pre-existing gap:
+  `VEHICLE_DEFS.lengthTiles` wasn't validated as a required number at
+  all before this (engines/wagons were; trucks, oddly, weren't) — now
+  all three are consistent. The shipped pack's Bulk Truck was the only
+  offender (`1.3` → `1.25`, the nearest valid value); everything else
+  already happened to satisfy the constraint.
+- **Per-instance randomization**: `randomizedMovement` (`entities.js`)
+  already gave each vehicle instance its own slightly-varied length (§
+  "real vehicles of the same model aren't perfectly identical") via a
+  continuous `* (0.9 + Math.random()*0.2)` multiplier — that alone could
+  land anywhere, so the result is now snapped to the nearest 0.25 (with a
+  0.25 floor) before being stored. A real consequence worth noting, not a
+  bug: for a short enough base length relative to that ±10% window (the
+  Bulk Truck's 1.25, specifically), the whole randomized range collapses
+  into a single quantized value — every Bulk Truck ends up exactly 1.25
+  tiles. That's arguably more realistic, not less: a specific truck model
+  really is one fixed length; it's the OTHER Movement stats (mass, speed,
+  force) that still vary continuously per instance, unaffected by this.
+- **Trains**: `getTrainStats` sums `engine.lengthTiles + wagon.lengthTiles
+  * wagonCount` before randomization ever runs — since both operands are
+  already quarter-tile multiples, so is their sum, and the same snapping
+  in `randomizedMovement` handles the final randomized total exactly like
+  a truck's.
+
+## What changed
+
+- **`loader.js`**: new `isQuarterTile` helper; `validateContentPack`
+  requires it for `vehicles`/`engines`/`wagons` `lengthTiles`, and now
+  also requires `vehicles[].lengthTiles` to exist at all (previously
+  unvalidated).
+- **`index.html`**: Bulk Truck's `lengthTiles` corrected to `1.25`.
+- **`entities.js`**: `randomizedMovement`'s `length` field is now
+  `Math.max(0.25, Math.round(raw / 0.25) * 0.25)` instead of the raw
+  continuous value.
+
+## Testing
+
+New `test/test-vehicle-length.js` (3 sections, 9 checks): every def in
+the shipped content pack satisfies the quarter-tile constraint; 50
+randomized trucks (Flatbed — chosen because its wider absolute variance
+window actually straddles more than one 0.25 bucket, unlike the Bulk
+Truck's, so the test can also confirm genuine variety survives
+quantization) all land on exact multiples of 0.25; 30 assembled trains
+across varying wagon counts do too. `test-content-pack.js` gained three
+new rejection-case checks (a non-quarter-tile `lengthTiles` on a vehicle,
+engine, or wagon is rejected) and its modder-pack fixture's `lengthTiles`
+was corrected to a valid value. All 5 test files pass — nothing outside
+the two touched files needed changes. Verified end-to-end in a real
+browser: 10 purchased trucks and an assembled 3-wagon train all report
+quarter-tile lengths (with real variety among the trucks), with no
+console errors.
