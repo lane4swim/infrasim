@@ -99,9 +99,14 @@ function burialColor(hex, elevation){
 // more hidden" trend deepUnderground's own more extreme treatment already
 // established — capped well short of deepUnderground's own darkness so
 // the deepest REGULAR level and the separate, reserved deepUnderground
-// grade stay visually distinct.
-function undergroundLevelColor(level, kind){
-  return mixTowardBlack(kind==='rail' ? '#4a3a5a' : '#5a4a3a', Math.min(0.5, (level-1)*0.18));
+// grade stay visually distinct. The depth-based darkening exists purely to
+// tell multiple SIMULTANEOUSLY-VISIBLE levels apart when they're all
+// stacked at once (§ Underground visibility toggle) — once the player
+// focuses on exactly one level, that reason is moot, so `focused` skips
+// the darkening and renders at full clarity instead.
+function undergroundLevelColor(level, kind, focused){
+  const base = kind==='rail' ? '#4a3a5a' : '#5a4a3a';
+  return focused ? base : mixTowardBlack(base, Math.min(0.5, (level-1)*0.18));
 }
 function undergroundLevelMargin(level){
   return Math.max(4, 6-(level-1));
@@ -169,30 +174,37 @@ function render(){
   // without connecting) is visible as two independent lines rather than
   // one merged road.
   // Underground levels (§ Multi-level tunnels) are drawn FIRST and dashed,
-  // deepest level first — a first-pass visualization, not a real "which
-  // level am I looking at" toggle (§ Underground layer; that's open
-  // follow-up work). Ground/elevated content painted after it naturally
-  // covers it wherever both exist at the same cell, so an underground line
-  // only actually shows through where the ground above it is empty — a
-  // deliberately muted "X-ray" hint rather than a full second view. Each
-  // level darkens/thickens a bit further than the one above it (see
-  // undergroundLevelColor/undergroundLevelMargin above).
+  // deepest level first, stacked as a muted "X-ray" hint by default — but
+  // `undergroundView` (§ Underground visibility toggle) can narrow that
+  // down to exactly one level: `'all'` (the default) keeps every level
+  // stacked and depth-darkened as before; any other value shows ONLY that
+  // one grade, at full undarkened clarity (see undergroundLevelColor's
+  // `focused` param), and skips every other underground level entirely —
+  // a real "which level am I looking at" view, not just a dimmer hint.
+  // Ground/elevated content painted after it naturally covers it wherever
+  // both exist at the same cell either way.
   // deepUnderground is a flat global plane one grade below the deepest
   // (terrain-following) underground level — an even thicker, dimmer dashed
   // line than any regular level's, since it's the deepest, most hidden
   // thing on the map, and it further darkens per-cell under raised terrain
   // (see burialColor above) — a "level" tunnel visually burrows deeper
   // into a hillside exactly where the hillside actually rises above it.
-  // airspace is the mirror image at the opposite end: a flat global plane
-  // above elevated, drawn as a thin, bright dashed line since it's the
-  // highest, most "in the open" thing on the map — it doesn't get the
-  // burial treatment, since going up into open sky isn't "burrowing."
-  // Both drawn FIRST/LAST respectively in this group so ground/elevated
-  // still paint over them wherever both exist at the same cell — the same
-  // "X-ray hint" treatment every underground level already gets.
-  drawRoadLayer('deepUnderground', '#3a2a1a', 4, true, true);
+  // That terrain-burial darkening is real information (not a
+  // stacked-levels artifact), so it stays even when deepUnderground is
+  // the sole focused view. airspace is the mirror image at the opposite
+  // end: a flat global plane above elevated, drawn as a thin, bright
+  // dashed line since it's the highest, most "in the open" thing on the
+  // map — it doesn't get the burial treatment (going up into open sky
+  // isn't "burrowing") or the view toggle (it's not part of the
+  // underground stack the toggle narrows). Both drawn FIRST/LAST
+  // respectively in this group so ground/elevated still paint over them
+  // wherever both exist at the same cell.
+  const undergroundView = currentUndergroundView();
+  if(undergroundView==='all' || undergroundView==='deepUnderground') drawRoadLayer('deepUnderground', '#3a2a1a', 4, true, true);
   for(let level=UNDERGROUND_LEVELS; level>=1; level--){
-    drawRoadLayer(undergroundGradeName(level), undergroundLevelColor(level,'road'), undergroundLevelMargin(level), true);
+    const grade = undergroundGradeName(level);
+    if(undergroundView!=='all' && undergroundView!==grade) continue;
+    drawRoadLayer(grade, undergroundLevelColor(level,'road',undergroundView===grade), undergroundLevelMargin(level), true);
   }
   drawRoadLayer('ground', getCss('--road'), 8);
   drawRoadLayer('elevated', '#7fb8c9', 12);
@@ -207,10 +219,12 @@ function render(){
   // railDeepUnderground/railAirspace are the same dashed/muted treatment
   // as their road counterparts, just rail's own hue — railDeepUnderground
   // gets the same per-cell burial darkening as deepUnderground, for the
-  // same reason.
-  drawRoadLayer('railDeepUnderground', '#2a1a3a', 6, true, true);
+  // same reason, and the same `undergroundView` filtering applies here too.
+  if(undergroundView==='all' || undergroundView==='deepUnderground') drawRoadLayer('railDeepUnderground', '#2a1a3a', 6, true, true);
   for(let level=UNDERGROUND_LEVELS; level>=1; level--){
-    drawRoadLayer(undergroundRailLayerName(level), undergroundLevelColor(level,'rail'), undergroundLevelMargin(level), true);
+    const grade = undergroundGradeName(level);
+    if(undergroundView!=='all' && undergroundView!==grade) continue;
+    drawRoadLayer(undergroundRailLayerName(level), undergroundLevelColor(level,'rail',undergroundView===grade), undergroundLevelMargin(level), true);
   }
   drawRoadLayer('rail', '#9b6bd6', 10);
   drawRoadLayer('railElevated', '#c9a8e8', 13);
@@ -257,6 +271,10 @@ function render(){
   // directly, which doubles as the color key: a ramp descending further
   // (a deeper level's own color) reads as visually "deeper" than one just
   // off the surface, the same trend the track lines themselves follow.
+  // Filtered by `undergroundView` (§ Underground visibility toggle) the
+  // same way the track lines are — a ramp only shows if the focused level
+  // is one of the two grades it actually connects, so the marker never
+  // dangles at a level the player isn't currently looking at.
   const tunnelRampUpperGrades = ['ground'];
   for(let level=1; level<UNDERGROUND_LEVELS; level++) tunnelRampUpperGrades.push(undergroundGradeName(level));
   for(const [k,cell] of world.grid){
@@ -264,9 +282,9 @@ function render(){
     for(const grade of tunnelRampUpperGrades){
       for(const {dir} of ROAD_DIRS){
         const roadTarget = cell.layers[grade].road.rampEdge[dir];
-        if(roadTarget) drawTunnelRampMarker(x,y,dir, undergroundLevelColor(undergroundLevelOfGrade(roadTarget)||1,'road'));
+        if(roadTarget && (undergroundView==='all' || undergroundView===grade || undergroundView===roadTarget)) drawTunnelRampMarker(x,y,dir, undergroundLevelColor(undergroundLevelOfGrade(roadTarget)||1,'road',undergroundView===roadTarget));
         const railTarget = cell.layers[grade].rail.rampEdge[dir];
-        if(railTarget) drawTunnelRampMarker(x,y,dir, undergroundLevelColor(undergroundLevelOfGrade(railTarget)||1,'rail'));
+        if(railTarget && (undergroundView==='all' || undergroundView===grade || undergroundView===railTarget)) drawTunnelRampMarker(x,y,dir, undergroundLevelColor(undergroundLevelOfGrade(railTarget)||1,'rail',undergroundView===railTarget));
       }
     }
   }
@@ -290,8 +308,15 @@ function render(){
   // traffic (at the SAME grade) until it clears — see
   // markTrainCrossingsOccupied in systems.js — so this marker doubles as
   // "vehicles may have to wait here."
-  const crossingCheckLayers = ['rail', 'railElevated', 'railDeepUnderground', 'railAirspace'];
-  for(let level=1; level<=UNDERGROUND_LEVELS; level++) crossingCheckLayers.push(undergroundRailLayerName(level));
+  // Also filtered by `undergroundView`: a crossing marker for a hidden
+  // underground level would otherwise float with no visible track lines
+  // around it, since the level itself isn't being drawn.
+  const crossingCheckLayers = ['rail', 'railElevated', 'railAirspace'];
+  if(undergroundView==='all' || undergroundView==='deepUnderground') crossingCheckLayers.push('railDeepUnderground');
+  for(let level=1; level<=UNDERGROUND_LEVELS; level++){
+    const grade = undergroundGradeName(level);
+    if(undergroundView==='all' || undergroundView===grade) crossingCheckLayers.push(undergroundRailLayerName(level));
+  }
   for(const [k] of world.grid){
     const [x,y] = k.split(',').map(Number);
     if(!crossingCheckLayers.some(layer => isRoadRailCrossing(x,y,layer))) continue;

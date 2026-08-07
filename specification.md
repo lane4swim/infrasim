@@ -283,6 +283,25 @@ without touching simulation code.
 > the other works. The shipped pack demonstrates it on the Mine (2 levels
 > — a real shaft/excavation) and the Mill (1 level — a large foundation,
 > shallower); every other building omits the field, unaffected.
+>
+> **Further amended in Phase 2 (Underground visibility toggle).** Everything
+> above describes what grades exist and how they stack; a separate concern
+> is which of them are actually drawn. A new View control,
+> `undergroundViewSelect`, is independent of the build-target layer
+> selector — it answers "what am I looking at," not "what am I building
+> on," and the two can point at different levels at once. Its default,
+> `'all'`, reproduces the stacked/depth-darkened rendering described above
+> unchanged; narrowing it to one grade hides every other underground grade
+> from the draw pass entirely and renders the chosen one at full,
+> undarkened brightness, since the depth-based darkening exists solely to
+> distinguish levels that are visible simultaneously — with only one on
+> screen there's nothing left to distinguish. deepUnderground's
+> terrain-burial darkening is a different kind of signal (a real fact about
+> the terrain above a cell, not a stacking artifact) and stays in effect
+> even when that grade is the one being focused on. This is a rendering-only
+> distinction — the grade/layer model, occupancy rules, and everything else
+> in this section are unaffected; a hidden level is still fully present in
+> the simulation, just not drawn.
 
 ---
 

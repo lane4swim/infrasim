@@ -27,6 +27,27 @@ let hoverCell = null;
   }
 })();
 
+// Same generated-from-UNDERGROUND_LEVELS pattern as the layer options
+// above, for the View selector (§ Underground visibility toggle) —
+// "all" (the default 'option' already in index.html) plus one option per
+// underground level, plus Deep Underground. A rendering-only control:
+// render.js reads it fresh every frame via currentUndergroundView(), so
+// no change/redraw wiring is needed here beyond populating the list.
+(function injectUndergroundViewOptions(){
+  const select = document.getElementById('undergroundViewSelect');
+  for(let level=1; level<=UNDERGROUND_LEVELS; level++){
+    const opt = document.createElement('option');
+    opt.value = undergroundGradeName(level);
+    opt.textContent = `View: Underground level ${level} only`;
+    select.appendChild(opt);
+  }
+  const deepOpt = document.createElement('option');
+  deepOpt.value = 'deepUnderground';
+  deepOpt.textContent = 'View: Deep Underground only';
+  select.appendChild(deepOpt);
+})();
+function currentUndergroundView(){ return document.getElementById('undergroundViewSelect').value; }
+
 document.querySelectorAll('.tool-btn[data-tool]').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     document.querySelectorAll('.tool-btn').forEach(b=>b.classList.remove('active'));

@@ -2235,3 +2235,85 @@ level. All 9 test files pass. Also verified end-to-end in a real browser:
 building a Mine then attempting a level-1 tunnel underneath it logs the
 foundation-conflict warning, and a level-3 tunnel underneath the same
 Mine succeeds, with no console errors.
+
+# Phase 2 — Underground visibility toggle
+
+With multi-level tunnels stacking up to `UNDERGROUND_LEVELS` deep, the
+default view — every level drawn at once, darkened progressively with
+depth — gets crowded and hard to read once two or three levels run under
+the same stretch of ground. A new View dropdown, `undergroundViewSelect`,
+lets a player narrow the view to exactly one level (or Deep Underground)
+at a time, rendered at full brightness with everything else hidden.
+
+## Design
+
+- **A second, independent dropdown — not a mode on the existing one.**
+  `layerSelect` already answers "what am I building on"; conflating that
+  with "what am I looking at" would force a player to leave the level
+  they're building on just to glance at another one. `undergroundViewSelect`
+  answers a different question and can disagree with `layerSelect` freely —
+  building on level 2 while viewing level 1 is a normal, supported
+  combination. It's populated the same generated-from-`UNDERGROUND_LEVELS`
+  way as `layerSelect`, by an `injectUndergroundViewOptions()` IIFE mirroring
+  the existing `injectUndergroundLayerOptions()`.
+- **`'all'` (the default) reproduces today's behavior exactly.** Nothing
+  about the stacked/darkened rendering changes unless a player explicitly
+  narrows the view. Picking a specific grade hides every OTHER underground
+  grade outright (skipped in the draw loop entirely, not just dimmed
+  further) and renders the chosen one undarkened — the depth-based
+  darkening exists only to tell simultaneously-visible levels apart, so
+  with just one level on screen there's nothing left for it to do. A new
+  `focused` boolean parameter on `undergroundLevelColor()` controls this:
+  `focused` returns the plain base color, unfocused mixes toward black by
+  `(level-1)*0.18` same as before.
+- **deepUnderground's terrain-burial darkening survives focusing.** That
+  darkening (from the earlier "burrows into a hillside" feature) encodes a
+  real fact about the terrain above a cell, not an artifact of multiple
+  levels sharing the screen — so focusing the Deep Underground view still
+  shows shallower burial as lighter and deeper burial as darker, unlike the
+  stacking-only darkening the other levels get.
+- **Ramp markers and crossing markers follow the same filter.** A Tunnel
+  Ramp marker is only drawn if the view is `'all'` or touches one of the two
+  grades the ramp actually connects (its own grade or the grade it leads
+  to) — a ramp from level 1 to level 2 stays visible while focused on
+  either endpoint, and disappears while focused on level 3. Road/rail
+  crossing-marker detection scans the same underground rail layers the
+  toggle currently shows, so a crossing on a hidden level doesn't leave a
+  stray marker floating with nothing under it.
+- **Ground, elevated, airspace, buildings, and vehicles are untouched.**
+  The toggle only ever filters the underground/deep-underground draw
+  passes — every other layer renders exactly as it always has, regardless
+  of the View selection.
+- **Purely a render-time filter — no simulation changes.** `render()`
+  already re-reads the DOM every frame, so picking up a changed dropdown
+  value needed no event listener or Worker message; the toggle is entirely
+  contained in `render.js`/`ui.js`/`index.html`.
+
+## What changed
+
+- **`render.js`**: `undergroundLevelColor(level, kind, focused)` gains the
+  `focused` parameter; the underground/rail-underground draw loops read
+  `currentUndergroundView()` and `continue` past any grade the current view
+  excludes; the Tunnel Ramp marker loop and the crossing-marker layer list
+  are filtered the same way.
+- **`ui.js`**: new `injectUndergroundViewOptions()` IIFE populates
+  `undergroundViewSelect` with one "Underground level N only" option per
+  configured level plus "Deep Underground only"; new `currentUndergroundView()`
+  helper reads the selected value.
+- **`index.html`**: new `<select id="undergroundViewSelect">` next to the
+  existing build-layer `layerSelect`, defaulting to "all underground
+  levels"; Network hint text explains the two dropdowns answer different
+  questions and can be set independently.
+
+## Testing
+
+No new automated test — this is a pure rendering/UI change with no
+simulation-side logic to unit test, the same reasoning applied to the
+earlier terrain-burial darkening feature. The full existing suite (all 9
+`test/test-*.js` files) still passes, confirming no regression. Verified
+end-to-end in a real browser via Playwright: built distinct single-level
+tracks at three different underground levels, then sampled and
+screenshotted the canvas under `'all'` and under each focused view — `'all'`
+shows all three at once with progressively darker color per level; each
+focused view shows only its own level's track, undarkened, with the other
+two not drawn at all. Zero console errors throughout.

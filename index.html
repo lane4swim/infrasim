@@ -151,6 +151,16 @@
       <option value="deepUnderground">Deep Underground layer (flat, x5 cost)</option>
       <option value="airspace">Airspace layer (flat, x4 cost)</option>
     </select>
+    <select id="undergroundViewSelect">
+      <option value="all" selected>View: all underground levels</option>
+      <!-- One "View: Underground level N only" option per
+           UNDERGROUND_LEVELS, plus "View: Deep Underground only", is
+           injected here at load time by ui.js (§ Underground visibility
+           toggle) — same generated-from-UNDERGROUND_LEVELS pattern as
+           layerSelect above. Purely a rendering choice, independent of
+           the Network layer selector above (which picks what to BUILD) —
+           you can build on one level while viewing another. -->
+    </select>
     <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-dim);margin:2px 0 8px;">
       <input type="checkbox" id="autoConnect" checked style="margin:0;">
       Auto-connect new road tiles
@@ -198,7 +208,13 @@
       one-way streets — then use Connect / Disconnect to wire up (or sever)
       specific edges by hand. Facing sets the single side of the next
       Station that can ever touch a road; a Mill needs two Stations — one
-      handling Ore for delivery, one handling Steel for pickup.</div>
+      handling Ore for delivery, one handling Steel for pickup. The second
+      "View" dropdown is separate from the layer selector above — it only
+      changes what's drawn, not what you're building — and defaults to
+      showing every underground level stacked and dimmed by depth; pick a
+      specific level (or Deep Underground) to see ONLY that one, at full
+      brightness, with every other underground level hidden. Ground,
+      Elevated, and Airspace are always shown regardless.</div>
 
     <div class="section-label">Vehicles</div>
     <button class="tool-btn" data-tool="bulktruck"><span class="tool-swatch" style="background:#e0a840"></span>Buy Bulk Truck (Ore)<span class="cost">$200</span></button>
