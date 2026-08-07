@@ -6,9 +6,10 @@
 // any of its edges (a signal IS a boundary, not just a direction filter),
 // touches a Rail Depot or Train Yard (so a train's approach to either is
 // always its own segment, never shared with unrelated through-traffic), or
-// has a Rail Ramp (cell.ramps.rail — the vertical transition to/from
-// railElevated is as natural a block boundary as a signal — see
-// computeRailBlocks below for why both rail layers get this treatment
+// has a same-cell vertical ramp or ground<->underground ramp edge touching
+// this grade (railCellHasVerticalRamp/railCellHasRampEdge below — any such
+// vertical transition is as natural a block boundary as a signal — see
+// computeRailBlocks below for why every rail layer gets this treatment
 // independently). Two trains can
 // never hold the same block at once, regardless of the softer
 // velocity-gap spacing trains also use for smooth car-following — the
@@ -60,8 +61,17 @@ function railCellHasRampEdge(x,y,layer){
   for(const {dir} of ROAD_DIRS) if(track.rampEdge[dir]) return true;
   return false;
 }
+// A rail cell with any same-cell vertical ramp touching this layer's grade
+// (§ Terrain elevation — RAMP_PAIRS in world.js: groundElevated,
+// elevatedAirspace, or undergroundDeep) is a hub for the same reason a
+// same-cell ground<->elevated Rail Ramp always was — see railCellIsHub.
+function railCellHasVerticalRamp(x,y,grade){
+  const ramps = getCell(x,y).ramps.rail;
+  return RAMP_PAIRS.some(pair => (pair.lo===grade || pair.hi===grade) && ramps[pair.key]);
+}
 function railCellIsHub(x,y,layer){
-  return railCellDegree(x,y,layer) !== 2 || railCellHasSignal(x,y,layer) || railCellTouchesRailEndpoint(x,y) || getCell(x,y).ramps.rail || railCellHasRampEdge(x,y,layer);
+  const [grade] = LAYER_GRADE_KIND[layer];
+  return railCellDegree(x,y,layer) !== 2 || railCellHasSignal(x,y,layer) || railCellTouchesRailEndpoint(x,y) || railCellHasVerticalRamp(x,y,grade) || railCellHasRampEdge(x,y,layer);
 }
 
 // Computes blocks for one rail layer ('rail' or 'railElevated') into the
@@ -120,24 +130,27 @@ function computeRailBlocksForLayer(layer, blockIdCounter){
     }
   }
 }
-// Rail's three layers ('rail', 'railElevated', 'railUnderground' — see
-// world.js) each get their own independent block graph — a ramp cell
-// (same-cell Rail Ramp OR a ground<->underground ramp edge) is a hub on
-// BOTH layers it touches (see railCellIsHub above), so a train
-// transitioning between any two of them always crosses a block boundary
-// there anyway; there's no need for one combined graph spanning the
-// transition itself (tickTrainMovement treats a layer-changing step as
-// always allowed, with no edge/block of its own — see its canEnter/
-// onEnter callbacks, which key off `cur.layer !== next.layer` regardless
-// of whether that step also changed x/y, as a ramp-edge step does). All
-// three layers' blocks share one world.railBlocks map and one continuous
-// id sequence, exactly like before this existed for a single layer.
+// Rail's five layers ('rail', 'railElevated', 'railUnderground',
+// 'railDeepUnderground', 'railAirspace' — see world.js) each get their own
+// independent block graph — a ramp cell (same-cell vertical ramp OR a
+// ground<->underground ramp edge) is a hub on BOTH layers it touches (see
+// railCellIsHub above), so a train transitioning between any two of them
+// always crosses a block boundary there anyway; there's no need for one
+// combined graph spanning the transition itself (tickTrainMovement treats
+// a layer-changing step as always allowed, with no edge/block of its own —
+// see its canEnter/onEnter callbacks, which key off `cur.layer !==
+// next.layer` regardless of whether that step also changed x/y, as a
+// ramp-edge step does). All five layers' blocks share one world.railBlocks
+// map and one continuous id sequence, exactly like before this existed for
+// a single layer.
 function computeRailBlocks(){
   world.railBlocks = new Map();
   const blockIdCounter = {next: 1};
   computeRailBlocksForLayer('rail', blockIdCounter);
   computeRailBlocksForLayer('railElevated', blockIdCounter);
   computeRailBlocksForLayer('railUnderground', blockIdCounter);
+  computeRailBlocksForLayer('railDeepUnderground', blockIdCounter);
+  computeRailBlocksForLayer('railAirspace', blockIdCounter);
 }
 function releaseBlock(v){
   if(v.currentBlock==null) return;

@@ -127,11 +127,25 @@
     </select>
     <div id="tierHint" class="hint-text">Storage tier for the next Mine/Mill/Town. Can't be resized later in Phase 1. A Mine always makes Ore; a Mill always turns Ore into Steel.</div>
 
+    <div class="section-label">Terrain</div>
+    <button class="tool-btn" data-tool="raiseterrain"><span class="tool-swatch" style="background:#c9a15a"></span>Raise Terrain<span class="cost" id="raiseTerrainCost">$30</span></button>
+    <button class="tool-btn" data-tool="lowerterrain"><span class="tool-swatch" style="background:#3a5a7a"></span>Lower Terrain<span class="cost" id="lowerTerrainCost">$30</span></button>
+    <div class="hint-text">Every cell has a terrain height, relative to an arbitrary 0 — shown as a
+      faint tan (above 0) or blue (below 0) tint, with the exact level
+      printed in its corner once it's non-zero. Ground/Elevated/Underground
+      all follow it (Elevated is always one level above local ground,
+      Underground one below), so raising or lowering a hill changes where
+      its bridges and tunnels sit too. Requires the cell be completely
+      clear of track and buildings first. Click a cell to raise or lower it
+      by one level.</div>
+
     <div class="section-label">Network</div>
     <select id="layerSelect">
       <option value="ground">Ground layer</option>
       <option value="elevated">Elevated layer (bridge, x2 cost)</option>
       <option value="underground">Underground layer (tunnel, x3 cost)</option>
+      <option value="deepUnderground">Deep Underground layer (flat, x5 cost)</option>
+      <option value="airspace">Airspace layer (flat, x4 cost)</option>
     </select>
     <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-dim);margin:2px 0 8px;">
       <input type="checkbox" id="autoConnect" checked style="margin:0;">
@@ -140,6 +154,8 @@
     <button class="tool-btn" data-tool="road"><span class="tool-swatch" style="background:var(--road)"></span>Build Road<span class="cost" id="roadCost">$10/tile</span></button>
     <button class="tool-btn" data-tool="ramp"><span class="tool-swatch" style="background:#7fb8c9"></span>Build Ramp<span class="cost" id="rampCost">$40</span></button>
     <button class="tool-btn" data-tool="tunnelramp"><span class="tool-swatch" style="background:#5a4a3a"></span>Build Tunnel Ramp<span class="cost" id="tunnelRampCost">$80</span></button>
+    <button class="tool-btn" data-tool="airspaceramp"><span class="tool-swatch" style="background:#8ac9e8"></span>Build Airspace Ramp<span class="cost" id="airspaceRampCost">$100</span></button>
+    <button class="tool-btn" data-tool="deepramp"><span class="tool-swatch" style="background:#3a2a1a"></span>Build Deep Ramp<span class="cost" id="deepRampCost">$120</span></button>
     <button class="tool-btn" data-tool="connect"><span class="tool-swatch" style="background:var(--teal)"></span>Connect / Disconnect</button>
     <button class="tool-btn" data-tool="oneway"><span class="tool-swatch" style="background:var(--amber)"></span>Toggle One-Way</button>
     <button class="tool-btn" data-tool="station"><span class="tool-swatch" style="background:#c9a227"></span>Build Station<span class="cost" id="stationCost">$60</span></button>
@@ -153,16 +169,24 @@
       <option value="ore">Station handles: Ore</option>
       <option value="steel">Station handles: Steel</option>
     </select>
-    <div class="hint-text">Ground/Elevated/Underground applies to Road, Ramp, Tunnel Ramp,
-      Connect, One-Way, Demolish, and — since rail also runs on all three
-      layers — Build Track, Connect / Disconnect Track, and Toggle Signal
-      Direction too. A Tunnel Ramp is different from a (bridge) Ramp: it
-      doesn't link both grades at one cell, it slopes between two ADJACENT
-      tiles — a ground tile and its underground neighbor one step over —
-      so click the ground tile then the underground tile next to it (or
-      the reverse order). It only works along a straight stretch: neither
-      tile may have any other connection except the straight-through
-      continuation, so a ramp never sits at a turn or junction. Uncheck
+    <div class="hint-text">The five-option dropdown applies to Road, Ramp/Airspace Ramp/Deep Ramp,
+      Tunnel Ramp, Connect, One-Way, Demolish, and — since rail also runs on
+      all five layers — Build Track, Connect / Disconnect Track, and Toggle
+      Signal Direction too. Ground/Elevated/Underground follow local terrain
+      (see the Terrain section above); Deep Underground and Airspace are
+      flat global layers that ignore it entirely, reached only via an
+      Airspace Ramp (Elevated&lt;-&gt;Airspace) or Deep Ramp
+      (Underground&lt;-&gt;Deep Underground) — same-cell vertical links exactly
+      like a (bridge) Ramp, just one grade further out in each direction. A
+      Tunnel Ramp is different from those: it doesn't link both grades at
+      one cell, it slopes between two ADJACENT tiles — a ground tile and its
+      underground neighbor one step over — so click the ground tile then the
+      underground tile next to it (or the reverse order). It only works
+      along a straight stretch: neither tile may have any other connection
+      except the straight-through continuation, so a ramp never sits at a
+      turn or junction. Two adjacent Ground/Elevated/Underground tiles also
+      can't connect (auto- or manually) if their terrain differs by more
+      than 1 level — shown as a dark cliff edge on the map. Uncheck
       auto-connect to lay road tiles side by side without joining them —
       handy for parallel one-way streets — then use Connect / Disconnect to
       wire up (or sever) specific edges by hand. Facing sets the single side
@@ -181,6 +205,8 @@
     <button class="tool-btn" data-tool="track"><span class="tool-swatch" style="background:#9b6bd6"></span>Build Track<span class="cost" id="trackCost">$25/tile</span></button>
     <button class="tool-btn" data-tool="railramp"><span class="tool-swatch" style="background:#c9a8e8"></span>Build Rail Ramp<span class="cost" id="railRampCost">$40</span></button>
     <button class="tool-btn" data-tool="railtunnelramp"><span class="tool-swatch" style="background:#4a3a5a"></span>Build Rail Tunnel Ramp<span class="cost" id="railTunnelRampCost">$80</span></button>
+    <button class="tool-btn" data-tool="railairspaceramp"><span class="tool-swatch" style="background:#d8b8f0"></span>Build Rail Airspace Ramp<span class="cost" id="railAirspaceRampCost">$100</span></button>
+    <button class="tool-btn" data-tool="raildeepramp"><span class="tool-swatch" style="background:#2a1a3a"></span>Build Rail Deep Ramp<span class="cost" id="railDeepRampCost">$120</span></button>
     <button class="tool-btn" data-tool="trackconnect"><span class="tool-swatch" style="background:var(--teal)"></span>Connect / Disconnect Track</button>
     <button class="tool-btn" data-tool="signal"><span class="tool-swatch" style="background:var(--amber)"></span>Toggle Signal Direction</button>
     <button class="tool-btn" data-tool="depot"><span class="tool-swatch" style="background:#6b5b95"></span>Build Rail Depot<span class="cost" id="depotCost">$300</span></button>
@@ -274,6 +300,14 @@
       right at the ramp itself. There's no direct elevated-underground
       ramp — going from one to the other always passes through ground in
       between, one ramp at a time.
+      Every cell also has a terrain height (Terrain section) — Ground,
+      Elevated, and Underground all follow it, moving up or down together
+      wherever the land does, while Deep Underground and Airspace are flat
+      global layers, always the same height everywhere, reached only by an
+      Airspace Ramp or a Deep Ramp. Two adjacent Ground/Elevated/Underground
+      tiles can only connect if the terrain doesn't change by more than one
+      level between them — too big a jump reads as a cliff, and needs
+      terraforming (or a longer detour) before a road or track can cross it.
     </div>
   </div>
 

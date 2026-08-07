@@ -1791,3 +1791,157 @@ live hint-text feedback, `findRoadPath` confirms a real crossable path,
 and the dashed underground rendering with its edge-positioned ramp marker
 renders correctly beneath the ground-level content, with no console
 errors.
+
+# Phase 2 — Terrain elevation
+
+A z coordinate per cell, relative to an arbitrary 0. Ground-grade track
+sits at that height; elevated and underground move with it (always
+exactly one level above/below local ground), so a hill's bridge and a
+valley's bridge are each still "one level above their own ground," never
+a fixed absolute height. Two new grades, deepUnderground and airspace,
+sit outside that terrain-following system entirely — flat global planes,
+always the same height everywhere, one below every regular depth and one
+above every regular height respectively.
+
+## Design
+
+- **One integer per column, three grades reading it, two that don't.**
+  `world.js` gained `cell.elevation` (default 0, bounded
+  `ELEVATION_MIN`/`ELEVATION_MAX` — a rendering/tool sanity bound, not a
+  simulation one) and `elevationAt(x,y,grade)`, the one function
+  everything elevation-aware calls: `ground` returns `cell.elevation`
+  directly, `elevated`/`underground` add/subtract a fixed
+  `ELEVATION_OFFSET` of 1, and `deepUnderground`/`airspace` ignore the
+  cell entirely and return a fixed sentinel far outside any real terrain
+  range. `LAYER_GRADE_KIND`/`GRADE_KIND_LAYER` gained the two new grades
+  (and their rail counterparts, `railDeepUnderground`/`railAirspace`)
+  exactly like the underground grade did before — a grade is still just a
+  bag of kinds, so a 4th and 5th slot cost nothing structurally.
+- **Capped auto-connect, not free climbing.** Two adjacent
+  ground/elevated/underground tiles only connect (auto- or manually) if
+  `elevationAt` differs by at most `MAX_ELEVATION_DELTA` (1) — a real
+  slope a road or track can climb, not a cliff. Since elevated/underground
+  move in lockstep with local ground, checking the delta at any one of
+  the three grades is equivalent to checking it at the other two, so one
+  `elevationBlocksConnection` helper in `commands.js` covers all three,
+  called from both `connectNewTileEdges` (auto) and `cmdToggleConnection`
+  (manual) — the same two call sites `directionBlockedByRamp` (the
+  Tunnel Ramp's straight-through rule) already used, extended the same
+  way. `deepUnderground`/`airspace` are flat, so their delta is always 0
+  and the cap never actually blocks them — reaching either is gated by
+  ramp construction instead, not terrain.
+- **Terraforming requires a clear cell, not a recheck.** Raising/lowering
+  terrain (`cmdRaiseTerrain`/`cmdLowerTerrain`, one level at a time,
+  `TERRAFORM_COST` each) is rejected outright if the cell has a building
+  or ANY track (any kind, any grade) — changing height under existing
+  infrastructure could silently invalidate an edge whose delta was
+  validated once at build time, with no mechanism here to re-check every
+  affected edge or warn the player. Requiring a clear cell sidesteps that
+  entirely: grade the land before building on it, not instead of
+  rebuilding what's there. This was an explicit build-vs-cost tradeoff —
+  a "reflow connections on terraform" version was possible but
+  meaningfully bigger, and the user chose the simpler, clear-cell rule.
+- **A third same-cell vertical ramp pair, not a special case per grade.**
+  The existing (road/rail) Ramp already linked ground<->elevated via a
+  same-cell vertical step (`cell.ramps`). Two more pairs needed the exact
+  same mechanic one grade further out in each direction — elevated<->
+  airspace (Airspace Ramp) and underground<->deepUnderground (Deep Ramp)
+  — so `cell.ramps.road`/`cell.ramps.rail` generalized from a single
+  boolean to `{groundElevated, elevatedAirspace, undergroundDeep}`, and
+  `buildRamp` generalized to `buildVerticalRamp(x,y,kind,pairKey,cost,
+  label)` driven by a new `RAMP_PAIRS` table in `world.js` (the one place
+  that lists which grade pairs get a same-cell ramp at all). Every
+  consumer — `findLayerPath`'s same-cell ramp move, `railCellIsHub`'s
+  vertical-ramp check, `cmdDemolish`'s cleanup — now loops `RAMP_PAIRS`
+  instead of naming `groundElevated` specifically, so a future grade only
+  ever needs one new table entry, not three call sites touched. Ground
+  <->underground deliberately stays OUT of this table — that pair already
+  has its own lateral, sloped Tunnel Ramp (a prior addendum), since a real
+  tunnel mouth reads as a stretch of track you drive down into an
+  adjacent cell, not a same-point vertical link the way a pylon or a deep
+  shaft is.
+- **`cmdDemolish`'s cleanup had to consider BOTH sides of a pair.**
+  Demolishing `elevated` track now has to clear `groundElevated` (elevated
+  is its *hi*) AND `elevatedAirspace` (elevated is its *lo*) — the naive
+  "clear the one ramp keyed by this grade" logic from before didn't
+  generalize, since a single grade can now be one end of two different
+  pairs at once. Fixed by iterating `RAMP_PAIRS` and clearing every entry
+  where the demolished grade is either side.
+- **Pathfinding, blocks, and movement needed almost nothing new**, for
+  the same reason the underground layer's ramp edge didn't: `findLayerPath`
+  now loops `RAMP_PAIRS` instead of hardcoding one pair, but that's the
+  only pathfinding change — `tickTrainMovement`'s block canEnter/onEnter
+  and `advanceAlongPath`'s bookkeeping already keyed off `cur.layer !==
+  next.layer` generically, so a new grade or a new same-cell ramp pair is
+  invisible to them. `computeRailBlocks` just runs two more independent
+  block graphs (`railDeepUnderground`, `railAirspace`), exactly like
+  `railUnderground` already did.
+
+## What changed
+
+- **`world.js`**: `cell.elevation`; `ELEVATION_MIN`/`ELEVATION_MAX`/
+  `MAX_ELEVATION_DELTA`/`ELEVATION_OFFSET`/`DEEP_UNDERGROUND_Z`/
+  `AIRSPACE_Z`; `elevationAt(x,y,grade)`; `RAMP_PAIRS`; `deepUnderground`/
+  `airspace` (and rail counterparts) in `LAYER_GRADE_KIND`/
+  `GRADE_KIND_LAYER`; `cell.ramps` generalized from `{road,rail}` booleans
+  to `{road,rail}` objects keyed by `RAMP_PAIRS`' pair names
+  (`newRampState()`).
+- **`loader.js`**: `DEEP_UNDERGROUND_COST_MULTIPLIER` (5x), `AIRSPACE_
+  COST_MULTIPLIER` (4x), `AIRSPACE_RAMP_COST` ($100), `DEEP_RAMP_COST`
+  ($120), `TERRAFORM_COST` ($30).
+- **`commands.js`**: `elevationBlocksConnection`, called from
+  `connectNewTileEdges`/`cmdToggleConnection`; `buildRamp` generalized to
+  `buildVerticalRamp`, with `cmdBuildAirspaceRamp`/
+  `cmdBuildRailAirspaceRamp`/`cmdBuildDeepRamp`/`cmdBuildRailDeepRamp`
+  alongside the existing `cmdBuildRamp`/`cmdBuildRailRamp`; `terraform`/
+  `cmdRaiseTerrain`/`cmdLowerTerrain`; `buildTrackTile`'s cost formula and
+  `cmdDemolish`'s ramp cleanup both extended for the two new grades/pairs.
+- **`pathfinding.js`**: `findLayerPath`'s same-cell ramp move now loops
+  `RAMP_PAIRS` instead of hardcoding ground<->elevated.
+- **`rail-blocks.js`**: `railCellHasVerticalRamp` (replaces the old
+  boolean read of `cell.ramps.rail`), looping `RAMP_PAIRS`;
+  `computeRailBlocks` now runs five independent block graphs.
+- **`render.js`**: a faint per-cell terrain tint (warm above 0, cool
+  below), a dark "cliff" border wherever two adjacent cells exceed
+  `MAX_ELEVATION_DELTA` (exactly the pairs that can't connect), and a
+  small elevation number in each non-zero cell's corner; dashed
+  deepUnderground/airspace track rendering (thicker+dimmer and
+  thinner+brighter than underground/elevated respectively, continuing the
+  "further from ground reads more extreme" scale); the same-cell ramp
+  diamond markers generalized to loop `RAMP_PAIRS` with a color per pair;
+  vehicle bridge/tunnel outlines extended to airspace/deepUnderground.
+- **`ui.js`/`index.html`**: a new Terrain section (Raise/Lower Terrain
+  tools); the Network layer selector gained Deep Underground/Airspace
+  options; new Build Airspace Ramp / Build Deep Ramp tools (and their
+  rail counterparts); cost labels and hint text updated throughout.
+
+## Known limitation
+
+Terraforming under existing infrastructure isn't supported at all — the
+cell must be fully cleared first, which is a real workflow cost on an
+established map (raise a hill under a working rail line by demolishing
+and rebuilding it, not by clicking through it). This was a deliberate
+scope choice (see Design above) rather than an oversight; a version that
+re-validates every affected edge after a terrain change and reports what
+broke is plausible future work.
+
+## Testing
+
+New `test/test-elevation.js` (8 sections, 43 checks): terraforming's
+cost/bounds/clear-cell requirements, `elevationAt`'s offset math for all
+five grades, the capped auto-connect rule blocking a steep manual/auto
+connection while allowing an exactly-at-the-cap one (and confirming
+`airspace` ignores terrain entirely), Airspace Ramp/Deep Ramp build
+validation (missing tiles, duplicates, cost, rail independence),
+pathfinding crossing every `RAMP_PAIRS` transition including two
+independent ramps stacked at one cell, rail blocks treating the new
+vertical ramp pairs as hubs across all five block graphs, `cmdDemolish`
+clearing every ramp pair touching a grade (and only those), and a real
+truck's full ground->elevated->airspace->elevated->ground round trip
+delivering cargo end to end via `simTick()`. All 7 test files pass. Also
+verified end-to-end in a real browser: raising/lowering terrain renders
+the tint and elevation number live, an oversized terrain step between two
+built road tiles renders the cliff border and leaves them unconnected,
+and a full ground/elevated/airspace stack (and a separate underground/
+deepUnderground stack) builds and links correctly with live cost labels
+matching each grade's multiplier, with no console errors.

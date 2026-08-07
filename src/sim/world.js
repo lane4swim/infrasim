@@ -51,6 +51,66 @@ function newTrack(){
     rampEdge:{N:false,S:false,E:false,W:false},
   };
 }
+// Terrain elevation (§ Terrain elevation) — an integer height per (x,y)
+// column, relative to an arbitrary 0 ("sea level"). Ground-grade track
+// literally sits at this height; elevated/underground sit a fixed offset
+// above/below it (see ELEVATION_OFFSET/elevationAt below), so a hill's
+// elevated bridge and a valley's elevated bridge are each still exactly
+// one level above their OWN local ground, never a fixed absolute height.
+// Bounded (ELEVATION_MIN/MAX below) purely to keep the terrain fill/cliff
+// rendering and the raise/lower terrain tool (cmdRaiseTerrain/
+// cmdLowerTerrain in commands.js) sane, not for any simulation reason.
+const ELEVATION_MIN = -4, ELEVATION_MAX = 4;
+// The single rule that makes elevation matter for connectivity, not just
+// looks: two adjacent ground/elevated/underground tiles can only connect
+// (auto- or manually — see elevationBlocksConnection in commands.js) if
+// their terrain heights differ by at most this many levels — a real slope
+// a road/track can actually climb, rather than a cliff. Deliberately a
+// flat constant, not a per-vehicle or content-pack field (unlike
+// transferRate/lengthTiles) — how steep a connection can be is a property
+// of the infrastructure itself, the same way the straight-through-only
+// rule for a Tunnel Ramp is, not something a vehicle def would vary.
+const MAX_ELEVATION_DELTA = 1;
+// deepUnderground and airspace (below) are FLAT global planes — every
+// cell's deepUnderground/airspace track sits at the same absolute height
+// regardless of local terrain, unlike ground/elevated/underground which
+// all move together with the terrain beneath them. These two constants
+// just need to stay outside the full ELEVATION_MIN/MAX + offset range so
+// "below all regular depths" / "above all regular heights" holds no
+// matter how the terrain is shaped.
+const DEEP_UNDERGROUND_Z = -1000;
+const AIRSPACE_Z = 1000;
+// elevated is always exactly one level above local ground, underground
+// exactly one below — see ELEVATION_MIN/MAX above for why "one level" is
+// the unit. Only these three grades read cell.elevation at all; deepUnderground/
+// airspace ignore it entirely (see elevationAt below).
+const ELEVATION_OFFSET = { ground: 0, elevated: 1, underground: -1 };
+// The real height of one grade's track at one cell — the one function
+// every elevation-aware piece of code (the connectivity cap, terrain/cliff
+// rendering) should call rather than reaching into cell.elevation or the
+// offset table directly.
+function elevationAt(x,y,grade){
+  if(grade==='deepUnderground') return DEEP_UNDERGROUND_Z;
+  if(grade==='airspace') return AIRSPACE_Z;
+  return getCell(x,y).elevation + ELEVATION_OFFSET[grade];
+}
+// Same-cell vertical ramps (§ Terrain elevation) link two ADJACENT grades
+// in the vertical stack — deepUnderground < underground < ground <
+// elevated < airspace — at the SAME (x,y): a pylon ramp (ground<->elevated,
+// the original Ramp), a launch ramp (elevated<->airspace), or a deep shaft
+// (underground<->deepUnderground). Deliberately NOT a list including
+// ground<->underground — that pair already has its own lateral, sloped
+// Tunnel Ramp (rampEdge, see newTrack below), since a real tunnel mouth is
+// a stretch of track you drive down into an adjacent cell, not a same-point
+// vertical link the way a pylon or a shaft is. Shared by buildVerticalRamp/
+// cmdDemolish (commands.js), findLayerPath (pathfinding.js), and
+// railCellHasVerticalRamp (rail-blocks.js) — the one place that lists which
+// pairs exist, so a future grade only ever needs one new entry here.
+const RAMP_PAIRS = [
+  {key:'groundElevated', lo:'ground', hi:'elevated'},
+  {key:'elevatedAirspace', lo:'elevated', hi:'airspace'},
+  {key:'undergroundDeep', lo:'underground', hi:'deepUnderground'},
+];
 // One physical grade (ground or elevated) holds every KIND of
 // infrastructure that can exist at that height — road and rail today.
 // This is the merge: road and rail used to be entirely separate
@@ -78,45 +138,66 @@ function newGradeLayer(){
 // actually stores it under, and trackAt is the one place every piece of
 // grid-reading/writing code should go through instead of indexing
 // world.grid directly by a flat name.
-// Three grades now (§ Underground layer): underground, ground, elevated —
-// in that vertical order. A ramp, of either kind (same-cell elevated Ramp
-// or sloped underground ramp edge — see rampEdge above), only ever links
-// two ADJACENT grades; there is no direct elevated<->underground
-// transition, only elevated<->ground<->underground via two ramps in series
-// — the natural consequence of every ramp reading its "other grade" as
-// literally the neighboring entry in this same list, never skipping one.
+// Five grades now (§ Terrain elevation): deepUnderground, underground,
+// ground, elevated, airspace — in that vertical order. A ramp, of either
+// kind (same-cell vertical Ramp — RAMP_PAIRS above — or sloped
+// ground<->underground ramp edge — see rampEdge below), only ever links
+// two ADJACENT grades; there is no direct elevated<->underground (or
+// underground<->airspace, or deepUnderground<->ground, etc.) transition,
+// only via two-or-more ramps in series through the grades between — the
+// natural consequence of every ramp reading its "other grade" as literally
+// the neighboring entry in this same vertical order, never skipping one.
 const LAYER_GRADE_KIND = {
+  deepUnderground: ['deepUnderground', 'road'],
+  underground: ['underground', 'road'],
   ground: ['ground', 'road'],
   elevated: ['elevated', 'road'],
-  underground: ['underground', 'road'],
+  airspace: ['airspace', 'road'],
+  railDeepUnderground: ['deepUnderground', 'rail'],
+  railUnderground: ['underground', 'rail'],
   rail: ['ground', 'rail'],
   railElevated: ['elevated', 'rail'],
-  railUnderground: ['underground', 'rail'],
+  railAirspace: ['airspace', 'rail'],
 };
 // The inverse of LAYER_GRADE_KIND — given a (grade, kind), which flat
 // layer name is that? Used wherever a ramp move needs "the same kind, the
 // other grade" (see findLayerPath in pathfinding.js).
 const GRADE_KIND_LAYER = {
+  deepUnderground: { road: 'deepUnderground', rail: 'railDeepUnderground' },
+  underground: { road: 'underground', rail: 'railUnderground' },
   ground: { road: 'ground', rail: 'rail' },
   elevated: { road: 'elevated', rail: 'railElevated' },
-  underground: { road: 'underground', rail: 'railUnderground' },
+  airspace: { road: 'airspace', rail: 'railAirspace' },
 };
 function trackAt(x,y,layer){
   const [grade, kind] = LAYER_GRADE_KIND[layer];
   return getCell(x,y).layers[grade][kind];
 }
+function newRampState(){
+  // One boolean per RAMP_PAIRS entry (groundElevated/elevatedAirspace/
+  // undergroundDeep) — a cell can have any combination of the three,
+  // entirely independently, the same way a cell's road and rail track are
+  // independent at a given grade.
+  const state = {};
+  for(const pair of RAMP_PAIRS) state[pair.key] = false;
+  return state;
+}
 function getCell(x,y){
   const k = cellKey(x,y);
   if(!world.grid.has(k)) world.grid.set(k,{
     buildingId: null,
-    // Which KIND is linked vertically here — a road Ramp and a rail Ramp
-    // are entirely independent (a cell can have either, both, or
-    // neither), the same way road and rail track themselves are
-    // independent at a given grade. One map instead of a `ramp` +
-    // `railRamp` boolean pair for the same reason layers merged: a third
-    // kind just adds a third key here, not a third named boolean.
-    ramps: { road: false, rail: false }, // ground<->elevated only — see rampEdge (above) for ground<->underground
-    layers: { ground: newGradeLayer(), elevated: newGradeLayer(), underground: newGradeLayer() },
+    elevation: 0, // terrain height at this column — see ELEVATION_MIN/MAX above
+    // Which KIND is linked vertically here, and which PAIR of grades —
+    // road and rail ramps are entirely independent (a cell can have
+    // either, both, or neither), same as road/rail track itself.
+    ramps: { road: newRampState(), rail: newRampState() },
+    layers: {
+      deepUnderground: newGradeLayer(),
+      underground: newGradeLayer(),
+      ground: newGradeLayer(),
+      elevated: newGradeLayer(),
+      airspace: newGradeLayer(),
+    },
   });
   return world.grid.get(k);
 }

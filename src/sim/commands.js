@@ -39,6 +39,20 @@ function directionBlockedByRamp(track, dir){
   }
   return false;
 }
+// Ground, elevated, and underground all follow local terrain (elevationAt
+// in world.js) — ELEVATION_OFFSET moves elevated/underground with whatever
+// ground.elevation is at that (x,y), so the delta between two ADJACENT
+// cells at one of these grades is exactly the delta between their two
+// ground.elevation values, regardless of which of the three grades is
+// asking. A connection between them is only real infrastructure if that
+// climb is gentle (MAX_ELEVATION_DELTA — § Terrain elevation), checked at
+// both auto-connect and manual Connect time, same as directionBlockedByRamp
+// above. deepUnderground/airspace are flat global planes (elevationAt
+// returns the same constant everywhere), so their delta is always 0 and
+// this never blocks them.
+function elevationBlocksConnection(x1,y1,x2,y2,grade){
+  return Math.abs(elevationAt(x1,y1,grade) - elevationAt(x2,y2,grade)) > MAX_ELEVATION_DELTA;
+}
 // Connect only the specific edges that actually border an existing tile on
 // the SAME layer — a ground tile and an elevated tile at the same (x,y)
 // never connect to each other just by overlapping; that's what lets an
@@ -50,12 +64,14 @@ function directionBlockedByRamp(track, dir){
 // a tile" command (road, rail track, and whatever's added later) since
 // none of this is road- or rail-specific.
 function connectNewTileEdges(x,y,layer,track){
+  const [grade] = LAYER_GRADE_KIND[layer];
   for(const {dir,dx,dy,opp} of ROAD_DIRS){
     if(directionClaimedByOtherNetwork(x,y,layer,dir)) continue;
     if(directionClaimedByOtherNetwork(x+dx,y+dy,layer,opp)) continue;
     if(directionBlockedByRamp(track,dir)) continue;
     const nTrack = trackAt(x+dx,y+dy,layer);
     if(directionBlockedByRamp(nTrack,opp)) continue;
+    if(elevationBlocksConnection(x,y,x+dx,y+dy,grade)) continue;
     if(nTrack.track){ track.edges[dir] = true; nTrack.edges[opp] = true; }
   }
 }
@@ -76,7 +92,11 @@ function buildTrackTile(x,y,layer,autoConnect,costPerTile,label){
   const track = trackAt(x,y,layer);
   if(track.track) return false;
   if(grade==='ground' && cell.buildingId) return false; // can't lay ground-level track under a building
-  const multiplier = grade==='elevated' ? ELEVATED_COST_MULTIPLIER : grade==='underground' ? UNDERGROUND_COST_MULTIPLIER : 1;
+  const multiplier = grade==='elevated' ? ELEVATED_COST_MULTIPLIER
+    : grade==='underground' ? UNDERGROUND_COST_MULTIPLIER
+    : grade==='airspace' ? AIRSPACE_COST_MULTIPLIER
+    : grade==='deepUnderground' ? DEEP_UNDERGROUND_COST_MULTIPLIER
+    : 1;
   const cost = costPerTile * multiplier;
   if(!canAfford(cost)){ logEvent(`Insufficient funds for ${label}.`, 'warn'); return false; }
   charge(cost, multiplier>1 ? `${grade} ${label}` : label);
@@ -125,33 +145,48 @@ function cmdToggleConnection(x1,y1,x2,y2,layer){
       logEvent(`Can't connect — a ramp here only allows a straight-through connection.`, 'warn');
       return;
     }
+    if(elevationBlocksConnection(x1,y1,x2,y2,LAYER_GRADE_KIND[layer][0])){
+      logEvent(`Can't connect — the terrain here is too steep (max ${MAX_ELEVATION_DELTA} level difference).`, 'warn');
+      return;
+    }
     aTrack.edges[d.dir] = true; bTrack.edges[d.opp] = true; // new connections start two-way
     logEvent('Connection made.');
   }
   if(LAYER_GRADE_KIND[layer][1]==='rail') computeRailBlocks();
 }
-// Shared by cmdBuildRamp and cmdBuildRailRamp — a Ramp of any kind links
-// that SAME kind's ground and elevated tiles at one cell; different kinds'
-// ramps are entirely independent of each other (a cell can have either,
-// both, or neither). Rail's own ramp additionally recomputes blocks,
-// since a Rail Ramp cell is a hub (see railCellIsHub) — plain road ramps
-// have no block concept to update.
-function buildRamp(x,y,kind,label){
+// Shared by every same-cell vertical ramp command (cmdBuildRamp,
+// cmdBuildRailRamp, cmdBuildAirspaceRamp, cmdBuildRailAirspaceRamp,
+// cmdBuildDeepRamp, cmdBuildRailDeepRamp) — a ramp of any kind links that
+// SAME kind's two tiles for one RAMP_PAIRS entry at one cell; different
+// kinds' ramps, and different pairs at the same cell, are all entirely
+// independent of each other (a cell can have any combination). Rail's own
+// ramps additionally recompute blocks, since a Rail ramp cell is a hub
+// (see railCellIsHub) — plain road ramps have no block concept to update.
+function buildVerticalRamp(x,y,kind,pairKey,cost,label){
+  const pair = RAMP_PAIRS.find(p => p.key===pairKey);
   const cell = getCell(x,y);
-  if(!cell.layers.ground[kind].track || !cell.layers.elevated[kind].track){
-    logEvent(`A ${label} needs both a ground and an elevated ${kind} tile at the same cell.`, 'warn');
+  if(!cell.layers[pair.lo][kind].track || !cell.layers[pair.hi][kind].track){
+    logEvent(`A ${label} needs both a ${pair.lo} and an ${pair.hi} ${kind} tile at the same cell.`, 'warn');
     return;
   }
-  if(cell.ramps[kind]){ logEvent(`There is already a ${label} here.`, 'warn'); return; }
-  if(!canAfford(RAMP_COST)){ logEvent(`Insufficient funds for ${label.toLowerCase()}.`, 'warn'); return; }
-  charge(RAMP_COST, label.toLowerCase());
-  cell.ramps[kind] = true;
-  if(kind==='rail') computeRailBlocks(); // a Rail Ramp cell is a hub — topology-equivalent to adding a signal
+  if(cell.ramps[kind][pairKey]){ logEvent(`There is already a ${label} here.`, 'warn'); return; }
+  if(!canAfford(cost)){ logEvent(`Insufficient funds for ${label.toLowerCase()}.`, 'warn'); return; }
+  charge(cost, label.toLowerCase());
+  cell.ramps[kind][pairKey] = true;
+  if(kind==='rail') computeRailBlocks(); // a Rail ramp cell is a hub — topology-equivalent to adding a signal
 }
-function cmdBuildRamp(x,y){ buildRamp(x,y,'road','Ramp'); }
+function cmdBuildRamp(x,y){ buildVerticalRamp(x,y,'road','groundElevated',RAMP_COST,'Ramp'); }
 // Rail's own Ramp — links `rail` and `railElevated` at a cell exactly like
 // a (road) Ramp links `ground` and `elevated`, entirely independent of it.
-function cmdBuildRailRamp(x,y){ buildRamp(x,y,'rail','Rail Ramp'); }
+function cmdBuildRailRamp(x,y){ buildVerticalRamp(x,y,'rail','groundElevated',RAMP_COST,'Rail Ramp'); }
+// Airspace Ramp / Deep Ramp (§ Terrain elevation) — the same same-cell
+// vertical mechanic as (road/rail) Ramp above, one grade pair further out
+// in each direction: elevated<->airspace (a launch pad) and
+// underground<->deepUnderground (a deep shaft).
+function cmdBuildAirspaceRamp(x,y){ buildVerticalRamp(x,y,'road','elevatedAirspace',AIRSPACE_RAMP_COST,'Airspace Ramp'); }
+function cmdBuildRailAirspaceRamp(x,y){ buildVerticalRamp(x,y,'rail','elevatedAirspace',AIRSPACE_RAMP_COST,'Rail Airspace Ramp'); }
+function cmdBuildDeepRamp(x,y){ buildVerticalRamp(x,y,'road','undergroundDeep',DEEP_RAMP_COST,'Deep Ramp'); }
+function cmdBuildRailDeepRamp(x,y){ buildVerticalRamp(x,y,'rail','undergroundDeep',DEEP_RAMP_COST,'Rail Deep Ramp'); }
 // A Tunnel Ramp is geometrically different from the (road) Ramp / Rail Ramp
 // above: those link a kind's ground and elevated tiles at the SAME cell (a
 // vehicle transitions via a same-cell, different-layer step). A ramp to
@@ -305,11 +340,15 @@ function cmdDemolish(x,y,layer){
     track.oneWayBlocked = {N:false, S:false, E:false, W:false};
     track.blockId = {N:null, S:null, E:null, W:null};
     track.rampEdge = {N:false, S:false, E:false, W:false};
-    // This kind's (same-cell) Ramp needs both of ITS OWN grades present —
-    // demolishing ground-level road only ever invalidates the road Ramp,
-    // demolishing ground-level rail only ever invalidates the Rail Ramp,
-    // never the other kind's.
-    if(cell.ramps[kind]) cell.ramps[kind] = false;
+    // This kind's same-cell vertical ramps need one of THEIR OWN two grades
+    // present — demolishing this grade's track invalidates every RAMP_PAIRS
+    // entry that touches it (elevated touches both groundElevated as its
+    // hi and elevatedAirspace as its lo, so demolishing elevated clears
+    // both), never a pair that doesn't mention this grade at all, and never
+    // the other kind's ramps.
+    for(const pair of RAMP_PAIRS){
+      if((pair.lo===grade || pair.hi===grade) && cell.ramps[kind][pair.key]) cell.ramps[kind][pair.key] = false;
+    }
     if(kind==='rail') computeRailBlocks(); // topology changed — block boundaries may have moved
   }
 }
@@ -347,3 +386,31 @@ function cmdSetOrders(vehicle, orders){
   vehicle.ordersIndex = Math.min(vehicle.ordersIndex, Math.max(0, orders.length-1));
   vehicle.path = null; // force a fresh path toward the (possibly new) target
 }
+// Raising/lowering terrain (§ Terrain elevation) changes cell.elevation by
+// one level — every one of ground/elevated/underground's actual heights at
+// this (x,y) moves together with it (see elevationAt in world.js). That
+// means changing it while ANY track (any kind, any grade) or a building
+// already occupies the cell could silently invalidate an edge whose delta
+// was validated at BUILD time (elevationBlocksConnection above) with no
+// mechanism here to re-check or notify the player — so terraforming
+// instead requires a fully clear cell. Grade the land before you build on
+// it, not instead of rebuilding what's already there.
+function terraform(x,y,delta){
+  const cell = getCell(x,y);
+  if(cell.buildingId){ logEvent('Clear the building here before terraforming.', 'warn'); return; }
+  for(const grade in cell.layers){
+    for(const kind in cell.layers[grade]){
+      if(cell.layers[grade][kind].track){ logEvent('Clear all track here before terraforming.', 'warn'); return; }
+    }
+  }
+  const next = cell.elevation + delta;
+  if(next < ELEVATION_MIN || next > ELEVATION_MAX){
+    logEvent(`Elevation must stay between ${ELEVATION_MIN} and ${ELEVATION_MAX}.`, 'warn');
+    return;
+  }
+  if(!canAfford(TERRAFORM_COST)){ logEvent('Insufficient funds for terraforming.', 'warn'); return; }
+  charge(TERRAFORM_COST, delta>0 ? 'raise terrain' : 'lower terrain');
+  cell.elevation = next;
+}
+function cmdRaiseTerrain(x,y){ terraform(x,y,1); }
+function cmdLowerTerrain(x,y){ terraform(x,y,-1); }

@@ -181,6 +181,32 @@ without touching simulation code.
 > with almost no code change, because the existing logic already keyed off
 > "did the layer change" rather than "did x/y change" — a sign the Phase 1
 > layer abstraction was sound.
+>
+> **Amended in Phase 2 (Terrain elevation).** Every cell now has a real z
+> coordinate (`cell.elevation`, relative to an arbitrary 0), and ground,
+> elevated, and underground all move together with it — elevated is
+> always exactly one level above local ground, underground exactly one
+> below, computed by one `elevationAt(x,y,grade)` function rather than
+> the grades reading `cell.elevation` independently. Two more grades,
+> `deepUnderground` and `airspace`, sit outside the terrain-following
+> system on purpose: flat global planes, reached only by a same-cell
+> vertical ramp one step beyond the existing (road/rail) Ramp
+> (elevated↔airspace, underground↔deepUnderground) — the vertical-stack
+> table that already held "ground↔elevated" generalized to hold all
+> three pairs, so a future grade needs one new table entry, not new logic
+> at every consumer. The key gameplay consequence: two adjacent ground/
+> elevated/underground tiles can only connect (auto- or manually) if
+> their terrain differs by at most one level — a real slope, not a cliff
+> — which is the first time this spec's layer model has made *horizontal*
+> connectivity conditional on anything besides "is there track there."
+> Terraforming (raise/lower one cell's elevation) deliberately requires a
+> fully cleared cell rather than re-validating every affected edge after
+> the fact — grade the land before building on it, an explicit
+> simplicity-over-completeness tradeoff, not an oversight. As with the
+> underground grade before it, pathfinding/blocks/movement needed almost
+> no new code — the generalization lived entirely in a lookup table and
+> the handful of places that already iterated it, not in new special
+> cases.
 
 ---
 
@@ -731,13 +757,16 @@ src/
    split from the discrete resolver.
 4. **Multi-layer construction** (bridges/tunnels/pylons): further along than
    scheduled — ground/elevated road crossings and an explicit Ramp mechanic
-   (§4.1) work, and an initial underground layer (road + rail) is now
-   implemented with a separate sloped `Tunnel Ramp` mechanic connecting
-   ground and underground track (§4.3 amendment). None of it needed the
-   rest of the game to exist first — it built cleanly on top of per-edge
-   road/rail connectivity. Non-road modes (pipeline/power) using layers,
-   and underground buildings (the Depot remains ground-only by design),
-   are still open.
+   (§4.1) work, an underground layer (road + rail) is implemented with a
+   separate sloped `Tunnel Ramp` mechanic connecting ground and
+   underground track, and real terrain elevation now sits underneath all
+   three (plus two flat global grades, deepUnderground/airspace, reached
+   by same-cell vertical ramps) with a capped-slope connectivity rule and
+   a raise/lower terraforming tool (§4.3 amendments). None of it needed
+   the rest of the game to exist first — it built cleanly on top of
+   per-edge road/rail connectivity. Non-road modes (pipeline/power) using
+   layers, terraforming under existing infrastructure, and underground
+   buildings (the Depot remains ground-only by design), are still open.
 5. **Remaining modes** (ship, plane) — should mostly be data + a thin
    mode-module given the abstraction is proven.
 6. **Content/extensibility pass**: JSON Schema validation, content-pack

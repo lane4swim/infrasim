@@ -163,10 +163,16 @@ function findLayerPath(start, end){
       if(found) return found;
     }
     const [grade, kind] = LAYER_GRADE_KIND[cur.layer];
-    // Same-cell vertical Ramp — ground<->elevated only; never triggered for
-    // underground (cell.ramps is exclusively the elevated Ramp's flag).
-    if((grade==='ground' || grade==='elevated') && getCell(cur.x,cur.y).ramps[kind]){
-      const otherGrade = grade==='ground' ? 'elevated' : 'ground';
+    // Same-cell vertical ramps (§ Terrain elevation) — any RAMP_PAIRS entry
+    // touching this grade (world.js): ground<->elevated, elevated<->airspace,
+    // or underground<->deepUnderground. A cell can have more than one at
+    // once (independently, per kind), so this doesn't stop at the first
+    // match — each is its own candidate BFS move.
+    const ramps = getCell(cur.x,cur.y).ramps[kind];
+    for(const pair of RAMP_PAIRS){
+      if(grade !== pair.lo && grade !== pair.hi) continue;
+      if(!ramps[pair.key]) continue;
+      const otherGrade = grade===pair.lo ? pair.hi : pair.lo;
       const found = tryVisit({x:cur.x, y:cur.y, layer:GRADE_KIND_LAYER[otherGrade][kind]}, cur);
       if(found) return found;
     }

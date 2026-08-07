@@ -63,13 +63,67 @@ function drawTrackCell(x, y, dirs, color, margin){
   }
 }
 
+// Terrain elevation (§ Terrain elevation) — a subtle tint per cell, cool
+// blue for below-0 ("valley"), warm tan for above-0 ("hill"), nothing at
+// all for elevation 0 (the implicit default, which reads as "no need to
+// check"). Deliberately faint (low lightness/alpha) since it sits UNDER
+// every other layer and shouldn't compete with track/building colors.
+function elevationColor(elevation){
+  if(!elevation) return null;
+  const t = Math.max(-1, Math.min(1, elevation / ELEVATION_MAX));
+  return t > 0 ? `hsla(35, 45%, ${10+t*12}%, 0.9)` : `hsla(212, 50%, ${8+(-t)*10}%, 0.9)`;
+}
+// The two endpoints of one cell-boundary edge segment, for drawing a
+// "cliff" marker (see the elevation-delta loop in render() below) — a
+// straight line along the actual tile border the ramp-less connectivity
+// cap (MAX_ELEVATION_DELTA, commands.js) refuses to join.
+function cellEdgeSegment(x,y,dir){
+  const x0=x*CELL, y0=y*CELL;
+  if(dir==='N') return [[x0,y0],[x0+CELL,y0]];
+  if(dir==='S') return [[x0,y0+CELL],[x0+CELL,y0+CELL]];
+  if(dir==='E') return [[x0+CELL,y0],[x0+CELL,y0+CELL]];
+  return [[x0,y0],[x0,y0+CELL]]; // 'W'
+}
+
 function render(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // Terrain fill — drawn first, under everything, including the grid
+  // lines, so it reads as ground itself rather than a UI overlay.
+  for(const [k,cell] of world.grid){
+    const color = elevationColor(cell.elevation);
+    if(!color) continue;
+    const [x,y] = k.split(',').map(Number);
+    ctx.fillStyle = color;
+    ctx.fillRect(x*CELL, y*CELL, CELL, CELL);
+  }
+
   // grid lines
   ctx.strokeStyle = getCss('--grid-line');
   ctx.lineWidth = 1;
   for(let x=0;x<=GRID_W;x++){ ctx.beginPath(); ctx.moveTo(x*CELL+.5,0); ctx.lineTo(x*CELL+.5,GRID_H*CELL); ctx.stroke(); }
   for(let y=0;y<=GRID_H;y++){ ctx.beginPath(); ctx.moveTo(0,y*CELL+.5); ctx.lineTo(GRID_W*CELL,y*CELL+.5); ctx.stroke(); }
+
+  // Cliff markers — a thick dark line along the shared border of two
+  // adjacent cells whose terrain (ground.elevation) differs by more than
+  // MAX_ELEVATION_DELTA, i.e. exactly the pairs elevationBlocksConnection
+  // (commands.js) refuses to auto- or manually connect. Checked from every
+  // cell in all four directions (not just E/S) so a cliff is always drawn
+  // from whichever side of the pair happens to be the one that's actually
+  // been terraformed (an untouched cell is never in world.grid, and always
+  // reads as elevation 0 — see terraform in commands.js).
+  for(const [k] of world.grid){
+    const [x,y] = k.split(',').map(Number);
+    for(const {dir,dx,dy} of ROAD_DIRS){
+      const nx=x+dx, ny=y+dy;
+      if(!inBounds(nx,ny)) continue;
+      if(Math.abs(elevationAt(x,y,'ground') - elevationAt(nx,ny,'ground')) <= MAX_ELEVATION_DELTA) continue;
+      const [[ax,ay],[bx,by]] = cellEdgeSegment(x,y,dir);
+      ctx.strokeStyle = '#1a1410';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(bx,by); ctx.stroke();
+    }
+  }
 
   // roads — connected edges render as a single straight line between their
   // two port midpoints, so an isolated tile visibly reads as disconnected,
@@ -88,46 +142,62 @@ function render(){
   // underground line only actually shows through where the ground above
   // it is empty — a deliberately muted "X-ray" hint rather than a full
   // second view.
+  // deepUnderground is a flat global plane one grade below the
+  // (terrain-following) underground grade — an even thicker, dimmer dashed
+  // line than underground's, since it's the deepest, most hidden thing on
+  // the map. airspace is the mirror image at the opposite end: a flat
+  // global plane above elevated, drawn as a thin, bright dashed line since
+  // it's the highest, most "in the open" thing on the map. Both drawn
+  // FIRST/LAST respectively in this group so ground/elevated still paint
+  // over them wherever both exist at the same cell — the same "X-ray hint"
+  // treatment underground already gets.
+  drawRoadLayer('deepUnderground', '#3a2a1a', 4, true);
   drawRoadLayer('underground', '#5a4a3a', 6, true);
   drawRoadLayer('ground', getCss('--road'), 8);
   drawRoadLayer('elevated', '#7fb8c9', 12);
+  drawRoadLayer('airspace', '#8ac9e8', 14, true);
   // Rail reuses drawRoadLayer entirely unchanged — same {track,edges,
   // oneWayBlocked} shape, so a signal renders exactly like a one-way arrow
   // for free, and rail crossing a road at the same cell reads as two
   // independent lines (different layer key, never auto-connected).
   // railElevated is rail's own bridge layer (rail ramps, not roads) — a
   // lighter tint of rail's purple, the same relationship elevated road's
-  // light blue has to ground road's gray. railUnderground is the same
-  // dashed/muted treatment as underground road, just rail's own hue.
+  // light blue has to ground road's gray. railUnderground/railDeepUnderground/
+  // railAirspace are the same dashed/muted treatment as their road
+  // counterparts, just rail's own hue.
+  drawRoadLayer('railDeepUnderground', '#2a1a3a', 6, true);
   drawRoadLayer('railUnderground', '#4a3a5a', 8, true);
   drawRoadLayer('rail', '#9b6bd6', 10);
   drawRoadLayer('railElevated', '#c9a8e8', 13);
+  drawRoadLayer('railAirspace', '#d8b8f0', 15, true);
 
   // ramps — a small diamond marking a cell where a layer pair is
-  // deliberately linked (the only place a vehicle can change layer): the
-  // road Ramp (ground<->elevated) in elevated road's own light blue, the
-  // independent Rail Ramp (rail<->railElevated) in elevated rail's own
-  // light purple, so the two are visibly distinguishable when a cell
-  // happens to have both.
+  // deliberately linked (one of the only two places a vehicle can change
+  // layer, alongside the lateral Tunnel Ramp below): the road (road) Ramp
+  // (ground<->elevated) in elevated road's own light blue, the independent
+  // Rail Ramp (rail<->railElevated) in elevated rail's own light purple —
+  // and now, one RAMP_PAIRS entry further in each direction, an Airspace
+  // Ramp/Deep Ramp in airspace's/deepUnderground's own hue, so every pair
+  // is visibly distinguishable when a cell happens to have more than one
+  // (they simply overlap at the same cell center, distinguished by color,
+  // same as road vs. rail already did).
+  const RAMP_MARKER_COLOR = {
+    road: { groundElevated: '#7fb8c9', elevatedAirspace: '#8ac9e8', undergroundDeep: '#5a4a3a' },
+    rail: { groundElevated: '#c9a8e8', elevatedAirspace: '#d8b8f0', undergroundDeep: '#2a1a3a' },
+  };
   for(const [k,cell] of world.grid){
-    if(!cell.ramps.road) continue;
     const [x,y] = k.split(',').map(Number);
     const cx = x*CELL+CELL/2, cy = y*CELL+CELL/2;
-    ctx.save();
-    ctx.translate(cx,cy); ctx.rotate(Math.PI/4);
-    ctx.fillStyle = '#7fb8c9';
-    ctx.fillRect(-5,-5,10,10);
-    ctx.restore();
-  }
-  for(const [k,cell] of world.grid){
-    if(!cell.ramps.rail) continue;
-    const [x,y] = k.split(',').map(Number);
-    const cx = x*CELL+CELL/2, cy = y*CELL+CELL/2;
-    ctx.save();
-    ctx.translate(cx,cy); ctx.rotate(Math.PI/4);
-    ctx.fillStyle = '#c9a8e8';
-    ctx.fillRect(-5,-5,10,10);
-    ctx.restore();
+    for(const kind of ['road','rail']){
+      for(const pair of RAMP_PAIRS){
+        if(!cell.ramps[kind][pair.key]) continue;
+        ctx.save();
+        ctx.translate(cx,cy); ctx.rotate(Math.PI/4);
+        ctx.fillStyle = RAMP_MARKER_COLOR[kind][pair.key];
+        ctx.fillRect(-5,-5,10,10);
+        ctx.restore();
+      }
+    }
   }
 
   // Tunnel ramp markers (§ Underground layer) — a ramp edge is a property
@@ -165,7 +235,7 @@ function render(){
   // "vehicles may have to wait here."
   for(const [k] of world.grid){
     const [x,y] = k.split(',').map(Number);
-    if(!isRoadRailCrossing(x,y,'rail') && !isRoadRailCrossing(x,y,'railElevated') && !isRoadRailCrossing(x,y,'railUnderground')) continue;
+    if(!isRoadRailCrossing(x,y,'rail') && !isRoadRailCrossing(x,y,'railElevated') && !isRoadRailCrossing(x,y,'railUnderground') && !isRoadRailCrossing(x,y,'railDeepUnderground') && !isRoadRailCrossing(x,y,'railAirspace')) continue;
     const cx = x*CELL+CELL/2, cy = y*CELL+CELL/2;
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 2;
@@ -330,17 +400,18 @@ function render(){
     const w = horizontal ? longPx : shortPx;
     const h = horizontal ? shortPx : longPx;
     ctx.fillRect(cx-w/2, cy-h/2, w, h);
-    if(v.layer==='elevated' || v.layer==='railElevated'){
-      // Same "on a bridge" outline for a truck on elevated road and a train
-      // on elevated rail — both mean the same thing (currently on this
-      // vehicle's own elevated layer), so one shared visual cue is enough.
+    if(v.layer==='elevated' || v.layer==='railElevated' || v.layer==='airspace' || v.layer==='railAirspace'){
+      // Same "above ground" outline for elevated AND airspace — both mean
+      // "currently above ground level," so one shared visual cue is enough
+      // (solid, vs. underground/deepUnderground's dashed "below ground"
+      // outline below).
       ctx.strokeStyle='#7fb8c9'; ctx.lineWidth=2;
       ctx.strokeRect(cx-w/2-2, cy-h/2-2, w+4, h+4);
     }
-    if(v.layer==='underground' || v.layer==='railUnderground'){
-      // Same idea as the bridge outline, dashed instead of solid — "in a
-      // tunnel" reads as the opposite of "on a bridge" (below vs. above),
-      // and the dash matches the dashed underground track itself.
+    if(v.layer==='underground' || v.layer==='railUnderground' || v.layer==='deepUnderground' || v.layer==='railDeepUnderground'){
+      // Same idea, dashed instead of solid — "below ground" (underground
+      // OR deepUnderground) reads as the opposite of "above ground," and
+      // the dash matches the dashed underground/deepUnderground track itself.
       ctx.save();
       ctx.setLineDash([4,3]);
       ctx.strokeStyle='#8a7a6a'; ctx.lineWidth=2;
@@ -363,6 +434,17 @@ function render(){
     } else if(currentTool==='road' || currentTool==='track' || currentTool==='bulktruck' || currentTool==='flatbedtruck' || currentTool==='assembletrain'){
       ctx.strokeRect(hoverCell.x*CELL+1, hoverCell.y*CELL+1, CELL-2, CELL-2);
     }
+  }
+
+  // Elevation numbers — only where non-zero (0 is the implicit default,
+  // reads as "no need to check"); drawn last so they stay legible over
+  // track/terrain/vehicles rather than getting buried under them.
+  ctx.font = '9px monospace';
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  for(const [k,cell] of world.grid){
+    if(!cell.elevation) continue;
+    const [x,y] = k.split(',').map(Number);
+    ctx.fillText((cell.elevation>0?'+':'')+cell.elevation, x*CELL+3, y*CELL+CELL-3);
   }
 
   // HUD
