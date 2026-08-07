@@ -266,6 +266,23 @@ without touching simulation code.
 > section, pathfinding/rail-blocks/rendering needed only a loop over
 > `UNDERGROUND_LEVELS` where they used to hardcode one layer name — the
 > grade abstraction held up under a third real stress test in a row.
+>
+> **Further amended in Phase 2 (Building foundations).** Grid occupancy at
+> a cell was always grade-scoped — a building claims ground space, track
+> claims whichever grade it's built at, and the two only ever conflicted
+> at the SAME grade. An optional per-building content-pack field,
+> `blockedUndergroundLevels` (default 0, preserving every existing
+> building's unrestricted behavior exactly), extends that: a building can
+> now claim some number of underground levels too, starting from the one
+> right below ground. The two directions of conflict — new track under an
+> existing building's foundation, and a new building over existing track
+> at a level its foundation would reach — are independent checks in
+> `buildTrackTile` and `cmdBuildBuilding` respectively, both reusing
+> mechanisms (the cell's `buildingId`, the per-grade `.track` scan) that
+> already existed for the ground-level case; neither needed to change how
+> the other works. The shipped pack demonstrates it on the Mine (2 levels
+> — a real shaft/excavation) and the Mill (1 level — a large foundation,
+> shallower); every other building omits the field, unaffected.
 
 ---
 

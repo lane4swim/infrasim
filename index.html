@@ -377,8 +377,8 @@
     "smelt_steel": { "inputs": [{ "resource": "ore", "amount": 2 }], "outputs": [{ "resource": "steel", "amount": 1 }], "durationTicks": 6 }
   },
   "buildings": {
-    "mine":    { "buildCost": 150, "tiers": { "small": { "cap": 20, "add": 0 }, "large": { "cap": 50, "add": 100 } }, "color": "#7a5230", "label": "Mine", "footprint": { "w": 2, "h": 2 }, "recipe": "extract_ore" },
-    "mill":    { "buildCost": 220, "tiers": { "small": { "cap": 20, "add": 0 }, "large": { "cap": 50, "add": 120 } }, "color": "#8a4a3a", "label": "Steel Mill", "footprint": { "w": 3, "h": 2 }, "recipe": "smelt_steel" },
+    "mine":    { "buildCost": 150, "tiers": { "small": { "cap": 20, "add": 0 }, "large": { "cap": 50, "add": 100 } }, "color": "#7a5230", "label": "Mine", "footprint": { "w": 2, "h": 2 }, "recipe": "extract_ore", "blockedUndergroundLevels": 2 },
+    "mill":    { "buildCost": 220, "tiers": { "small": { "cap": 20, "add": 0 }, "large": { "cap": 50, "add": 120 } }, "color": "#8a4a3a", "label": "Steel Mill", "footprint": { "w": 3, "h": 2 }, "recipe": "smelt_steel", "blockedUndergroundLevels": 1 },
     "town":    { "buildCost": 100, "tiers": { "small": { "cap": 20, "add": 0, "population": 50 }, "large": { "cap": 50, "add": 80, "population": 150 } }, "color": "#3a6ea5", "label": "Town", "footprint": { "w": 3, "h": 2 } },
     "station": { "buildCost": 60,  "tiers": { "small": { "cap": 0, "add": 0 }, "large": { "cap": 0, "add": 0 } }, "color": "#c9a227", "label": "Station", "footprint": { "w": 1, "h": 1 }, "transferRate": 4 },
     "depot":   { "buildCost": 300, "tiers": { "small": { "cap": 30, "add": 0 }, "large": { "cap": 80, "add": 150 } }, "color": "#6b5b95", "label": "Rail Depot", "footprint": { "w": 2, "h": 4 }, "transferRate": 4, "platformLengths": [2, 4, 6, 8] },

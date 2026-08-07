@@ -2159,3 +2159,79 @@ charges exactly the expected total ($260, matching each level's own
 per-tile and ramp cost), and a screenshot confirms the progressive
 darkening between level 1 and level 2 track with ramp markers at each
 transition, with no console errors.
+
+# Phase 2 — Building foundations
+
+Buildings can now claim underground space, not just ground-level space.
+An optional content-pack field, `blockedUndergroundLevels` (a
+non-negative integer, default 0), says how many underground levels —
+starting from level 1, right below ground — a building's own foundation
+physically occupies. Track can't be built there, in either direction:
+a new tunnel can't be laid under an existing building's foundation, and a
+new building can't be placed over an existing tunnel at a level its
+foundation would reach. Any level DEEPER than the foundation is entirely
+unaffected — a tunnel can still pass beneath.
+
+## Design
+
+- **Optional, defaulting to exactly today's behavior.** Before this
+  feature, "an underground tile passing beneath [a building] is fine" was
+  true unconditionally for every building. `blockedUndergroundLevels`
+  omitted (or 0) preserves that exactly — every building already in the
+  shipped pack except Mine/Mill keeps the old, unrestricted behavior with
+  zero data changes needed on their part.
+- **Two symmetric checks, not one.** `buildTrackTile` (commands.js) is the
+  existing single choke point for "can a tile go here" — it already
+  refused ground-grade track under any building; it now also refuses
+  underground-grade track at a level `<=` the building's
+  `blockedUndergroundLevels`, looked up from `BUILDING_DEFS[building.
+  type]` via the cell's existing `buildingId`. The reverse direction needed
+  its own check: `cmdBuildBuilding`'s footprint validation loop already
+  refused to place a building over existing ground track (`groundOccupied`)
+  — it now also scans the building's own `blockedUndergroundLevels` worth
+  of underground grades for existing track and refuses if any is found,
+  the same "footprint overlaps something" rejection existing checks already
+  use. Neither check needed to know about the other; they're independent
+  applications of the same underlying rule (a building's foundation and
+  track can never occupy the same cell at the same grade), checked from
+  whichever side is doing the building.
+- **A clear warning, unlike the ground case.** Building under an existing
+  structure is silently rejected today (visually obvious why — the
+  building is right there). A blocked underground level is invisible
+  without X-ray vision, so the new rejection names the building and the
+  exact level: `"Mine's foundation reaches underground level 2 here —
+  can't build road tile at level 1."` — enough to diagnose without
+  guessing.
+- **The shipped pack demonstrates it on two buildings.** Mine gets
+  `blockedUndergroundLevels: 2` (a real mine physically extends
+  underground — its own shaft/excavation plausibly reaches a couple of
+  levels down) and Mill gets `1` (a large industrial foundation, but
+  shallower). Every other building — Town, Station, Depot, Train Yard —
+  omits the field entirely, unaffected.
+
+## What changed
+
+- **`loader.js`**: `validateContentPack` accepts an optional
+  `blockedUndergroundLevels` on a building def — must be a non-negative
+  integer if present.
+- **`index.html`**: `mine` gets `"blockedUndergroundLevels": 2`, `mill`
+  gets `"blockedUndergroundLevels": 1`.
+- **`commands.js`**: `buildTrackTile` looks up the cell's building (if
+  any) and refuses underground track at a blocked level, with a named
+  warning; `cmdBuildBuilding`'s footprint loop refuses placement over
+  existing track at a level the new building's foundation would reach.
+
+## Testing
+
+New `test/test-building-foundation.js` (5 sections, 22 checks):
+content-pack validation (negative/fractional rejected, valid accepted,
+omitted defaults to 0), the shipped Mine blocking levels 1-2 but allowing
+level 3 (with the exact warning text checked), the shipped Mill blocking
+only level 1, a building with no foundation field leaving every
+underground level unaffected (a direct regression check against the
+pre-feature behavior), and the reverse case — placing a building rejected
+over existing track at a blocked level, allowed over track at a deeper
+level. All 9 test files pass. Also verified end-to-end in a real browser:
+building a Mine then attempting a level-1 tunnel underneath it logs the
+foundation-conflict warning, and a level-3 tunnel underneath the same
+Mine succeeds, with no console errors.

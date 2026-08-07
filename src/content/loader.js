@@ -101,6 +101,14 @@ function validateContentPack(pack){
     // type just doesn't define it, same as `recipe` above.
     if(b.platformLengths!==undefined) need(Array.isArray(b.platformLengths) && b.platformLengths.length>0 && b.platformLengths.every(n=>Number.isInteger(n) && n>0),
       `building "${id}" has an invalid platformLengths — must be a nonempty array of positive integers`);
+    // Optional — how many underground levels (starting from level 1, the
+    // one right below ground) this building's foundation physically
+    // occupies, blocking track from ever being built there beneath its
+    // footprint (§ Building foundations). 0 or omitted means "no deep
+    // foundation" — track can be built at any underground level below it,
+    // the same as every building before this feature existed.
+    if(b.blockedUndergroundLevels!==undefined) need(Number.isInteger(b.blockedUndergroundLevels) && b.blockedUndergroundLevels>=0,
+      `building "${id}" has an invalid blockedUndergroundLevels — must be a non-negative integer`);
   }
   for(const [id, v] of Object.entries(pack.vehicles)){
     need(typeof v.purchaseCost==='number', `vehicle "${id}" is missing a numeric purchaseCost`);

@@ -79,20 +79,32 @@ function connectNewTileEdges(x,y,layer,track){
 // any grade, is the same shape: charge for it (elevated/underground each at
 // their own per-grade multiplier), mark it built, auto-connect if asked.
 // Ground-grade tiles additionally can't go under a building, regardless of
-// kind — a building already occupies that physical ground space (an
-// underground tile passing beneath one is fine, same as a bridge passing
-// above one is — neither actually shares the building's own ground cell).
-// Returns whether the tile was actually built, since the two rail-block
-// recompute calls (cmdBuildTrack only, road has no blocks) need to know
-// whether anything actually changed.
+// kind — a building already occupies that physical ground space. Deeper
+// underground levels beneath a building are usually still fine (a tunnel
+// passing beneath one is fine, same as a bridge passing above one is —
+// neither actually shares the building's own ground cell) UNLESS that
+// building's own foundation reaches that deep (§ Building foundations —
+// BUILDING_DEFS[type].blockedUndergroundLevels), in which case the
+// building's own foundation occupies that level too, so track can't go
+// there either. Returns whether the tile was actually built, since the two
+// rail-block recompute calls (cmdBuildTrack only, road has no blocks) need
+// to know whether anything actually changed.
 function buildTrackTile(x,y,layer,autoConnect,costPerTile,label){
   if(autoConnect === undefined) autoConnect = true;
   const cell = getCell(x,y);
   const [grade] = LAYER_GRADE_KIND[layer];
   const track = trackAt(x,y,layer);
   if(track.track) return false;
-  if(grade==='ground' && cell.buildingId) return false; // can't lay ground-level track under a building
+  const building = cell.buildingId!=null ? world.entities.get(cell.buildingId) : null;
+  if(grade==='ground' && building) return false; // can't lay ground-level track under a building
   const undergroundLevel = undergroundLevelOfGrade(grade);
+  if(undergroundLevel && building){
+    const blockedLevels = BUILDING_DEFS[building.type].blockedUndergroundLevels || 0;
+    if(undergroundLevel <= blockedLevels){
+      logEvent(`${BUILDING_DEFS[building.type].label}'s foundation reaches underground level ${blockedLevels} here — can't build ${label} at level ${undergroundLevel}.`, 'warn');
+      return false;
+    }
+  }
   const multiplier = grade==='elevated' ? ELEVATED_COST_MULTIPLIER
     : undergroundLevel ? costMultiplierForUndergroundLevel(undergroundLevel)
     : grade==='airspace' ? AIRSPACE_COST_MULTIPLIER
@@ -292,7 +304,17 @@ function cmdBuildBuilding(type, x, y, tier, facing, resource, length){
       // naming road/rail specifically means a new kind never needs a new
       // clause here either.
       const groundOccupied = Object.values(cell.layers.ground).some(t => t.track);
-      if(groundOccupied || cell.buildingId){ logEvent(`${def.label} footprint overlaps something at (${cx},${cy}).`, 'warn'); return; }
+      // A building with a deep foundation (§ Building foundations) also
+      // conflicts with any track ALREADY built at a level its foundation
+      // would reach — the symmetric case of buildTrackTile refusing to lay
+      // new track under an existing building's foundation. Buildings with
+      // no foundation (blockedUndergroundLevels 0 or omitted) never check
+      // this at all, exactly as before this feature existed.
+      let foundationConflict = false;
+      for(let level=1; level<=(def.blockedUndergroundLevels||0); level++){
+        if(Object.values(cell.layers[undergroundGradeName(level)]).some(t => t.track)){ foundationConflict = true; break; }
+      }
+      if(groundOccupied || cell.buildingId || foundationConflict){ logEvent(`${def.label} footprint overlaps something at (${cx},${cy}).`, 'warn'); return; }
     }
   }
   if(type==='station'){
