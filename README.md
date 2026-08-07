@@ -2317,3 +2317,99 @@ screenshotted the canvas under `'all'` and under each focused view — `'all'`
 shows all three at once with progressively darker color per level; each
 focused view shows only its own level's track, undarkened, with the other
 two not drawn at all. Zero console errors throughout.
+
+# Phase 2 — Content-pack layering
+
+The content pack used to be exactly one JSON block. `specification.md` §9
+always described something more ambitious — "A ContentPack loader merges
+base-game data with any additional packs" — but the shipped game never
+actually had a second pack to merge. It does now: `index.html` ships two
+`<script type="application/json" class="content-pack">` blocks, a base pack
+(the original, unchanged game data) and a small addon pack that adds Coal —
+a new resource, recipe, building (Colliery), truck (Coal Hauler), and wagon
+(Coal Hopper) — merged together at startup into the one pack object the
+game actually runs on.
+
+## Design
+
+- **Any number of blocks, merged in document order.** `loader.js`'s DOM
+  bootstrap now reads every `script.content-pack` element (not a single
+  `id="content-pack"` lookup) and passes the parsed array to a new
+  `mergeContentPacks(packs)`, which combines them section-by-section
+  (resources/recipes/buildings/vehicles/rail/engines/wagons). This is the
+  real implementation of the "ContentPack loader merges... with any
+  additional packs" line in the spec, not a reinterpretation of it.
+- **A pack can be as small as the one thing it adds.** `validateContentPack`
+  still requires every section on the final MERGED pack — but an individual
+  pack no longer has to restate sections it has nothing to add to. The coal
+  addon has no `rail` or `engines` section at all; it doesn't need one,
+  since the base pack already supplies them and merging only ever adds keys
+  into each section, never wipes one out for lacking an entry.
+  `Object.assign(merged[section], pack[section])` per pack is the entire
+  merge — deliberately simple: whole-entry-per-id, not a deep/field-level
+  merge, so there's exactly one rule to reason about.
+- **A later pack reusing an earlier id replaces that id's entry entirely —
+  the override seam.** Not exercised by the two shipped packs (the coal
+  addon only adds new ids), but this is what a rebalancing/reskinning mod
+  would use, and it's covered directly by synthetic-pack tests rather than
+  by shipping a real override no one asked for.
+- **One real, small generalization the addon surfaced: `entities.js` no
+  longer special-cases `type==='mine' || type==='mill'` for which
+  buildings get production wiring — it now checks `def.recipe`.** Building
+  a Colliery (a production building that isn't literally named "mine" or
+  "mill") through the addon pack immediately exposed that the "new resource
+  = zero code changes" claim had a gap: entity creation, not just
+  validation, was hardcoded to two specific type names. The fix reads
+  exactly what the pre-existing comment already said the mechanism was for
+  ("Producer covers both extraction and processing — the recipe is what
+  tells tickProduction which applies") — it just wasn't actually gated on
+  that. Every other system (`tickProduction`, Storage load/unload) already
+  worked off the recipe/component data, not the type string, so no other
+  file needed to change.
+- **No toolbar button for the addon's building/vehicles — a deliberate,
+  named scope cut.** The toolbar is still fixed HTML buttons wired to
+  specific type ids (`mine`, `mill`, `town`, ...); dynamically generating it
+  from whatever the merged pack contains is a separate, larger change this
+  didn't attempt. The Colliery/Coal Hauler/Coal Hopper are fully live,
+  reachable content nonetheless — exactly as validated and exercised
+  through the command API (`cmdBuildBuilding`, `cmdPurchaseVehicle`,
+  `createTrain`), the same level every previous "modded content" claim in
+  this project has been proven at, never through the UI.
+
+## What changed
+
+- **`loader.js`**: new `mergeContentPacks(packs)` + `CONTENT_PACK_SECTIONS`;
+  the DOM bootstrap collects `document.querySelectorAll('script.content-pack')`
+  instead of a single `getElementById('content-pack')`.
+- **`index.html`**: the original content-pack block, unchanged, renamed
+  `id="content-pack-base"` and given `class="content-pack"`; a new second
+  block `id="content-pack-coal"` (same class) adds Coal's resource, recipe,
+  building, truck, and wagon. Explanatory comment above both rewritten for
+  the multi-pack model.
+- **`entities.js`**: `createBuilding`'s Producer/Storage wiring keys off
+  `def.recipe` instead of `type==='mine' || type==='mill'`.
+- **`test/harness.js`**: `extractContentPackJson` now merges every
+  content-pack block in `index.html` (was: read the one block); new
+  `extractContentPackBlocks` returns the raw per-block text; `newGameContext`
+  gains a `contentPacks` (array) option alongside the existing
+  `contentPackJson` (single-string) one, and its fake DOM now serves
+  `querySelectorAll('script.content-pack')` instead of `getElementById`.
+
+## Testing
+
+New `test/test-content-pack-merge.js` (6 sections): a synthetic addon pack
+merges cleanly alongside a synthetic base pack; a later pack overrides an
+earlier pack's same-id entry entirely; a pack may omit whole sections
+without error as long as the MERGED result has every section; cross-pack
+references resolve (an addon recipe naming a base-pack resource validates)
+and an addon recipe naming an undefined resource is still rejected, by
+name, after merging; the real shipped coal addon is live via a default
+`newGameContext()` (every real block in `index.html`, merged) with the base
+pack's own data provably unaffected; and end-to-end, a Colliery actually
+produces coal, a purchased Coal Hauler is correctly typed, and a train
+assembled from Coal Hopper wagons carries coal at the addon's capacity. All
+10 test files (9 existing + this one) pass. Also verified in a real browser
+via Playwright: `RESOURCES.coal`/`BUILDING_DEFS.colliery`/etc. are live,
+`RESOURCES.ore`/`BUILDING_DEFS.mine` are byte-for-byte unaffected, and
+building a Mine through the ordinary toolbar UI still works exactly as
+before (treasury debited correctly), with zero console errors.

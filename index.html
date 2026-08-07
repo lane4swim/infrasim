@@ -357,8 +357,8 @@
 <div id="log"></div>
 
 <!--
-  CONTENT PACK — the game's resources/recipes/buildings/vehicles/rail/
-  engines/wagons, as one JSON block instead of inline JS objects (§9/§13's
+  CONTENT PACKS — the game's resources/recipes/buildings/vehicles/rail/
+  engines/wagons, as JSON blocks instead of inline JS objects (§9/§13's
   "new resource = new JSON file, no code change" claim). This is a
   deliberate middle ground, not real data/*.json files: those need either
   a bundler or fetch() calls, and fetch() fails under file:// without a
@@ -368,11 +368,27 @@
   CORS/bundler problem. A real data/ directory becomes a later, purely
   additive step if/when a bundler is adopted for other reasons.
 
+  There can be any number of these — every <script type="application/json"
+  class="content-pack"> block on the page is parsed and merged, in document
+  order, into the one pack object validateContentPack/initContentPack
+  actually consume (see mergeContentPacks in loader.js). This is the real
+  version of §9's "A ContentPack loader merges base-game data with any
+  additional packs" — a pack after the base one only has to include the
+  section(s)/id(s) it actually adds; reusing an id already used by an
+  earlier pack replaces that entry entirely (an override), the seam a mod
+  seeking to reskin or rebalance one specific building/vehicle would use.
+  The two shipped here demonstrate the "add" side of that: the base pack is
+  the original single-pack game unchanged, and content-pack-coal is a small
+  second pack adding a wholly new resource/recipe/building/vehicle/wagon
+  with no edits to the base pack at all (see test/test-content-pack.js for
+  both "add" and "override" merge behavior exercised directly, including
+  cross-pack references like an addon recipe naming a base-pack resource).
+
   Parsed once at startup into the RESOURCES/RECIPES/BUILDING_DEFS/
   VEHICLE_DEFS/RAIL_DEFS/ENGINE_DEFS/WAGON_DEFS bindings the rest of the
   script already uses (see validateContentPack / the parsing block right
   after this) — zero changes to any system, command, or render code, since
-  they only ever reference the parsed result, never this block directly.
+  they only ever reference the parsed result, never these blocks directly.
 
   Trains are not a single vehicle def the way trucks are: a train is
   assembled at a Train Yard from one engine (defines physics — speed,
@@ -380,8 +396,16 @@
   capacity and which single resource it carries, exactly like a truck's
   fixed resource). See the Consist component / getTrainStats in the main
   script for how engines+wagons combine into one vehicle's stats.
+
+  Coal's building (Colliery) and vehicles (Coal Hauler truck, Coal Hopper
+  wagon) have no toolbar button/UI hookup — the toolbar is still a fixed
+  set of HTML buttons wired to specific type ids (dynamically generating it
+  from the merged pack is a bigger, separate change). They're fully live,
+  reachable content nonetheless, exactly as validated/exercised via the
+  command API in test/test-content-pack.js — the same level "modded"
+  content has always been proven at in this project.
 -->
-<script type="application/json" id="content-pack">
+<script type="application/json" class="content-pack" id="content-pack-base">
 {
   "version": "1",
   "resources": {
@@ -413,6 +437,25 @@
   "wagons": {
     "ore_wagon":   { "purchaseCost": 150, "capacity": 20, "resource": "ore",   "label": "Ore Wagon",   "color": "#7a5230", "massEmpty": 6, "lengthTiles": 2.5, "transferRate": 4 },
     "steel_wagon": { "purchaseCost": 180, "capacity": 16, "resource": "steel", "label": "Steel Wagon", "color": "#8a4a3a", "massEmpty": 7, "lengthTiles": 2.5, "transferRate": 4 }
+  }
+}
+</script>
+<script type="application/json" class="content-pack" id="content-pack-coal">
+{
+  "resources": {
+    "coal": { "id": "coal", "name": "Coal", "baseValue": 8, "unitWeight": 0.45 }
+  },
+  "recipes": {
+    "mine_coal": { "inputs": [], "outputs": [{ "resource": "coal", "amount": 1 }], "durationTicks": 5 }
+  },
+  "buildings": {
+    "colliery": { "buildCost": 170, "tiers": { "small": { "cap": 20, "add": 0 }, "large": { "cap": 50, "add": 90 } }, "color": "#3a3a3a", "label": "Colliery", "footprint": { "w": 2, "h": 2 }, "recipe": "mine_coal" }
+  },
+  "vehicles": {
+    "coalhauler": { "purchaseCost": 230, "runningCostPerTick": 1.1, "capacity": 9, "sellFraction": 0.4, "label": "Coal Hauler", "resource": "coal", "color": "#555555", "maxSpeedTilesPerTick": 1.15, "massEmpty": 5.5, "engineForce": 0.58, "brakeForce": 1.75, "lengthTiles": 1.25, "transferRate": 4 }
+  },
+  "wagons": {
+    "coal_hopper": { "purchaseCost": 150, "capacity": 17, "resource": "coal", "label": "Coal Hopper", "color": "#3a3a3a", "massEmpty": 6.2, "lengthTiles": 2.5, "transferRate": 4 }
   }
 }
 </script>

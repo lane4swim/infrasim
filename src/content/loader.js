@@ -147,6 +147,31 @@ function validateContentPack(pack){
   }
 }
 
+// Multiple content packs (§9 — "A ContentPack loader merges base-game data
+// with any additional packs") — the page can ship any number of
+// application/json <script class="content-pack"> blocks, each a partial or
+// complete pack, merged here into the one pack object validateContentPack/
+// initContentPack actually consume. Merging is per-section, per-id: a pack
+// only has to include the sections/ids it actually touches (the "missing
+// section" check in validateContentPack runs against the MERGED result, not
+// each individual pack, so an addon pack can be as small as one new
+// resource), and a later pack reusing an earlier pack's id for the same
+// section entirely replaces that entry — the seam an override-style mod
+// uses, exactly like a later JS property assignment winning over an
+// earlier one. Load order is document order (see the DOM bootstrap below).
+const CONTENT_PACK_SECTIONS = ['resources','recipes','buildings','vehicles','rail','engines','wagons'];
+function mergeContentPacks(packs){
+  const merged = {};
+  for(const section of CONTENT_PACK_SECTIONS) merged[section] = {};
+  for(const pack of packs){
+    if(pack.version !== undefined) merged.version = pack.version;
+    for(const section of CONTENT_PACK_SECTIONS){
+      if(pack[section]) Object.assign(merged[section], pack[section]);
+    }
+  }
+  return merged;
+}
+
 // Populated by initContentPack() below — `let`, not `const`, because the
 // Worker (see src/worker/worker-client.js) can't read the page's DOM to
 // parse the content pack itself. It receives the pack over postMessage
@@ -221,5 +246,6 @@ function initContentPack(pack){
 // the Worker calls initContentPack(pack) itself after receiving the pack
 // over postMessage instead.
 if(typeof document !== 'undefined'){
-  initContentPack(JSON.parse(document.getElementById('content-pack').textContent));
+  const packs = Array.from(document.querySelectorAll('script.content-pack')).map(el => JSON.parse(el.textContent));
+  initContentPack(mergeContentPacks(packs));
 }

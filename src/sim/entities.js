@@ -77,9 +77,13 @@ function createBuilding(type, x, y, tier, facing, resource, length){
     addComponent(id, 'Facing', facing); // which single side can ever touch a road (Stations only)
     addComponent(id, 'StationResource', resource || 'ore'); // which single resource this Station handles
   }
-  if(type==='mine' || type==='mill'){
-    // Producer covers both extraction (no inputs) and processing (has
-    // inputs) — the recipe is what tells tickProduction which applies.
+  if(def.recipe){
+    // Any building def with a `recipe` (not just the shipped Mine/Mill —
+    // see § Content-pack layering: an addon pack's own production building,
+    // e.g. Colliery, needs this exact same wiring with zero code changes)
+    // gets a Producer. Producer covers both extraction (no inputs) and
+    // processing (has inputs) — the recipe is what tells tickProduction
+    // which applies.
     const recipe = RECIPES[def.recipe];
     addComponent(id, 'Producer', {recipeId: def.recipe, ticksRemaining: recipe.durationTicks});
     const cap = def.tiers[tier].cap;

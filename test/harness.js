@@ -54,14 +54,47 @@ function extractScript(htmlPath){
   return SIM_SCRIPT_FILES.map(src => fs.readFileSync(path.join(baseDir, src), 'utf8')).join('\n');
 }
 
-// The content-pack <script> tag has a type/id attribute, so it never
-// matches extractScript's bare `<script>` pattern above — this pulls it
-// separately, the same way a real browser's document.getElementById would.
-function extractContentPackJson(htmlPath){
+// The content-pack <script> tags (class="content-pack", any number of them)
+// have a type/class attribute, so they never match extractScript's bare
+// `<script>` pattern above — this pulls them separately, the same way a
+// real browser's document.querySelectorAll('script.content-pack') would.
+function extractContentPackBlocks(htmlPath){
   const html = fs.readFileSync(htmlPath, 'utf8');
-  const m = html.match(/<script type="application\/json" id="content-pack">([\s\S]*?)<\/script>/);
-  if(!m) throw new Error(`No content-pack <script> block found in ${htmlPath}`);
-  return m[1];
+  const re = /<script type="application\/json" class="content-pack"[^>]*>([\s\S]*?)<\/script>/g;
+  const blocks = [];
+  let m;
+  while((m = re.exec(html))) blocks.push(m[1]);
+  if(blocks.length===0) throw new Error(`No content-pack <script> blocks found in ${htmlPath}`);
+  return blocks;
+}
+
+// Mirrors loader.js's own mergeContentPacks — duplicated rather than
+// required from loader.js, since that file expects to run inside the
+// sandboxed vm context (or a browser), not plain Node, and has no
+// module.exports. Used here only to answer "what's the real, fully-merged
+// shipped pack" for tests that clone-and-mutate it (test-content-pack.js,
+// test-building-foundation.js) — the actual merge CODE PATH under test
+// always runs for real, inside the vm context via newGameContext below.
+const CONTENT_PACK_SECTIONS = ['resources','recipes','buildings','vehicles','rail','engines','wagons'];
+function mergeContentPackBlocks(blocks){
+  const merged = {};
+  for(const section of CONTENT_PACK_SECTIONS) merged[section] = {};
+  for(const block of blocks){
+    const pack = JSON.parse(block);
+    if(pack.version !== undefined) merged.version = pack.version;
+    for(const section of CONTENT_PACK_SECTIONS){
+      if(pack[section]) Object.assign(merged[section], pack[section]);
+    }
+  }
+  return merged;
+}
+
+// Returns the real shipped content pack — every content-pack block in
+// index.html, merged — as a JSON string. Existing callers that want "the
+// real pack" (to clone and mutate for a fixture) get the fully-merged
+// result, same as the running game actually uses.
+function extractContentPackJson(htmlPath){
+  return JSON.stringify(mergeContentPackBlocks(extractContentPackBlocks(htmlPath)));
 }
 
 function makeFakeElement(){
@@ -88,18 +121,27 @@ function makeFakeElement(){
 // in the same test so they share world state; create a new context per
 // test for a clean world.
 //
-// `contentPackJson`, if given, replaces the content-pack text index.html
-// itself ships — this is what lets a test prove the extensibility claim
-// directly (§3.3.3): swap in a different pack, zero changes to the script,
-// and confirm the swapped-in content is what the game actually uses.
-function newGameContext({contentPackJson} = {}){
+// `contentPacks`, if given, is an array of JSON strings — each becomes its
+// own fake <script class="content-pack"> block, merged by the real
+// mergeContentPacks in loader.js exactly as document.querySelectorAll would
+// find them on the page — this is what lets a test exercise the multi-pack
+// merge/override behavior directly (not a harness reimplementation of it).
+// `contentPackJson`, if given (and `contentPacks` isn't), is shorthand for
+// a single pack — replaces the content index.html itself ships with just
+// that one block; kept for tests written before multi-pack support that
+// prove the extensibility claim by swapping in one whole replacement pack.
+// Neither given: loads the real shipped blocks from index.html, in order.
+function newGameContext({contentPackJson, contentPacks} = {}){
   const htmlPath = path.join(__dirname, '..', 'index.html');
-  const contentPackText = contentPackJson !== undefined ? contentPackJson : extractContentPackJson(htmlPath);
+  const packTexts = contentPacks !== undefined ? contentPacks
+    : contentPackJson !== undefined ? [contentPackJson]
+    : extractContentPackBlocks(htmlPath);
+  const packElements = packTexts.map(text => ({textContent: text}));
   const sandbox = {
     console,
     document: {
-      getElementById: (id) => id==='content-pack' ? {textContent: contentPackText} : makeFakeElement(),
-      querySelectorAll: () => [],
+      getElementById: () => makeFakeElement(),
+      querySelectorAll: (sel) => sel==='script.content-pack' ? packElements : [],
       documentElement: makeFakeElement(),
       createElement: () => makeFakeElement(),
     },
@@ -126,4 +168,4 @@ function run(context, code){
   return context.__out;
 }
 
-module.exports = {newGameContext, run, extractContentPackJson};
+module.exports = {newGameContext, run, extractContentPackJson, extractContentPackBlocks};

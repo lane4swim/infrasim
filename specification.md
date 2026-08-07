@@ -703,6 +703,26 @@ which is also the seam a modding UI could hook into later.
 > just a naming/flavor choice, and it composes cleanly with a Station's own
 > single configured resource (§6.5): a stop is only ever valid when
 > vehicle-resource, station-resource, and industry-slot-resource all agree.
+>
+> **Amended in Phase 2 (Content-pack layering).** "A ContentPack loader
+> merges base-game data with any additional packs" above described the
+> destination, not yet the mechanism — until this amendment the shipped
+> game only ever read one JSON block. It now reads any number of them (two,
+> shipped: an unchanged base pack and a small addon adding Coal), merging
+> section-by-section in document order; a pack after the first needs only
+> the section(s)/id(s) it actually touches, and reusing an id already used
+> by an earlier pack replaces that entry entirely — the override seam a
+> rebalancing or reskinning pack would use. Not still just JS objects
+> either: this is the same inline-JSON-block choice §9/§13 already made
+> (real `data/*.json` files need a bundler or `fetch()`, and `fetch()` fails
+> under `file://`), just multiple such blocks instead of one. Building the
+> addon's own production building (a Colliery, not literally named "mine"
+> or "mill") surfaced a real gap in the "new content = zero code changes"
+> claim: entity creation had been hardcoded to those two type names for
+> which buildings get production wiring, even though the wiring itself
+> (`recipe.inputs`/`recipe.outputs`) was already fully data-driven — fixed
+> by keying that check on the def having a `recipe` at all, matching what
+> the surrounding code already claimed to do.
 
 ---
 
