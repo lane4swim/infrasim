@@ -29,10 +29,6 @@ function toolHint(t){
     railramp:'Click a cell that already has both a rail and an elevated rail tile to link them ($40) — rail\'s own Ramp, entirely independent of the road one.',
     tunnelramp:`Click a ground road tile, then click an adjacent underground road tile ($${UNDERGROUND_RAMP_COST}) — a sloped link, not a same-cell one. Only works along a straight stretch: neither tile may have any other connection besides the straight-through continuation.`,
     railtunnelramp:`Click a ground rail tile, then click an adjacent underground rail tile ($${UNDERGROUND_RAMP_COST}) — rail's own Tunnel Ramp, entirely independent of the road one. Same straight-through-only rule.`,
-    airspaceramp:`Click a cell that already has both an elevated and an airspace road tile to link them ($${AIRSPACE_RAMP_COST}) — same-cell, one grade further out than a (bridge) Ramp.`,
-    railairspaceramp:`Click a cell that already has both an elevated rail and an airspace rail tile to link them ($${AIRSPACE_RAMP_COST}) — rail's own Airspace Ramp, entirely independent of the road one.`,
-    deepramp:`Click a cell that already has both an underground and a deep underground road tile to link them ($${DEEP_RAMP_COST}) — same-cell, one grade further out than a Tunnel Ramp's underground end.`,
-    raildeepramp:`Click a cell that already has both an underground rail and a deep underground rail tile to link them ($${DEEP_RAMP_COST}) — rail's own Deep Ramp, entirely independent of the road one.`,
     raiseterrain:`Click a cell to raise its terrain by one level ($${TERRAFORM_COST}). Requires the cell be clear of all track and buildings first.`,
     lowerterrain:`Click a cell to lower its terrain by one level ($${TERRAFORM_COST}). Requires the cell be clear of all track and buildings first.`,
     connect:'Click a road tile, then click an adjacent road tile on the same layer — connects them if not joined, disconnects them if they are.',
@@ -201,10 +197,6 @@ function handleClick(cell){
   if(currentTool==='road'){ postCommand('cmdBuildRoad', [x,y,currentLayer(),currentAutoConnect()]); return; }
   if(currentTool==='ramp'){ postCommand('cmdBuildRamp', [x,y]); return; }
   if(currentTool==='railramp'){ postCommand('cmdBuildRailRamp', [x,y]); return; }
-  if(currentTool==='airspaceramp'){ postCommand('cmdBuildAirspaceRamp', [x,y]); return; }
-  if(currentTool==='railairspaceramp'){ postCommand('cmdBuildRailAirspaceRamp', [x,y]); return; }
-  if(currentTool==='deepramp'){ postCommand('cmdBuildDeepRamp', [x,y]); return; }
-  if(currentTool==='raildeepramp'){ postCommand('cmdBuildRailDeepRamp', [x,y]); return; }
   if(currentTool==='raiseterrain'){ postCommand('cmdRaiseTerrain', [x,y]); return; }
   if(currentTool==='lowerterrain'){ postCommand('cmdLowerTerrain', [x,y]); return; }
   if(currentTool==='tunnelramp' || currentTool==='railtunnelramp'){ handleUndergroundRampClick(x,y); return; }
@@ -475,10 +467,6 @@ document.getElementById('rampCost').textContent = '$' + RAMP_COST;
 document.getElementById('railRampCost').textContent = '$' + RAMP_COST;
 document.getElementById('tunnelRampCost').textContent = '$' + UNDERGROUND_RAMP_COST;
 document.getElementById('railTunnelRampCost').textContent = '$' + UNDERGROUND_RAMP_COST;
-document.getElementById('airspaceRampCost').textContent = '$' + AIRSPACE_RAMP_COST;
-document.getElementById('railAirspaceRampCost').textContent = '$' + AIRSPACE_RAMP_COST;
-document.getElementById('deepRampCost').textContent = '$' + DEEP_RAMP_COST;
-document.getElementById('railDeepRampCost').textContent = '$' + DEEP_RAMP_COST;
 document.getElementById('raiseTerrainCost').textContent = '$' + TERRAFORM_COST;
 document.getElementById('lowerTerrainCost').textContent = '$' + TERRAFORM_COST;
 document.getElementById('depotCost').textContent = '$' + BUILDING_DEFS.depot.buildCost;

@@ -95,21 +95,22 @@ function elevationAt(x,y,grade){
   return getCell(x,y).elevation + ELEVATION_OFFSET[grade];
 }
 // Same-cell vertical ramps (§ Terrain elevation) link two ADJACENT grades
-// in the vertical stack — deepUnderground < underground < ground <
-// elevated < airspace — at the SAME (x,y): a pylon ramp (ground<->elevated,
-// the original Ramp), a launch ramp (elevated<->airspace), or a deep shaft
-// (underground<->deepUnderground). Deliberately NOT a list including
-// ground<->underground — that pair already has its own lateral, sloped
-// Tunnel Ramp (rampEdge, see newTrack below), since a real tunnel mouth is
-// a stretch of track you drive down into an adjacent cell, not a same-point
-// vertical link the way a pylon or a shaft is. Shared by buildVerticalRamp/
+// in the vertical stack at the SAME (x,y) — currently just the original
+// pylon ramp, ground<->elevated. deepUnderground and airspace are grades
+// in the vertical stack (deepUnderground < underground < ground < elevated
+// < airspace) but deliberately have NO ramp pair here: they're reserved
+// for future non-road/rail modes (a Plane mode for airspace, a Mine
+// extending into deepUnderground) that will need their own access
+// mechanism, not a truck/train ramp — a real plane doesn't climb a ramp
+// from a bridge, and a mine shaft isn't a road. ground<->underground is
+// also deliberately absent — that pair has its own lateral, sloped Tunnel
+// Ramp (rampEdge, see newTrack below) instead. Shared by buildVerticalRamp/
 // cmdDemolish (commands.js), findLayerPath (pathfinding.js), and
 // railCellHasVerticalRamp (rail-blocks.js) — the one place that lists which
-// pairs exist, so a future grade only ever needs one new entry here.
+// pairs exist, so a future grade's own access mechanism only ever needs a
+// new entry here if it turns out to be this same same-cell-vertical shape.
 const RAMP_PAIRS = [
   {key:'groundElevated', lo:'ground', hi:'elevated'},
-  {key:'elevatedAirspace', lo:'elevated', hi:'airspace'},
-  {key:'undergroundDeep', lo:'underground', hi:'deepUnderground'},
 ];
 // One physical grade (ground or elevated) holds every KIND of
 // infrastructure that can exist at that height — road and rail today.

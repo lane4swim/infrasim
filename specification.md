@@ -207,6 +207,24 @@ without touching simulation code.
 > no new code — the generalization lived entirely in a lookup table and
 > the handful of places that already iterated it, not in new special
 > cases.
+>
+> **Further amended in Phase 2 (Terrain elevation — ramp removal).** The
+> elevated↔airspace and underground↔deepUnderground ramps described just
+> above were removed. `deepUnderground`/`airspace` are reserved for future
+> non-road/rail modes (a Plane mode, a Mine reaching into deepUnderground)
+> that will need their own access mechanism — a plane doesn't climb a
+> ramp off a bridge, and a mine shaft isn't a road — so giving them a
+> truck/train ramp implied the wrong model. The vertical-stack table
+> (`RAMP_PAIRS`) now has only its original `ground↔elevated` entry; the
+> (road/rail) Ramp itself is unchanged. The grades, their per-tile cost
+> multipliers, and the ability to lay track on them ahead of whatever
+> future mode uses them all stay — only the ramp linking them to the
+> existing network is gone. Because every consumer of `RAMP_PAIRS`
+> (pathfinding, rail-block hubs, demolish cleanup, ramp rendering) already
+> looped the table instead of naming pairs, removing the two entries
+> disabled the mechanism everywhere with no further code changes — the
+> same generalization that made adding them cheap made removing them
+> cheap too.
 
 ---
 

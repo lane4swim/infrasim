@@ -149,7 +149,7 @@ function validateContentPack(pack){
 // happens on the first 'init' message (see worker-client.js's protocol
 // comment for why that has to be a separate later step).
 let CONTENT_PACK, RESOURCES, RESOURCE, RECIPES, BUILDING_DEFS, VEHICLE_DEFS, RAIL_DEFS, ENGINE_DEFS, WAGON_DEFS;
-let INITIAL_TREASURY, ROAD_COST_PER_TILE, ELEVATED_COST_MULTIPLIER, RAMP_COST, UNDERGROUND_COST_MULTIPLIER, UNDERGROUND_RAMP_COST, DEEP_UNDERGROUND_COST_MULTIPLIER, AIRSPACE_COST_MULTIPLIER, AIRSPACE_RAMP_COST, DEEP_RAMP_COST, TERRAFORM_COST, DEFAULT_TRANSFER_RATE, TICK_MS, CONSUMPTION_PER_CAPITA;
+let INITIAL_TREASURY, ROAD_COST_PER_TILE, ELEVATED_COST_MULTIPLIER, RAMP_COST, UNDERGROUND_COST_MULTIPLIER, UNDERGROUND_RAMP_COST, DEEP_UNDERGROUND_COST_MULTIPLIER, AIRSPACE_COST_MULTIPLIER, TERRAFORM_COST, DEFAULT_TRANSFER_RATE, TICK_MS, CONSUMPTION_PER_CAPITA;
 
 function initContentPack(pack){
   validateContentPack(pack);
@@ -170,16 +170,16 @@ function initContentPack(pack){
   RAMP_COST = 40;               // one-time cost to link ground<->elevated at a single cell
   UNDERGROUND_RAMP_COST = 80;   // one-time cost for a sloped ground<->underground ramp (§ Underground layer) — a tunnel entrance costs more than a bridge Ramp
   // Terrain elevation (§ Terrain elevation) — deepUnderground and airspace
-  // are flat global planes, disconnected from local terrain the way
-  // ground/elevated/underground are (see ELEVATION_OFFSET in world.js), so
-  // reaching either always costs more than the terrain-following grade
-  // right next to it: tunneling deeper than the regular underground grade
-  // costs the most of any per-tile rate (a real deep-bore subway tunnel),
-  // airspace less than that but still more than a regular elevated bridge.
+  // are flat global planes reserved for future non-road/rail modes (a
+  // Plane mode, a Mine reaching into deepUnderground — see RAMP_PAIRS in
+  // world.js for why road/rail can't ramp into them), but road/rail track
+  // can still be laid there ahead of that, at a cost reflecting how far
+  // outside the terrain-following grades they sit: tunneling deeper than
+  // the regular underground grade costs the most of any per-tile rate (a
+  // real deep-bore subway tunnel), airspace less than that but still more
+  // than a regular elevated bridge.
   DEEP_UNDERGROUND_COST_MULTIPLIER = 5;
   AIRSPACE_COST_MULTIPLIER = 4;
-  AIRSPACE_RAMP_COST = 100;     // same-cell elevated<->airspace vertical ramp — costlier than a ground<->elevated Ramp (a launch pad, not just a pylon)
-  DEEP_RAMP_COST = 120;         // same-cell underground<->deepUnderground vertical ramp (a deep shaft) — the priciest ramp of any kind
   TERRAFORM_COST = 30;          // one-time cost to raise or lower one cell's terrain by one level (cmdRaiseTerrain/cmdLowerTerrain)
   // Load/unload rate is now a per-vehicle (VEHICLE_DEFS/WAGON_DEFS
   // transferRate) and per-Station/Depot (BUILDING_DEFS transferRate) content

@@ -154,14 +154,18 @@ function cmdToggleConnection(x1,y1,x2,y2,layer){
   }
   if(LAYER_GRADE_KIND[layer][1]==='rail') computeRailBlocks();
 }
-// Shared by every same-cell vertical ramp command (cmdBuildRamp,
-// cmdBuildRailRamp, cmdBuildAirspaceRamp, cmdBuildRailAirspaceRamp,
-// cmdBuildDeepRamp, cmdBuildRailDeepRamp) — a ramp of any kind links that
-// SAME kind's two tiles for one RAMP_PAIRS entry at one cell; different
-// kinds' ramps, and different pairs at the same cell, are all entirely
-// independent of each other (a cell can have any combination). Rail's own
-// ramps additionally recompute blocks, since a Rail ramp cell is a hub
-// (see railCellIsHub) — plain road ramps have no block concept to update.
+// Shared by cmdBuildRamp and cmdBuildRailRamp — a ramp of any kind links
+// that SAME kind's ground and elevated tiles at one cell (RAMP_PAIRS'
+// only entry — see world.js for why deepUnderground/airspace deliberately
+// have no ramp pair of their own); different kinds' ramps are entirely
+// independent of each other (a cell can have either, both, or neither).
+// Rail's own ramp additionally recomputes blocks, since a Rail ramp cell
+// is a hub (see railCellIsHub) — a plain road ramp has no block concept
+// to update. Kept as a generic RAMP_PAIRS-driven helper (rather than
+// collapsing back to a single-pair function) since it costs nothing to
+// leave general and a future same-cell-shaped ramp pair — unlike
+// airspace/deepUnderground's mode-specific access — would just need a new
+// RAMP_PAIRS entry and a one-line wrapper here.
 function buildVerticalRamp(x,y,kind,pairKey,cost,label){
   const pair = RAMP_PAIRS.find(p => p.key===pairKey);
   const cell = getCell(x,y);
@@ -179,14 +183,6 @@ function cmdBuildRamp(x,y){ buildVerticalRamp(x,y,'road','groundElevated',RAMP_C
 // Rail's own Ramp — links `rail` and `railElevated` at a cell exactly like
 // a (road) Ramp links `ground` and `elevated`, entirely independent of it.
 function cmdBuildRailRamp(x,y){ buildVerticalRamp(x,y,'rail','groundElevated',RAMP_COST,'Rail Ramp'); }
-// Airspace Ramp / Deep Ramp (§ Terrain elevation) — the same same-cell
-// vertical mechanic as (road/rail) Ramp above, one grade pair further out
-// in each direction: elevated<->airspace (a launch pad) and
-// underground<->deepUnderground (a deep shaft).
-function cmdBuildAirspaceRamp(x,y){ buildVerticalRamp(x,y,'road','elevatedAirspace',AIRSPACE_RAMP_COST,'Airspace Ramp'); }
-function cmdBuildRailAirspaceRamp(x,y){ buildVerticalRamp(x,y,'rail','elevatedAirspace',AIRSPACE_RAMP_COST,'Rail Airspace Ramp'); }
-function cmdBuildDeepRamp(x,y){ buildVerticalRamp(x,y,'road','undergroundDeep',DEEP_RAMP_COST,'Deep Ramp'); }
-function cmdBuildRailDeepRamp(x,y){ buildVerticalRamp(x,y,'rail','undergroundDeep',DEEP_RAMP_COST,'Rail Deep Ramp'); }
 // A Tunnel Ramp is geometrically different from the (road) Ramp / Rail Ramp
 // above: those link a kind's ground and elevated tiles at the SAME cell (a
 // vehicle transitions via a same-cell, different-layer step). A ramp to

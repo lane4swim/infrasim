@@ -1945,3 +1945,46 @@ built road tiles renders the cliff border and leaves them unconnected,
 and a full ground/elevated/airspace stack (and a separate underground/
 deepUnderground stack) builds and links correctly with live cost labels
 matching each grade's multiplier, with no console errors.
+
+# Addendum — Airspace Ramp and Deep Ramp removed
+
+The Airspace Ramp (elevated<->airspace) and Deep Ramp
+(underground<->deepUnderground) from the terrain elevation phase above
+are gone.
+`deepUnderground` and `airspace` are reserved layers for future
+non-road/rail modes — a Plane mode, a Mine reaching into deepUnderground
+— and those will need their own way to reach them, not a truck/train
+ramp: a real plane doesn't climb a ramp off a bridge, and a mine shaft
+isn't a road. Giving them a same-cell vertical ramp implied they were
+just "one more stop on the truck/train network," which was the wrong
+model.
+
+`RAMP_PAIRS` (`world.js`) now has only its original entry,
+`groundElevated` — the (road/rail) Ramp linking ground and elevated is
+completely unchanged. Removing the other two entries was enough on its
+own to disable the mechanism everywhere: `findLayerPath`'s same-cell ramp
+move, `railCellHasVerticalRamp`'s hub check, `cmdDemolish`'s ramp
+cleanup, and the render-side ramp markers all loop `RAMP_PAIRS` rather
+than naming pairs, so they adjusted with zero further code changes — the
+same generalization that made adding the two ramps cheap also made
+removing them cheap. `cmdBuildAirspaceRamp`/`cmdBuildRailAirspaceRamp`/
+`cmdBuildDeepRamp`/`cmdBuildRailDeepRamp` and their `AIRSPACE_RAMP_COST`/
+`DEEP_RAMP_COST` constants, UI buttons, and hint text are deleted
+outright rather than disabled, since a command with no way to ever
+succeed is dead weight, not a feature.
+
+What's still there: the `deepUnderground`/`airspace` grades themselves,
+their cost multipliers, and the ability to lay ordinary road/rail track
+on them ahead of whatever future mode uses them — none of that implied a
+ramp, and removing it would have meant re-adding the grades from scratch
+later. `test/test-elevation.js` was updated to match: Test 4 now confirms
+the ramp commands no longer exist and `RAMP_PAIRS` has just one entry
+(replacing the old build-validation checks), Test 5/6 confirm
+airspace/deepUnderground are genuinely unreachable by pathfinding/rail
+blocks even with track built on them, and Test 8's truck delivery drops
+the airspace excursion, ending at a ground->elevated->ground round trip
+through the still-unchanged Ramp. All 7 test files pass (43 checks in
+test-elevation.js, same count — the tests shrank in scope, not in
+number). Verified via Playwright that the four removed buttons are gone
+from the DOM and the original Ramp still works end to end through the
+real UI, with no console errors.

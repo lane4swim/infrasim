@@ -2,11 +2,14 @@
 // coordinate per cell (cell.elevation), with ground/elevated/underground
 // all following it (elevated always one level above local ground,
 // underground one below) and two new FLAT global grades, deepUnderground
-// and airspace, that ignore terrain entirely and are reached only via a
-// same-cell vertical ramp (RAMP_PAIRS: groundElevated, elevatedAirspace,
-// undergroundDeep). Adjacent ground/elevated/underground tiles can only
-// connect if their terrain differs by at most MAX_ELEVATION_DELTA. Run
-// against the real index.html code via test/harness.js.
+// and airspace, that ignore terrain entirely. Adjacent ground/elevated/
+// underground tiles can only connect if their terrain differs by at most
+// MAX_ELEVATION_DELTA. deepUnderground/airspace deliberately have NO ramp
+// linking them to the rest of the network — RAMP_PAIRS has only the
+// original groundElevated entry — since they're reserved for future
+// non-road/rail modes (planes, mines) that will need their own access
+// mechanism, not a truck/train ramp. Run against the real index.html code
+// via test/harness.js.
 'use strict';
 const {newGameContext, run} = require('./harness.js');
 
@@ -130,167 +133,121 @@ section('Test 3 — capped auto-connect: adjacent ground tiles only join within 
   check('airspace (a flat global plane) connects regardless of the terrain underneath it', flatGradesUnaffected.connected === true, JSON.stringify(flatGradesUnaffected));
 });
 
-section('Test 4 — Airspace Ramp and Deep Ramp: adjacency-free same-cell build validation', () => {
-  const missingAirspace = run(newGameContext(), `
-    cmdBuildRoad(2,2,'elevated',true); // only the elevated side, no airspace tile yet
-    cmdBuildAirspaceRamp(2,2);
-    return {built: getCell(2,2).ramps.road.elevatedAirspace, warnLogs: pendingLogs.filter(l=>l.cls==='warn').map(l=>l.msg)};
-  `);
-  check('Airspace Ramp rejected without both tiles present', !missingAirspace.built, JSON.stringify(missingAirspace));
-  check('rejection names both grades', missingAirspace.warnLogs.some(m=>/elevated.*airspace/i.test(m)), JSON.stringify(missingAirspace.warnLogs));
+section('Test 4 — deepUnderground/airspace have no ramp mechanism (RAMP_PAIRS has only groundElevated)', () => {
+  const pairs = run(newGameContext(), `return RAMP_PAIRS.map(p=>p.key);`);
+  check('RAMP_PAIRS contains only the original ground<->elevated pair', pairs.length===1 && pairs[0]==='groundElevated', JSON.stringify(pairs));
 
-  const validAirspace = run(newGameContext(), `
+  const noRampCommands = run(newGameContext(), `
+    return {
+      airspaceRamp: typeof cmdBuildAirspaceRamp,
+      railAirspaceRamp: typeof cmdBuildRailAirspaceRamp,
+      deepRamp: typeof cmdBuildDeepRamp,
+      railDeepRamp: typeof cmdBuildRailDeepRamp,
+    };
+  `);
+  check('cmdBuildAirspaceRamp no longer exists', noRampCommands.airspaceRamp === 'undefined', JSON.stringify(noRampCommands));
+  check('cmdBuildRailAirspaceRamp no longer exists', noRampCommands.railAirspaceRamp === 'undefined', JSON.stringify(noRampCommands));
+  check('cmdBuildDeepRamp no longer exists', noRampCommands.deepRamp === 'undefined', JSON.stringify(noRampCommands));
+  check('cmdBuildRailDeepRamp no longer exists', noRampCommands.railDeepRamp === 'undefined', JSON.stringify(noRampCommands));
+
+  const rampShape = run(newGameContext(), `
+    cmdBuildRoad(2,2,'ground',true);
     cmdBuildRoad(2,2,'elevated',true);
-    cmdBuildRoad(2,2,'airspace',true);
-    const before = world.treasury;
-    cmdBuildAirspaceRamp(2,2);
-    return {
-      spent: before - world.treasury,
-      built: getCell(2,2).ramps.road.elevatedAirspace,
-      warnLogs: pendingLogs.filter(l=>l.cls==='warn'),
-    };
+    cmdBuildRamp(2,2);
+    return getCell(2,2).ramps.road;
   `);
-  check('a valid Airspace Ramp charges AIRSPACE_RAMP_COST', validAirspace.spent === run(newGameContext(),'return AIRSPACE_RAMP_COST;'), JSON.stringify(validAirspace));
-  check('sets the elevatedAirspace ramp flag', validAirspace.built === true);
-  check('no warnings on a valid build', validAirspace.warnLogs.length === 0, JSON.stringify(validAirspace.warnLogs));
+  check('a cell\'s ramp state only ever has the groundElevated key', Object.keys(rampShape).length===1 && rampShape.groundElevated===true, JSON.stringify(rampShape));
 
-  const duplicateAirspace = run(newGameContext(), `
-    cmdBuildRoad(2,2,'elevated',true);
-    cmdBuildRoad(2,2,'airspace',true);
-    cmdBuildAirspaceRamp(2,2);
-    cmdBuildAirspaceRamp(2,2);
-    return pendingLogs.filter(l=>l.cls==='warn').map(l=>l.msg);
+  const stillBuildableButOrphaned = run(newGameContext(), `
+    cmdBuildRoad(9,9,'elevated',true);
+    cmdBuildRoad(9,9,'airspace',true);
+    return {elevatedTrack: trackAt(9,9,'elevated').track, airspaceTrack: trackAt(9,9,'airspace').track, warnLogs: pendingLogs.filter(l=>l.cls==='warn')};
   `);
-  check('a second Airspace Ramp at the same cell is rejected as a duplicate', duplicateAirspace.some(m=>/already/i.test(m)), JSON.stringify(duplicateAirspace));
-
-  const validDeep = run(newGameContext(), `
-    cmdBuildRoad(2,2,'underground',true);
-    cmdBuildRoad(2,2,'deepUnderground',true);
-    const before = world.treasury;
-    cmdBuildDeepRamp(2,2);
-    return {
-      spent: before - world.treasury,
-      built: getCell(2,2).ramps.road.undergroundDeep,
-    };
-  `);
-  check('a valid Deep Ramp charges DEEP_RAMP_COST', validDeep.spent === run(newGameContext(),'return DEEP_RAMP_COST;'), JSON.stringify(validDeep));
-  check('sets the undergroundDeep ramp flag', validDeep.built === true);
-
-  const railSmoke = run(newGameContext(), `
-    cmdBuildTrack(2,2,'railElevated',true);
-    cmdBuildTrack(2,2,'railAirspace',true);
-    cmdBuildRailAirspaceRamp(2,2);
-    cmdBuildTrack(2,3,'railUnderground',true);
-    cmdBuildTrack(2,3,'railDeepUnderground',true);
-    cmdBuildRailDeepRamp(2,3);
-    return {
-      airspaceRamp: getCell(2,2).ramps.rail.elevatedAirspace,
-      deepRamp: getCell(2,3).ramps.rail.undergroundDeep,
-      roadRampsUntouched: getCell(2,2).ramps.road.elevatedAirspace === false,
-    };
-  `);
-  check('rail Airspace Ramp works independently of the road one', railSmoke.airspaceRamp === true, JSON.stringify(railSmoke));
-  check('rail Deep Ramp works independently of the road one', railSmoke.deepRamp === true, JSON.stringify(railSmoke));
-  check('the rail ramps never set the road ramps at the same cell', railSmoke.roadRampsUntouched, JSON.stringify(railSmoke));
+  check('road/track can still be laid on airspace directly (reserved for a future mode, not removed)', stillBuildableButOrphaned.airspaceTrack === true, JSON.stringify(stillBuildableButOrphaned));
+  check('no warnings just from building on the reserved layer', stillBuildableButOrphaned.warnLogs.length === 0, JSON.stringify(stillBuildableButOrphaned.warnLogs));
 });
 
-section('Test 5 — pathfinding crosses every RAMP_PAIRS transition, including two independent pairs at one cell', () => {
-  const throughAirspace = run(newGameContext(), `
+section('Test 5 — pathfinding: the existing Ramp still crosses ground<->elevated; airspace/deepUnderground are unreachable', () => {
+  const throughRamp = run(newGameContext(), `
     cmdBuildRoad(5,5,'ground',true);
     cmdBuildRoad(5,5,'elevated',true);
     cmdBuildRamp(5,5);
-    cmdBuildRoad(5,5,'airspace',true);
-    cmdBuildAirspaceRamp(5,5);
-    const path = findRoadPath({x:5,y:5,layer:'ground'}, {x:5,y:5,layer:'airspace'});
+    const path = findRoadPath({x:5,y:5,layer:'ground'}, {x:5,y:5,layer:'elevated'});
     return {path: path && path.map(n=>n.layer)};
   `);
-  check('a path exists ground -> elevated -> airspace, all at one cell, via two independent ramps', throughAirspace.path && throughAirspace.path.length===3 && throughAirspace.path.join()==='ground,elevated,airspace', JSON.stringify(throughAirspace));
+  check('a path still exists ground -> elevated via the original Ramp', throughRamp.path && throughRamp.path.join()==='ground,elevated', JSON.stringify(throughRamp));
 
-  const throughDeep = run(newGameContext(), `
+  const airspaceUnreachable = run(newGameContext(), `
+    cmdBuildRoad(5,5,'ground',true);
+    cmdBuildRoad(5,5,'elevated',true);
+    cmdBuildRamp(5,5);
+    cmdBuildRoad(5,5,'airspace',true); // track exists, but nothing links it in
+    return findRoadPath({x:5,y:5,layer:'ground'}, {x:5,y:5,layer:'airspace'});
+  `);
+  check('no path exists from ground/elevated to airspace at all, even at the same cell', airspaceUnreachable === null, JSON.stringify(airspaceUnreachable));
+
+  const deepUnreachable = run(newGameContext(), `
     cmdBuildRoad(6,6,'ground',true);
     cmdBuildRoad(6,7,'underground',true);
-    cmdBuildUndergroundRamp(6,6,6,7); // lateral, unaffected by RAMP_PAIRS generalization
-    cmdBuildRoad(6,7,'deepUnderground',true);
-    cmdBuildDeepRamp(6,7);
-    const path = findRoadPath({x:6,y:6,layer:'ground'}, {x:6,y:7,layer:'deepUnderground'});
-    return {path: path && path.map(n=>n.layer+':'+n.x+','+n.y)};
+    cmdBuildUndergroundRamp(6,6,6,7); // the lateral Tunnel Ramp still works, unaffected
+    cmdBuildRoad(6,7,'deepUnderground',true); // track exists, but nothing links it in
+    return findRoadPath({x:6,y:6,layer:'ground'}, {x:6,y:7,layer:'deepUnderground'});
   `);
-  check('a path exists ground -> (lateral tunnel ramp) -> underground -> (deep ramp) -> deepUnderground', throughDeep.path !== null, JSON.stringify(throughDeep));
-  check('it actually visits all four layer states in order', throughDeep.path && throughDeep.path.map(n=>n.split(':')[0]).join()==='ground,underground,deepUnderground', JSON.stringify(throughDeep.path));
-
-  const noDirectSkip = run(newGameContext(), `
-    cmdBuildRoad(7,7,'ground',true);
-    cmdBuildRoad(7,7,'airspace',true);
-    // no elevated tile at all — ground<->airspace is two ramps apart, never one
-    return findRoadPath({x:7,y:7,layer:'ground'}, {x:7,y:7,layer:'airspace'});
-  `);
-  check('no direct ground<->airspace path skipping elevated', noDirectSkip === null);
+  check('no path exists from ground/underground to deepUnderground at all, even via the Tunnel Ramp', deepUnreachable === null, JSON.stringify(deepUnreachable));
 });
 
-section('Test 6 — rail blocks: vertical ramp pairs are hubs; all five layers get computed', () => {
+section('Test 6 — rail blocks: the ground<->elevated Rail Ramp is still a hub; the two reserved layers still compute without a ramp', () => {
   const hubCheck = run(newGameContext(), `
     cmdBuildTrack(5,0,'rail',true);
     cmdBuildTrack(5,1,'rail',true);
     cmdBuildTrack(5,1,'railElevated',true);
     cmdBuildRailRamp(5,1);
-    cmdBuildTrack(5,1,'railAirspace',true);
-    cmdBuildRailAirspaceRamp(5,1);
-    return {
-      groundBlock: trackAt(5,0,'rail').blockId.S,
-      elevatedHasOwnEdges: trackAt(5,1,'railElevated').blockId,
-    };
+    return {groundBlock: trackAt(5,0,'rail').blockId.S};
   `);
-  check('the ground-side edge into the ramp cell gets a real block id', hubCheck.groundBlock !== null, JSON.stringify(hubCheck));
+  check('the ground-side edge into the ramp cell still gets a real block id', hubCheck.groundBlock !== null, JSON.stringify(hubCheck));
 
-  const distinctBlocks = run(newGameContext(), `
-    cmdBuildTrack(4,0,'railUnderground',true);
-    cmdBuildTrack(4,1,'railUnderground',true);
+  const reservedLayersStillCompute = run(newGameContext(), `
+    cmdBuildTrack(4,0,'railDeepUnderground',true);
     cmdBuildTrack(4,1,'railDeepUnderground',true);
-    cmdBuildTrack(4,2,'railDeepUnderground',true);
-    cmdBuildRailDeepRamp(4,1);
+    cmdBuildTrack(6,0,'railAirspace',true);
+    cmdBuildTrack(6,1,'railAirspace',true);
     return {
-      undergroundBlock: trackAt(4,0,'railUnderground').blockId.S,
-      deepBlock: trackAt(4,2,'railDeepUnderground').blockId.N,
+      deepEdge: trackAt(4,0,'railDeepUnderground').blockId.S,
+      airspaceEdge: trackAt(6,0,'railAirspace').blockId.S,
     };
   `);
-  check('the underground-side and deepUnderground-side edges get DISTINCT block ids (the ramp is a hub on both)',
-    distinctBlocks.undergroundBlock !== null && distinctBlocks.deepBlock !== null && distinctBlocks.undergroundBlock !== distinctBlocks.deepBlock,
-    JSON.stringify(distinctBlocks));
+  check('railDeepUnderground track still gets a block id with no ramp available', reservedLayersStillCompute.deepEdge !== null, JSON.stringify(reservedLayersStillCompute));
+  check('railAirspace track still gets a block id with no ramp available', reservedLayersStillCompute.airspaceEdge !== null, JSON.stringify(reservedLayersStillCompute));
 });
 
-section('Test 7 — demolishing a grade clears every ramp pair that touches it, and only those', () => {
+section('Test 7 — demolishing elevated still clears the groundElevated ramp, and only at that cell', () => {
   const ctx = newGameContext();
   const setup = run(ctx, `
     cmdBuildRoad(2,2,'ground',true);
     cmdBuildRoad(2,2,'elevated',true);
-    cmdBuildRamp(2,2);                 // groundElevated — touches 'elevated'
-    cmdBuildRoad(2,2,'airspace',true);
-    cmdBuildAirspaceRamp(2,2);         // elevatedAirspace — also touches 'elevated'
+    cmdBuildRamp(2,2);
     cmdBuildRoad(9,9,'ground',true);
     cmdBuildRoad(9,9,'elevated',true);
-    cmdBuildRamp(9,9);                 // unrelated control cell, untouched by anything below
+    cmdBuildRamp(9,9); // unrelated control cell
     return {
-      groundElevated: getCell(2,2).ramps.road.groundElevated,
-      elevatedAirspace: getCell(2,2).ramps.road.elevatedAirspace,
+      ramp: getCell(2,2).ramps.road.groundElevated,
       controlRamp: getCell(9,9).ramps.road.groundElevated,
     };
   `);
-  check('both ramps exist as precondition', setup.groundElevated && setup.elevatedAirspace && setup.controlRamp, JSON.stringify(setup));
+  check('the ramp exists as precondition', setup.ramp && setup.controlRamp, JSON.stringify(setup));
 
   const afterDemolish = run(ctx, `
     cmdDemolish(2,2,'elevated');
     return {
-      groundElevated: getCell(2,2).ramps.road.groundElevated,
-      elevatedAirspace: getCell(2,2).ramps.road.elevatedAirspace,
+      ramp: getCell(2,2).ramps.road.groundElevated,
       controlRampUntouched: getCell(9,9).ramps.road.groundElevated,
     };
   `);
-  check('demolishing elevated clears the groundElevated ramp (elevated is its hi)', afterDemolish.groundElevated === false, JSON.stringify(afterDemolish));
-  check('demolishing elevated ALSO clears the elevatedAirspace ramp (elevated is its lo)', afterDemolish.elevatedAirspace === false, JSON.stringify(afterDemolish));
+  check('demolishing elevated clears the groundElevated ramp', afterDemolish.ramp === false, JSON.stringify(afterDemolish));
   check('an unrelated cell\'s ramp is untouched', afterDemolish.controlRampUntouched === true, JSON.stringify(afterDemolish));
 });
 
-section('Test 8 — a real truck delivers cargo across ground -> elevated -> airspace -> elevated -> ground', () => {
+section('Test 8 — a real truck delivers cargo across ground -> elevated -> ground via the (unchanged) Ramp', () => {
   const ctx = newGameContext();
   const ids = run(ctx, `
     cmdBuildBuilding('mine', 0, 0, 'large');
@@ -302,23 +259,15 @@ section('Test 8 — a real truck delivers cargo across ground -> elevated -> air
     cmdBuildRamp(2, 4);
     cmdBuildRoad(2, 5, 'elevated', true);
     cmdBuildRoad(2, 6, 'elevated', true);
-    cmdBuildRoad(2, 6, 'airspace', true);
-    cmdBuildAirspaceRamp(2, 6);
-    cmdBuildRoad(2, 7, 'airspace', true);
-    cmdBuildRoad(2, 8, 'airspace', true);
-    cmdBuildRoad(2, 8, 'elevated', true);
-    cmdBuildAirspaceRamp(2, 8);
-    cmdBuildRoad(2, 9, 'elevated', true);
-    cmdBuildRoad(2, 10, 'elevated', true);
-    cmdBuildRoad(2, 10, 'ground', true);
-    cmdBuildRamp(2, 10);
-    cmdBuildRoad(2, 11, 'ground', true);
-    cmdBuildRoad(2, 12, 'ground', true);
-    cmdBuildBuilding('town', 4, 12, 'large', null, 'ore');
-    cmdBuildBuilding('station', 3, 12, 'small', 'W', 'ore'); // dock west at (2,12), touches town east
+    cmdBuildRoad(2, 6, 'ground', true);
+    cmdBuildRamp(2, 6);
+    cmdBuildRoad(2, 7, 'ground', true);
+    cmdBuildRoad(2, 8, 'ground', true);
+    cmdBuildBuilding('town', 4, 8, 'large', null, 'ore');
+    cmdBuildBuilding('station', 3, 8, 'small', 'W', 'ore'); // dock west at (2,8), touches town east
     cmdPurchaseVehicle(2, 3, 'bulk');
     const stationA = [...world.entities.values()].find(e=>e.type==='station' && e.y===1);
-    const stationB = [...world.entities.values()].find(e=>e.type==='station' && e.y===12);
+    const stationB = [...world.entities.values()].find(e=>e.type==='station' && e.y===8);
     const truck = [...world.entities.values()].find(e=>e.kind==='vehicle');
     cmdSetOrders(truck, [
       {nodeId: stationA.id, action:'load_full', resource:'ore'},
@@ -328,7 +277,7 @@ section('Test 8 — a real truck delivers cargo across ground -> elevated -> air
   `);
   check('the whole layout built with no warnings', ids.warnLogs.length === 0, JSON.stringify(ids.warnLogs));
 
-  let sawElevated = false, sawAirspace = false, sawGroundAgain = false, delivered = false;
+  let sawElevated = false, sawGroundAgain = false, delivered = false;
   for(let i=0;i<6000;i++){
     run(ctx, 'simTick();');
     const t = run(ctx, `
@@ -337,14 +286,12 @@ section('Test 8 — a real truck delivers cargo across ground -> elevated -> air
       return {layer:v.layer, townStock: town.inStock};
     `);
     if(t.layer==='elevated') sawElevated = true;
-    if(t.layer==='airspace') sawAirspace = true;
-    if(sawAirspace && t.layer==='ground') sawGroundAgain = true;
+    if(sawElevated && t.layer==='ground') sawGroundAgain = true;
     if(t.townStock > 0) delivered = true;
   }
   check('the truck climbed onto elevated road', sawElevated);
-  check('the truck actually reached airspace', sawAirspace);
   check('the truck came back down to ground on the far side', sawGroundAgain);
-  check('ore was delivered to the Town, having crossed airspace in between', delivered);
+  check('ore was delivered to the Town, having crossed elevated in between', delivered);
 });
 
 console.log(failures===0 ? `\nAll checks passed.` : `\n${failures} check(s) FAILED.`);

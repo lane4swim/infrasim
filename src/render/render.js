@@ -173,17 +173,16 @@ function render(){
 
   // ramps — a small diamond marking a cell where a layer pair is
   // deliberately linked (one of the only two places a vehicle can change
-  // layer, alongside the lateral Tunnel Ramp below): the road (road) Ramp
+  // layer, alongside the lateral Tunnel Ramp below): the road Ramp
   // (ground<->elevated) in elevated road's own light blue, the independent
-  // Rail Ramp (rail<->railElevated) in elevated rail's own light purple —
-  // and now, one RAMP_PAIRS entry further in each direction, an Airspace
-  // Ramp/Deep Ramp in airspace's/deepUnderground's own hue, so every pair
-  // is visibly distinguishable when a cell happens to have more than one
-  // (they simply overlap at the same cell center, distinguished by color,
-  // same as road vs. rail already did).
+  // Rail Ramp (rail<->railElevated) in elevated rail's own light purple.
+  // Looped over RAMP_PAIRS (currently just this one entry — see world.js
+  // for why deepUnderground/airspace have no ramp pair) rather than
+  // hardcoded, so a future same-cell-shaped ramp pair only needs a new
+  // RAMP_PAIRS entry and a color here, not new drawing logic.
   const RAMP_MARKER_COLOR = {
-    road: { groundElevated: '#7fb8c9', elevatedAirspace: '#8ac9e8', undergroundDeep: '#5a4a3a' },
-    rail: { groundElevated: '#c9a8e8', elevatedAirspace: '#d8b8f0', undergroundDeep: '#2a1a3a' },
+    road: { groundElevated: '#7fb8c9' },
+    rail: { groundElevated: '#c9a8e8' },
   };
   for(const [k,cell] of world.grid){
     const [x,y] = k.split(',').map(Number);
