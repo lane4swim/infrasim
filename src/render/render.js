@@ -73,6 +73,24 @@ function elevationColor(elevation){
   const t = Math.max(-1, Math.min(1, elevation / ELEVATION_MAX));
   return t > 0 ? `hsla(35, 45%, ${10+t*12}%, 0.9)` : `hsla(212, 50%, ${8+(-t)*10}%, 0.9)`;
 }
+// deepUnderground/railDeepUnderground are the only "level" infrastructure
+// — flat global planes at a constant elevationAt() z (world.js), unlike
+// ground/elevated/underground which all move with local terrain and so
+// always sit at the same RELATIVE depth from their own column's surface.
+// A level tunnel's relative depth below the surface, in contrast, grows
+// with local terrain: elevationAt(x,y,'ground') - DEEP_UNDERGROUND_Z is
+// dominated by the constant, but the part that actually varies as terrain
+// rises is exactly cell.elevation — so that's the z-index signal used
+// here to darken the tunnel toward the rock/dirt color it's now buried
+// under, reading as the tunnel visually "burrowing into a hillside" the
+// higher the local terrain gets above it. Only positive elevation buries
+// more (a valley doesn't un-bury a flat tunnel any further than baseline).
+function burialColor(hex, elevation){
+  const t = Math.max(0, Math.min(1, elevation / ELEVATION_MAX)) * 0.65;
+  const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+  const mix = c => Math.round(c * (1-t));
+  return `rgb(${mix(r)},${mix(g)},${mix(b)})`;
+}
 // The two endpoints of one cell-boundary edge segment, for drawing a
 // "cliff" marker (see the elevation-delta loop in render() below) — a
 // straight line along the actual tile border the ramp-less connectivity
@@ -145,13 +163,17 @@ function render(){
   // deepUnderground is a flat global plane one grade below the
   // (terrain-following) underground grade — an even thicker, dimmer dashed
   // line than underground's, since it's the deepest, most hidden thing on
-  // the map. airspace is the mirror image at the opposite end: a flat
-  // global plane above elevated, drawn as a thin, bright dashed line since
-  // it's the highest, most "in the open" thing on the map. Both drawn
+  // the map, and it further darkens per-cell under raised terrain (see
+  // burialColor above) — a "level" tunnel visually burrows deeper into a
+  // hillside exactly where the hillside actually rises above it. airspace
+  // is the mirror image at the opposite end: a flat global plane above
+  // elevated, drawn as a thin, bright dashed line since it's the highest,
+  // most "in the open" thing on the map — it doesn't get the burial
+  // treatment, since going up into open sky isn't "burrowing." Both drawn
   // FIRST/LAST respectively in this group so ground/elevated still paint
   // over them wherever both exist at the same cell — the same "X-ray hint"
   // treatment underground already gets.
-  drawRoadLayer('deepUnderground', '#3a2a1a', 4, true);
+  drawRoadLayer('deepUnderground', '#3a2a1a', 4, true, true);
   drawRoadLayer('underground', '#5a4a3a', 6, true);
   drawRoadLayer('ground', getCss('--road'), 8);
   drawRoadLayer('elevated', '#7fb8c9', 12);
@@ -164,8 +186,9 @@ function render(){
   // lighter tint of rail's purple, the same relationship elevated road's
   // light blue has to ground road's gray. railUnderground/railDeepUnderground/
   // railAirspace are the same dashed/muted treatment as their road
-  // counterparts, just rail's own hue.
-  drawRoadLayer('railDeepUnderground', '#2a1a3a', 6, true);
+  // counterparts, just rail's own hue — railDeepUnderground gets the same
+  // per-cell burial darkening as deepUnderground, for the same reason.
+  drawRoadLayer('railDeepUnderground', '#2a1a3a', 6, true, true);
   drawRoadLayer('railUnderground', '#4a3a5a', 8, true);
   drawRoadLayer('rail', '#9b6bd6', 10);
   drawRoadLayer('railElevated', '#c9a8e8', 13);
@@ -244,14 +267,19 @@ function render(){
     ctx.stroke();
   }
 
-  function drawRoadLayer(layerName, color, margin, dashed){
+  function drawRoadLayer(layerName, color, margin, dashed, buries){
     if(dashed) ctx.setLineDash([5,4]); // underground/railUnderground only — see the call sites above
     for(const [k] of world.grid){
       const [x,y] = k.split(',').map(Number);
       const track = trackAt(x,y,layerName);
       if(!track.track) continue;
+      // `buries` (deepUnderground/railDeepUnderground only — see
+      // burialColor above) darkens this ONE cell's line per its own local
+      // terrain height, rather than using the flat `color` for the whole
+      // layer the way every other grade does.
+      const cellColor = buries ? burialColor(color, getCell(x,y).elevation) : color;
       const connectedDirs = ROAD_DIRS.filter(d => track.edges[d.dir]).map(d => d.dir);
-      drawTrackCell(x, y, connectedDirs, color, margin);
+      drawTrackCell(x, y, connectedDirs, cellColor, margin);
       for(const {dir,dx,dy,opp} of ROAD_DIRS){
         if(!track.edges[dir]) continue;
         // One-way arrow: drawn only from the side that's still allowed to

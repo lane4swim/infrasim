@@ -225,6 +225,21 @@ without touching simulation code.
 > disabled the mechanism everywhere with no further code changes — the
 > same generalization that made adding them cheap made removing them
 > cheap too.
+>
+> **Further amended in Phase 2 (Terrain elevation — z-index render cue).**
+> `ground`/`elevated`/`underground` move WITH local terrain, so their
+> depth relative to their own column's surface never changes — a hill's
+> underground track is exactly as "buried" as flat land's. `deepUnderground`
+> (and its rail counterpart) is the one grade that's genuinely level — a
+> constant z regardless of local terrain — so it's the only one whose
+> relative depth actually varies as terrain rises above it. The renderer
+> now uses that real z-relationship (`elevationAt`'s constant
+> `deepUnderground` z against the varying local `ground` z) to darken a
+> `deepUnderground` tile toward black in proportion to local elevation,
+> so a level tunnel visibly "burrows" deeper exactly where a hill actually
+> rises above it, and returns to normal brightness under flat ground —
+> a genuine per-cell z-index effect, not a scripted "near a hill" special
+> case. `airspace` doesn't get it; rising into open sky isn't burrowing.
 
 ---
 

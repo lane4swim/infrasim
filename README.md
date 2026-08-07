@@ -1988,3 +1988,41 @@ test-elevation.js, same count — the tests shrank in scope, not in
 number). Verified via Playwright that the four removed buttons are gone
 from the DOM and the original Ramp still works end to end through the
 real UI, with no console errors.
+
+# Addendum — deepUnderground/railDeepUnderground darken under raised terrain ("burrows into a hillside")
+
+`ground`/`elevated`/`underground` all move WITH local terrain (§ Terrain
+elevation) — a tile's underground track is always exactly one level
+below its OWN column's surface, hill or no hill, so there's never
+anything new to show there as terrain varies. `deepUnderground` (and
+`railDeepUnderground`) are the one genuinely "level" grade: a flat global
+plane at a constant z regardless of what the terrain above it is doing.
+That means its depth relative to the local surface actually does change
+as terrain rises — and until now, the rendering never showed it: a
+`deepUnderground` tile looked identical whether it ran under a hill or
+under flat ground.
+
+`render.js` gained `burialColor(hex, elevation)`, mixing a track color
+toward black in proportion to the LOCAL cell's terrain elevation (only
+positive elevation buries further — a valley doesn't make a flat tunnel
+any more exposed than baseline). `drawRoadLayer` took a new `buries` flag
+that, when set, computes this per-cell instead of using one flat color
+for the whole layer the way every other grade does; only the
+`deepUnderground`/`railDeepUnderground` call sites pass it. The result:
+a deep tunnel running under flat ground stays at its normal brightness,
+and visibly darkens exactly where it passes beneath raised terrain,
+returning to normal once the terrain drops back down — reading as the
+tunnel burrowing into a hillside precisely because it's a genuine
+z-relationship (the constant `deepUnderground` z vs. the varying local
+`ground` z from `elevationAt`), not a scripted "near a hill" heuristic.
+`airspace` deliberately doesn't get this treatment — going up into open
+sky isn't "burrowing," and airspace already reads as the most exposed
+thing on the map.
+
+This is render-only (no grid/pathfinding/simulation change), so there's
+no new automated test — verified instead by sampling actual canvas pixel
+colors via Playwright: a `deepUnderground` road built in a straight line
+from flat ground, under a 2-cell-wide `+4` hill, back to flat ground
+rendered at full color (`rgb(58,42,26)`) on both flat ends and exactly
+65%-toward-black (`rgb(20,15,9)`, matching the formula) under the hill,
+with a screenshot confirming it reads correctly, and no console errors.
