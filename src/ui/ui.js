@@ -48,6 +48,103 @@ let hoverCell = null;
 })();
 function currentUndergroundView(){ return document.getElementById('undergroundViewSelect').value; }
 
+// ---------------------------------------------------------------------
+// DYNAMIC TOOLBAR (§ Content-pack layering's own addon proved this gap:
+// Colliery/Coal Hauler/Coal Hopper were fully valid, live content with no
+// way to actually reach them through the UI, since every button/option
+// below used to be hand-written HTML naming specific type ids). Runs
+// before the click-wiring loop right below, which needs every button —
+// generated or hand-written — to already exist in the DOM.
+// ---------------------------------------------------------------------
+
+// Hand-drawn icons for the types that have one; anything else (a
+// content-pack addon's own new building/vehicle type) falls back to a
+// plain generic icon rather than being unable to render at all.
+const BUILDING_ICON = {mine:'icon-mine', mill:'icon-mill'};
+const VEHICLE_ICON = {bulk:'icon-bulktruck', flatbed:'icon-flatbedtruck'};
+
+function toolButtonHtml(color, icon, label, costText){
+  return `<span class="tool-swatch" style="background:${color}"><span class="badge"></span><svg class="tool-icon" viewBox="0 0 24 24"><use href="#${icon}"/></svg></span>${label}${costText ? `<span class="cost">${costText}</span>` : ''}`;
+}
+
+// One tool button per BUILDING_DEFS entry with a `recipe` — the same
+// `def.recipe` test entities.js's createBuilding already uses to decide
+// which buildings get Producer/Storage wiring at all (§ Content-pack
+// layering), so a building is a "production building" reachable here if
+// and only if it actually behaves like one — no separate, driftable list
+// of type names to keep in sync. Town/Station/Depot/Train Yard have no
+// recipe and are excluded automatically; they stay hand-written in
+// index.html since each needs its own extra UI (resource dropdown,
+// facing, orientation) that isn't purely data-driven yet.
+(function generateProductionButtons(){
+  const container = document.getElementById('productionButtons');
+  for(const [type, def] of Object.entries(BUILDING_DEFS)){
+    if(!def.recipe) continue;
+    const btn = document.createElement('button');
+    btn.className = 'tool-btn';
+    btn.dataset.tool = type;
+    btn.innerHTML = toolButtonHtml(def.color, BUILDING_ICON[type] || 'icon-generic-building', `Build ${def.label}`, `$${def.buildCost}`);
+    container.appendChild(btn);
+  }
+})();
+
+// One tool button per VEHICLE_DEFS entry — every truck type follows the
+// exact same cmdPurchaseVehicle(x,y,type) pattern (§ Content-pack
+// layering), so unlike buildings there's no special-case exclusion here:
+// all of VEHICLE_DEFS is generated.
+(function generateVehicleButtons(){
+  const container = document.getElementById('vehicleButtons');
+  for(const [type, def] of Object.entries(VEHICLE_DEFS)){
+    const btn = document.createElement('button');
+    btn.className = 'tool-btn';
+    btn.dataset.tool = type;
+    btn.innerHTML = toolButtonHtml(def.color, VEHICLE_ICON[type] || 'icon-generic-vehicle', `Buy ${def.label}`, `$${def.purchaseCost}`);
+    container.appendChild(btn);
+  }
+})();
+
+(function injectEngineOptions(){
+  const select = document.getElementById('engineSelect');
+  for(const [type, def] of Object.entries(ENGINE_DEFS)){
+    const opt = document.createElement('option');
+    opt.value = type;
+    opt.textContent = `Engine: ${def.label}`;
+    select.appendChild(opt);
+  }
+})();
+(function injectWagonOptions(){
+  const select = document.getElementById('wagonSelect');
+  for(const [type, def] of Object.entries(WAGON_DEFS)){
+    const opt = document.createElement('option');
+    opt.value = type;
+    opt.textContent = `Wagon: ${RESOURCES[def.resource].name}`;
+    select.appendChild(opt);
+  }
+})();
+
+// townResourceSelect/stationResourceSelect/depotResourceSelect all list
+// every RESOURCES entry the same way — generated once here rather than
+// three times, since a content-pack addon's own new resource (e.g. Coal)
+// needs to be selectable in all three or nothing could ever be built to
+// produce/consume/buffer it end-to-end, even with a production building
+// and a vehicle for it already reachable via the two generators above.
+// `defaultResource`, if it names a real RESOURCES id, is preselected —
+// preserving each select's original default (Town: Steel; Station/Depot:
+// Ore) exactly, rather than always falling back to insertion order.
+function injectResourceOptions(selectId, labelPrefix, defaultResource){
+  const select = document.getElementById(selectId);
+  for(const [id, def] of Object.entries(RESOURCES)){
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = `${labelPrefix}: ${def.name}`;
+    if(id===defaultResource) opt.selected = true;
+    select.appendChild(opt);
+  }
+}
+injectResourceOptions('townResourceSelect', 'Town accepts', 'steel');
+injectResourceOptions('stationResourceSelect', 'Station handles', 'ore');
+injectResourceOptions('depotResourceSelect', 'Depot handles', 'ore');
+
 document.querySelectorAll('.tool-btn[data-tool]').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     document.querySelectorAll('.tool-btn').forEach(b=>b.classList.remove('active'));
@@ -60,7 +157,27 @@ document.querySelectorAll('.tool-btn[data-tool]').forEach(btn=>{
     document.getElementById('hint').textContent = toolHint(currentTool);
   });
 });
+// Same def.recipe/VEHICLE_DEFS tests generateProductionButtons/
+// generateVehicleButtons use above — a production building's hint is one
+// formula (footprint + what the recipe turns into what), so Mine/Mill/an
+// addon's own Colliery all get a correct hint with no per-type entry
+// needed here, same as their button/click-handling.
+function productionBuildingHint(type){
+  const def = BUILDING_DEFS[type];
+  const recipe = RECIPES[def.recipe];
+  const outputNames = recipe.outputs.map(o=>RESOURCES[o.resource].name).join(' + ') || 'nothing';
+  const inputDesc = recipe.inputs.length===0
+    ? `Always produces ${outputNames}.`
+    : `Turns ${recipe.inputs.map(i=>RESOURCES[i.resource].name).join(' + ')} into ${outputNames} — it needs a Station (or chain of Stations) handling each input and the output.`;
+  return `Click the top-left cell for a ${def.label} (${def.footprint.w}x${def.footprint.h}). ${inputDesc} It doesn't need to touch a road itself — build a Station touching it for trucks to use.`;
+}
+function vehicleHint(type){
+  const def = VEHICLE_DEFS[type];
+  return `Click a ground road tile to buy a ${def.label} ($${def.purchaseCost}) there. Carries ${RESOURCES[def.resource].name} only.`;
+}
 function toolHint(t){
+  if(BUILDING_DEFS[t] && BUILDING_DEFS[t].recipe) return productionBuildingHint(t);
+  if(VEHICLE_DEFS[t]) return vehicleHint(t);
   return {
     select:'Click a building or truck to inspect it.',
     road:'Click or drag to build road on the selected layer ($10/tile, x2 elevated). Uncheck auto-connect to place tiles without joining them. On the ground layer, crosses rail track at a right angle only — it won\'t connect through track running the same direction.',
@@ -72,13 +189,9 @@ function toolHint(t){
     lowerterrain:`Click a cell to lower its terrain by one level ($${TERRAFORM_COST}). Requires the cell be clear of all track and buildings first.`,
     connect:'Click a road tile, then click an adjacent road tile on the same layer — connects them if not joined, disconnects them if they are.',
     oneway:'Click a road tile, then click an adjacent connected tile — traffic will only be allowed from the first to the second.',
-    mine:`Click the top-left cell for a Mine (${BUILDING_DEFS.mine.footprint.w}x${BUILDING_DEFS.mine.footprint.h}). Always produces Ore. It doesn't need to touch a road itself — build a Station touching it for trucks to use.`,
-    mill:`Click the top-left cell for a Steel Mill (${BUILDING_DEFS.mill.footprint.w}x${BUILDING_DEFS.mill.footprint.h}). Turns Ore into Steel — it needs one Station handling Ore (delivery) and one handling Steel (pickup), both touching it.`,
     town:`Click the top-left cell for a Town (${BUILDING_DEFS.town.footprint.w}x${BUILDING_DEFS.town.footprint.h}). Accepts whichever resource is chosen in the dropdown. It doesn't need to touch a road itself — build a Station touching it for trucks to use.`,
-    station:`Click a cell touching a Mine, Mill, Town, or another Station (${BUILDING_DEFS.station.footprint.w}x${BUILDING_DEFS.station.footprint.h}). Choose which resource it handles — it will only ever connect to a road on its chosen facing side.`,
+    station:`Click a cell touching an industry or another Station (${BUILDING_DEFS.station.footprint.w}x${BUILDING_DEFS.station.footprint.h}). Choose which resource it handles — it will only ever connect to a road on its chosen facing side.`,
     demolish:'Click a road or track tile (on the selected layer, whichever of road or rail is actually there) or a building to remove it.',
-    bulktruck:'Click a ground road tile to buy a Bulk Truck ($200) there. Carries Ore only.',
-    flatbedtruck:'Click a ground road tile to buy a Flatbed Truck ($260) there. Carries Steel only.',
     track:`Click or drag to build rail track on the selected layer ($${RAIL_DEFS.track.costPerTile}/tile, x2 elevated). Uncheck auto-connect to place tiles without joining them. Crosses the same-grade road layer at a right angle only — it won't connect through road running the same direction.`,
     trackconnect:'Click a track tile, then click an adjacent track tile on the same layer — connects them if not joined, disconnects them if they are.',
     signal:'Click a track tile, then click an adjacent connected tile on the same layer — trains will only be allowed to travel from the first to the second. A signal also marks a hard block boundary.',
@@ -252,8 +365,7 @@ function handleClick(cell){
   if(currentTool==='tunnelramp' || currentTool==='railtunnelramp'){ handleUndergroundRampClick(x,y); return; }
   if(currentTool==='connect'){ handleConnectClick(x,y); return; }
   if(currentTool==='oneway'){ handleOneWayClick(x,y); return; }
-  if(currentTool==='mine'){ postCommand('cmdBuildBuilding', ['mine', x, y, currentTier()]); return; }
-  if(currentTool==='mill'){ postCommand('cmdBuildBuilding', ['mill', x, y, currentTier()]); return; }
+  if(BUILDING_DEFS[currentTool] && BUILDING_DEFS[currentTool].recipe){ postCommand('cmdBuildBuilding', [currentTool, x, y, currentTier()]); return; }
   if(currentTool==='town'){ postCommand('cmdBuildBuilding', ['town', x, y, currentTier(), null, currentTownResource()]); return; }
   if(currentTool==='station'){ postCommand('cmdBuildBuilding', ['station', x, y, 'small', currentFacing(), currentStationResource()]); return; }
   if(currentTool==='demolish'){
@@ -266,8 +378,7 @@ function handleClick(cell){
     postCommand('cmdDemolish', [x,y,layer]);
     return;
   }
-  if(currentTool==='bulktruck'){ postCommand('cmdPurchaseVehicle', [x,y,'bulk']); return; }
-  if(currentTool==='flatbedtruck'){ postCommand('cmdPurchaseVehicle', [x,y,'flatbed']); return; }
+  if(VEHICLE_DEFS[currentTool]){ postCommand('cmdPurchaseVehicle', [x,y,currentTool]); return; }
   if(currentTool==='track'){ postCommand('cmdBuildTrack', [x,y,currentRailLayer(),currentAutoConnect()]); return; }
   if(currentTool==='trackconnect'){ handleConnectClick(x,y); return; }
   if(currentTool==='signal'){ handleOneWayClick(x,y); return; }
@@ -514,8 +625,6 @@ function renderOrderEditor(vehicle){
 // keep the side panel numbers live even when nothing changed selection-wise
 setInterval(()=>{ if(selected) renderSelection(); }, 500);
 
-document.getElementById('mineCost').textContent = '$' + BUILDING_DEFS.mine.buildCost;
-document.getElementById('millCost').textContent = '$' + BUILDING_DEFS.mill.buildCost;
 document.getElementById('townCost').textContent = '$' + BUILDING_DEFS.town.buildCost;
 document.getElementById('stationCost').textContent = '$' + BUILDING_DEFS.station.buildCost;
 document.getElementById('rampCost').textContent = '$' + RAMP_COST;

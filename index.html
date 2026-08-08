@@ -134,6 +134,8 @@
     <symbol id="icon-assembletrain" viewBox="0 0 24 24"><rect x="2" y="9" width="7" height="6"/><rect x="15" y="9" width="7" height="6"/><line x1="9" y1="12" x2="15" y2="12"/><circle cx="12" cy="12" r="1.2"/></symbol>
     <symbol id="icon-save" viewBox="0 0 24 24"><path d="M4,4 L16,4 L20,8 L20,20 L4,20 Z"/><rect x="7" y="4" width="7" height="4"/><rect x="6" y="13" width="12" height="6"/></symbol>
     <symbol id="icon-load" viewBox="0 0 24 24"><path d="M3,7 L9,7 L11,9 L21,9 L21,19 L3,19 Z"/></symbol>
+    <symbol id="icon-generic-building" viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="14"/><line x1="4" y1="6" x2="20" y2="6"/><rect x="9" y="12" width="6" height="8"/></symbol>
+    <symbol id="icon-generic-vehicle" viewBox="0 0 24 24"><rect x="3" y="10" width="18" height="7"/><circle cx="8" cy="19" r="2"/><circle cx="16" cy="19" r="2"/></symbol>
   </defs>
 </svg>
 <div id="app">
@@ -147,16 +149,25 @@
     <button class="tool-btn" data-tool="demolish"><span class="tool-swatch" style="background:var(--danger)"><span class="badge"></span><svg class="tool-icon" viewBox="0 0 24 24"><use href="#icon-demolish"/></svg></span>Demolish</button>
 
     <div class="section-label">Industry</div>
-    <button class="tool-btn" data-tool="mine"><span class="tool-swatch" style="background:#7a5230"><span class="badge"></span><svg class="tool-icon" viewBox="0 0 24 24"><use href="#icon-mine"/></svg></span>Build Mine<span class="cost" id="mineCost">$150</span></button>
-    <button class="tool-btn" data-tool="mill"><span class="tool-swatch" style="background:#8a4a3a"><span class="badge"></span><svg class="tool-icon" viewBox="0 0 24 24"><use href="#icon-mill"/></svg></span>Build Steel Mill<span class="cost" id="millCost">$220</span></button>
+    <!-- One tool-btn per BUILDING_DEFS entry with a `recipe` field is
+         generated here at load time by ui.js's generateProductionButtons()
+         (§ Dynamic toolbar) — Town/Station/Depot/Train Yard have no recipe
+         and stay hand-written below, since they need their own extra UI
+         (resource dropdown, facing, orientation) that isn't purely
+         data-driven yet. This is what makes a content-pack addon's own new
+         production building (e.g. Colliery) reachable through the toolbar
+         with zero index.html changes. -->
+    <div id="productionButtons"></div>
     <button class="tool-btn" data-tool="town"><span class="tool-swatch" style="background:#3a6ea5"><span class="badge"></span><svg class="tool-icon" viewBox="0 0 24 24"><use href="#icon-town"/></svg></span>Build Town<span class="cost" id="townCost">$100</span></button>
     <select id="tierSelect">
       <option value="small">Small — +$0, cap 20</option>
       <option value="large">Large — +$100, cap 50</option>
     </select>
     <select id="townResourceSelect">
-      <option value="ore">Town accepts: Ore</option>
-      <option value="steel" selected>Town accepts: Steel</option>
+      <!-- One "Town accepts: X" option per RESOURCES entry is injected
+           here at load time by ui.js (§ Dynamic toolbar) — a content-pack
+           addon's own new resource (e.g. Coal) needs to be choosable here,
+           or nothing could ever be built to consume it. -->
     </select>
 
     <div class="section-label">Terrain</div>
@@ -202,13 +213,16 @@
       <option value="W">Facing West</option>
     </select>
     <select id="stationResourceSelect">
-      <option value="ore">Station handles: Ore</option>
-      <option value="steel">Station handles: Steel</option>
+      <!-- Generated from RESOURCES at load time, same as townResourceSelect
+           above (§ Dynamic toolbar). -->
     </select>
 
     <div class="section-label">Vehicles</div>
-    <button class="tool-btn" data-tool="bulktruck"><span class="tool-swatch" style="background:#e0a840"><span class="badge"></span><svg class="tool-icon" viewBox="0 0 24 24"><use href="#icon-bulktruck"/></svg></span>Buy Bulk Truck (Ore)<span class="cost">$200</span></button>
-    <button class="tool-btn" data-tool="flatbedtruck"><span class="tool-swatch" style="background:#c96f3a"><span class="badge"></span><svg class="tool-icon" viewBox="0 0 24 24"><use href="#icon-flatbedtruck"/></svg></span>Buy Flatbed (Steel)<span class="cost">$260</span></button>
+    <!-- One tool-btn per VEHICLE_DEFS entry, generated at load time by
+         ui.js's generateVehicleButtons() (§ Dynamic toolbar) — every truck
+         type follows the exact same cmdPurchaseVehicle(x,y,type) pattern,
+         so unlike buildings there's no special-case exclusion needed here. -->
+    <div id="vehicleButtons"></div>
 
     <div class="section-label">Rail</div>
     <button class="tool-btn" data-tool="track"><span class="tool-swatch" style="background:#9b6bd6"><span class="badge"></span><svg class="tool-icon" viewBox="0 0 24 24"><use href="#icon-track"/></svg></span>Build Track<span class="cost" id="trackCost">$25/tile</span></button>
@@ -228,17 +242,20 @@
       <option value="8">Platform length: 8 tiles</option>
     </select>
     <select id="depotResourceSelect">
-      <option value="ore">Depot handles: Ore</option>
-      <option value="steel">Depot handles: Steel</option>
+      <!-- Generated from RESOURCES at load time, same as townResourceSelect
+           above (§ Dynamic toolbar). -->
     </select>
     <button class="tool-btn" data-tool="trainyard"><span class="tool-swatch" style="background:#4a4a6a"><span class="badge"></span><svg class="tool-icon" viewBox="0 0 24 24"><use href="#icon-trainyard"/></svg></span>Build Train Yard<span class="cost" id="trainyardCost">$400</span></button>
     <button class="tool-btn" data-tool="assembletrain"><span class="tool-swatch" style="background:#9b6bd6"><span class="badge"></span><svg class="tool-icon" viewBox="0 0 24 24"><use href="#icon-assembletrain"/></svg></span>Assemble Train</button>
     <select id="engineSelect">
-      <option value="diesel">Engine: Diesel</option>
+      <!-- One "Engine: X" option per ENGINE_DEFS entry is injected here at
+           load time by ui.js (§ Dynamic toolbar), so a content-pack
+           addon's own new engine type is selectable with no HTML change. -->
     </select>
     <select id="wagonSelect">
-      <option value="ore_wagon">Wagon: Ore</option>
-      <option value="steel_wagon">Wagon: Steel</option>
+      <!-- One "Wagon: X" option per WAGON_DEFS entry, generated the same
+           way (§ Dynamic toolbar) — this is what makes an addon's own new
+           wagon type (e.g. Coal Hopper) selectable for Assemble Train. -->
     </select>
     <select id="wagonCountSelect">
       <option value="1">× 1 wagon</option>
@@ -316,12 +333,11 @@
   script for how engines+wagons combine into one vehicle's stats.
 
   Coal's building (Colliery) and vehicles (Coal Hauler truck, Coal Hopper
-  wagon) have no toolbar button/UI hookup — the toolbar is still a fixed
-  set of HTML buttons wired to specific type ids (dynamically generating it
-  from the merged pack is a bigger, separate change). They're fully live,
-  reachable content nonetheless, exactly as validated/exercised via the
-  command API in test/test-content-pack.js — the same level "modded"
-  content has always been proven at in this project.
+  wagon) are reachable through the real toolbar UI, not just the command
+  API — see ui.js's generateProductionButtons()/generateVehicleButtons()
+  (§ Dynamic toolbar), which builds a button per BUILDING_DEFS entry with
+  a recipe / per VEHICLE_DEFS entry, so any production building or vehicle
+  a content pack adds shows up with zero index.html changes.
 -->
 <script type="application/json" class="content-pack" id="content-pack-base">
 {

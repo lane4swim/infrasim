@@ -522,10 +522,14 @@ function render(){
   if(hoverCell){
     ctx.strokeStyle = getCss('--teal');
     ctx.lineWidth = 2;
-    if(currentTool==='mine' || currentTool==='mill' || currentTool==='town' || currentTool==='station' || currentTool==='depot' || currentTool==='trainyard'){
+    if(BUILDING_DEFS[currentTool]){
+      // Any building tool (§ Dynamic toolbar — generated production
+      // buildings included, not just the hand-written Town/Station/Depot/
+      // Train Yard) gets a footprint-sized ghost; Depot's is length/
+      // orientation-dependent, everyone else's is just their def.footprint.
       const fp = currentTool==='depot' ? effectiveFootprint('depot', BUILDING_DEFS.depot, currentDepotOrientation(), currentDepotLength()) : BUILDING_DEFS[currentTool].footprint;
       ctx.strokeRect(hoverCell.x*CELL+1, hoverCell.y*CELL+1, fp.w*CELL-2, fp.h*CELL-2);
-    } else if(currentTool==='road' || currentTool==='track' || currentTool==='bulktruck' || currentTool==='flatbedtruck' || currentTool==='assembletrain'){
+    } else if(currentTool==='road' || currentTool==='track' || VEHICLE_DEFS[currentTool] || currentTool==='assembletrain'){
       ctx.strokeRect(hoverCell.x*CELL+1, hoverCell.y*CELL+1, CELL-2, CELL-2);
     }
   }

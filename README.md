@@ -2366,15 +2366,17 @@ game actually runs on.
   that. Every other system (`tickProduction`, Storage load/unload) already
   worked off the recipe/component data, not the type string, so no other
   file needed to change.
-- **No toolbar button for the addon's building/vehicles — a deliberate,
-  named scope cut.** The toolbar is still fixed HTML buttons wired to
-  specific type ids (`mine`, `mill`, `town`, ...); dynamically generating it
-  from whatever the merged pack contains is a separate, larger change this
-  didn't attempt. The Colliery/Coal Hauler/Coal Hopper are fully live,
-  reachable content nonetheless — exactly as validated and exercised
-  through the command API (`cmdBuildBuilding`, `cmdPurchaseVehicle`,
-  `createTrain`), the same level every previous "modded content" claim in
-  this project has been proven at, never through the UI.
+- **No toolbar button for the addon's building/vehicles at the time — a
+  deliberate, named scope cut.** The toolbar was still fixed HTML buttons
+  wired to specific type ids (`mine`, `mill`, `town`, ...); dynamically
+  generating it from whatever the merged pack contains was left as a
+  separate, larger change. The Colliery/Coal Hauler/Coal Hopper were fully
+  live, reachable content regardless — validated and exercised through the
+  command API (`cmdBuildBuilding`, `cmdPurchaseVehicle`, `createTrain`),
+  the same level every previous "modded content" claim in this project had
+  been proven at, never through the UI. **Closed in the very next Phase 2
+  entry below ("Dynamic toolbar")** — the gap this scope cut named turned
+  out to be exactly the next thing worth building.
 
 ## What changed
 
@@ -2493,3 +2495,104 @@ distinctly for all 25 buttons, hint-text blocks confirmed gone via
 (ground reads as green); building a Mine through the ordinary toolbar UI
 still works exactly as before (treasury debited, log entry recorded), with
 zero console errors.
+
+# Phase 2 — Dynamic toolbar
+
+The content-pack layering feature shipped a real addon (Colliery/Coal
+Hauler/Coal Hopper) that was fully live in the simulation but completely
+unreachable through the toolbar — every button, dropdown option, and hint
+was hand-written HTML naming specific type ids, so a modder's own new
+building or vehicle had no way to actually get built by a player clicking
+around, only via the command API the tests use. This closes that gap: the
+toolbar is now generated from the content pack for every category where
+that's safe to do, and the two content-pack tests that exposed it are
+gone.
+
+## Design
+
+- **Production buildings are generated, not hand-written — including Mine
+  and Mill.** `generateProductionButtons()` iterates `BUILDING_DEFS` and
+  makes a button for every entry with a `recipe` field — the exact same
+  test `entities.js`'s `createBuilding` already uses to decide which
+  buildings get Producer/Storage wiring (§ Content-pack layering). A
+  building is a "production building" reachable here if and only if it
+  actually behaves like one, so Town/Station/Depot/Train Yard (no recipe)
+  are excluded automatically — no separate, driftable list of type names
+  to keep in sync with entities.js's own logic. Mine and Mill were folded
+  into this same generated path rather than left as a hand-written special
+  case sitting next to it, so the generic path is proven against real
+  shipped content on every load, not just the new addon.
+- **Vehicles are generated unconditionally.** Every `VEHICLE_DEFS` entry
+  becomes a button — unlike buildings, every truck type already follows
+  the identical `cmdPurchaseVehicle(x,y,type)` pattern, so there's no
+  category to exclude.
+- **A known icon if one exists, a plain generic one if not.** `BUILDING_
+  ICON`/`VEHICLE_ICON` map the hand-drawn icons (pickaxe, factory, truck
+  silhouettes, ...) onto the specific types they were designed for; any
+  other type — an addon's own Colliery, Coal Hauler — falls back to a new
+  `icon-generic-building`/`icon-generic-vehicle` symbol (a plain flat-roof
+  box, a bare truck body) rather than being unable to render a button at
+  all.
+- **Engine/Wagon/Resource selects are generated the same way.** `engine
+  Select`/`wagonSelect` are populated from `ENGINE_DEFS`/`WAGON_DEFS`, and
+  `townResourceSelect`/`stationResourceSelect`/`depotResourceSelect` from
+  `RESOURCES` — all previously hardcoded to `ore`/`steel` only, which
+  meant the addon's Coal Hopper wagon and Coal resource were unreachable
+  even after buttons existed for the Colliery/Coal Hauler: nothing could
+  be configured to actually handle Coal. Each resource select keeps its
+  original default selection (`steel` for Town, `ore` for Station/Depot)
+  via an explicit `defaultResource` parameter, rather than always falling
+  back to whatever RESOURCES' insertion order happens to be.
+- **`toolHint()` and `handleClick()`'s per-type branches are replaced with
+  the same two-predicate dispatch** (`BUILDING_DEFS[tool].recipe` / `VEHICLE_
+  DEFS[tool]`) the button generators use — one hint-text formula and one
+  command call per category instead of one hardcoded entry per type, so a
+  new production building or vehicle needs no changes to either function.
+- **What's still hand-written, and why.** Town, Station, Depot, and Train
+  Yard keep their own buttons — each needs UI beyond a plain build click
+  (a resource dropdown, a facing side, a platform orientation/length) that
+  isn't purely data-driven yet; generalizing that is a bigger, separate
+  change (would mean the content pack declaring a building's *kind*, not
+  just its recipe) than this pass attempted.
+- **A real regression this surfaced and fixed:** `render.js`'s hover-ghost
+  preview sizing had its own hardcoded `currentTool==='mine' || ...==='mill'
+  || ...` and `==='bulktruck' || ...==='flatbedtruck'` checks — generating
+  the buttons alone would have silently broken the ghost preview for every
+  building/vehicle tool, generated or not (the vehicle tool ids also
+  changed from `bulktruck`/`flatbedtruck` to the content-pack's own `bulk`/
+  `flatbed`, matching what `cmdPurchaseVehicle` was always called with).
+  Fixed the same way as everywhere else in this pass: `BUILDING_DEFS[current
+  Tool]` (any building, footprint-sized ghost) / `VEHICLE_DEFS[currentTool]`
+  (any vehicle, single-cell ghost) instead of a type-name list.
+
+## What changed
+
+- **`index.html`**: Mine/Mill/Bulk Truck/Flatbed Truck buttons replaced
+  with empty `#productionButtons`/`#vehicleButtons` containers; `engine
+  Select`/`wagonSelect`/`townResourceSelect`/`stationResourceSelect`/
+  `depotResourceSelect` emptied of their hardcoded `<option>`s; two new
+  icon symbols (`icon-generic-building`, `icon-generic-vehicle`).
+- **`ui.js`**: new `generateProductionButtons()`, `generateVehicleButtons()`,
+  `injectEngineOptions()`, `injectWagonOptions()`, `injectResourceOptions()`
+  (shared by all three resource selects); `toolHint()` and `handleClick()`
+  generalized as described above; obsolete `mineCost`/`millCost` DOM
+  lookups removed (cost is now embedded directly at button-generation
+  time).
+- **`render.js`**: hover-ghost sizing generalized to `BUILDING_DEFS[current
+  Tool]`/`VEHICLE_DEFS[currentTool]`, fixing the regression above.
+
+## Testing
+
+No changes to `test/harness.js`'s `SIM_SCRIPT_FILES` — `ui.js`/`render.js`
+have never been part of the headless test harness (it only loads the
+simulation core), so the existing 10-file suite is an unaffected baseline,
+confirmed still passing. This feature is UI wiring almost by definition, so
+Playwright is the real verification: built a Colliery, a Station set to
+handle Coal, a Coal Hauler truck, and a train assembled from two Coal
+Hopper wagons — all through actual toolbar clicks and dropdown selections,
+never the command API — and confirmed every entity was created, the
+treasury was debited correctly at each step, and the generated `<option>`
+lists (`engineSelect`, `wagonSelect`, `townResourceSelect`) included the
+addon's own `coal_hopper`/`coal` entries. Also confirmed the hover-ghost
+regression fix directly: hovering the Colliery tool draws a 2x2 ghost,
+hovering Coal Hauler draws a 1x1 ghost. Zero console errors throughout.
