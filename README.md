@@ -2413,3 +2413,83 @@ via Playwright: `RESOURCES.coal`/`BUILDING_DEFS.colliery`/etc. are live,
 `RESOURCES.ore`/`BUILDING_DEFS.mine` are byte-for-byte unaffected, and
 building a Mine through the ordinary toolbar UI still works exactly as
 before (treasury debited correctly), with zero console errors.
+
+# Phase 2 — Interface cleanup
+
+A visual pass over the toolbar and map, purely presentational — no
+simulation, command, or content-pack code touched. Three changes: the
+ground layer reads as green instead of dark navy; every toolbar button gets
+a small representative icon instead of a flat color swatch; and the long
+explanatory paragraphs that used to sit under each toolbar section are
+gone.
+
+## Design
+
+- **Ground is green.** A new `--ground` CSS variable (`#16301f`, a dark
+  forest green consistent with the rest of the dark theme) replaces the
+  canvas's old hardcoded `#0d1926` background. The canvas only ever draws
+  content over cells that actually have something on them (terrain tint,
+  track, buildings); an untouched cell was always "whatever the canvas
+  background happens to be," so this one CSS change is enough to make the
+  whole empty map read as ground — no render.js changes needed, and the
+  terrain elevation tint (tan for raised, blue for lowered) still paints
+  over it exactly as before, since that tint is a near-opaque overlay, not
+  a base color a modification underneath it could show through.
+- **Icons, not just color.** Every one of the 25 toolbar buttons
+  (`select`/`demolish`/tools/buildings/vehicles/rail/save/load) now carries
+  a small geometric SVG icon depicting the action itself — a pickaxe for
+  Mine, a factory silhouette for Steel Mill, a house for Town, up/down
+  chevrons for terrain, a dashed road line, an ascending wedge for a Ramp,
+  a tunnel arch for a Tunnel Ramp, overlapping rings for Connect/
+  Disconnect, a truck silhouette for vehicles, parallel rails with ties for
+  Track, a lamp-on-a-pole for Signal, a canopy for Depot, a locomotive for
+  Train Yard, coupled cars for Assemble Train, a floppy disk for Save, a
+  folder for Load. All 22 unique icons live as one hidden
+  `<svg><defs><symbol>` sprite sheet near the top of `<body>`; each button
+  references its icon with `<use href="#icon-x">`, so the actual markup
+  per button is one line, not a repeated block of path data. Rail's Ramp/
+  Tunnel Ramp/Connect buttons reuse the road ones' symbols outright (same
+  shape, different swatch color) rather than duplicating geometry that
+  means the same thing.
+- **A dark badge behind every icon, not the raw swatch color.** The
+  existing colored swatch square stays (it's still useful — same color
+  family groups road vs. rail vs. terrain vs. game actions at a glance),
+  but each icon sits on a small semi-transparent dark badge centered inside
+  it (`rgba(6,11,17,.55)`) rather than directly on the swatch color. The
+  swatch palette spans very light ambers to very dark purples; a single
+  fixed icon stroke color would read fine on some and nearly vanish on
+  others. The badge guarantees the same light icon-on-dark-badge contrast
+  regardless of which swatch color it sits inside, while the swatch's own
+  color still shows through at the badge's edges.
+- **The hint-text paragraphs are gone, not shortened.** Every `.hint-text`
+  block (Terrain, Network, Vehicles, the Depot and Assemble Train hints,
+  Save/Load, and the whole "About" section) is deleted, along with the
+  now-unused `tierHint` element and `.hint-text` CSS rule. Icons plus the
+  existing dynamic single-line hint bar (`#hint`, top of the canvas — set
+  by `ui.js`'s `toolHint()`, unchanged by this pass) carry the load
+  instead. That HUD hint is a different, functional piece of UI — it shows
+  one short, tool-specific instruction for whichever tool is currently
+  selected, updated live — not a static wall of always-visible text, so it
+  wasn't in scope for this cleanup.
+
+## What changed
+
+- **`index.html`**: new `--ground` CSS variable used for the canvas
+  background; new hidden `<svg><defs>` icon sprite (22 `<symbol>`s) right
+  after `<body>`; `.tool-swatch` restyled from a flat 10px color square to
+  a 22px rounded badge holder; every `.tool-btn`'s swatch span gains a
+  `.badge` child and a `<svg class="tool-icon"><use></svg>`; every
+  `.hint-text` block and the "About" section removed.
+
+## Testing
+
+No new automated test — pure presentation, no simulation-side logic
+touched (same reasoning as the earlier terrain-burial-darkening and
+underground-visibility-toggle features). The full existing suite (all 10
+`test/test-*.js` files) still passes. Verified in a real browser via
+Playwright: screenshots of the toolbar (icons render correctly and
+distinctly for all 25 buttons, hint-text blocks confirmed gone via
+`document.querySelectorAll('.hint-text').length === 0`) and of the canvas
+(ground reads as green); building a Mine through the ordinary toolbar UI
+still works exactly as before (treasury debited, log entry recorded), with
+zero console errors.
