@@ -12,17 +12,66 @@ function frame(){
 }
 
 // ---------------------------------------------------------------------
+// RENDERING — isometric grid (§ Begin transferring to an isometric grid).
+// The simulation's own grid (world.js) is still a plain orthogonal (x,y)
+// integer grid — pathfinding, occupancy, footprints, everything in sim/*.js
+// is completely unaware any of this exists. Only the SCREEN mapping
+// changed: every grid coordinate now goes through gridToScreen (or its
+// exact inverse, screenToGrid, for turning a mouse click back into a grid
+// cell — see ui.js's cellFromEvent) instead of the old flat `x*CELL,y*CELL`
+// multiply. This is deliberately the classic 2:1 "diamond" projection
+// (ISO_W wide, ISO_H = ISO_W/2 tall per cell) rather than a true 3D camera
+// — it's a linear map, so anything that was a straight line in grid space
+// (a road edge, a grid line spanning the whole map) is STILL a straight
+// line on screen, just angled; only shapes that relied on axes being
+// perpendicular (a building footprint, terrain fill) need to become
+// explicit filled polygons instead of fillRect.
+//
+// Deliberately flat (z=0) for now — elevation still only tints color, it
+// doesn't yet lift a raised cell's diamond up-screen the way a "real"
+// isometric terrain relief would. Doing that properly means solving mouse
+// picking against a height field (a screen point no longer maps to a
+// single unambiguous grid cell once tiles can overlap vertically), which
+// is a separate, harder problem from the flat projection here — left for
+// a later increment rather than attempted in this pass.
+const ISO_W = CELL*2, ISO_H = CELL;         // one diamond's full width/height
+const ISO_ORIGIN_X = GRID_H*ISO_W/2;        // shifts the diamond so the whole grid has no negative screen-x
+const ISO_ORIGIN_Y = 0;
+// Forward transform — grid coordinates (fractional; a cell's own corners
+// are at integer (x,y), its center at (x+0.5,y+0.5), same convention the
+// old `x*CELL` code used) to a screen pixel position.
+function gridToScreen(gx, gy){
+  return [ (gx-gy)*ISO_W/2 + ISO_ORIGIN_X, (gx+gy)*ISO_H/2 + ISO_ORIGIN_Y ];
+}
+// The exact algebraic inverse of gridToScreen (solve the 2x2 linear system
+// above for gx,gy) — screen pixels back to fractional grid coordinates.
+// Used by ui.js's cellFromEvent (floors the result to a concrete cell) so
+// clicking still targets the right tile under the new projection.
+function screenToGrid(sx, sy){
+  const px = sx-ISO_ORIGIN_X, py = sy-ISO_ORIGIN_Y;
+  return [ px/ISO_W + py/ISO_H, py/ISO_H - px/ISO_W ];
+}
+
+// ---------------------------------------------------------------------
 // RENDERING
 // ---------------------------------------------------------------------
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
+// The diamond-projected grid's bounding box — see gridToScreen/ISO_ORIGIN_X
+// above for the derivation (GRID_H shifts the left tip of the diamond to
+// screen-x 0; the full grid spans (GRID_W+GRID_H) diamond-widths/heights).
+// Set here (once, at load) rather than left as index.html's old fixed
+// 880x560 attributes, so this always matches whatever GRID_W/GRID_H/CELL
+// actually are instead of needing to be hand-kept in sync with them.
+canvas.width = (GRID_W+GRID_H)*ISO_W/2;
+canvas.height = (GRID_W+GRID_H)*ISO_H/2;
 
 // Edge midpoint for one side of cell (x,y) — where a connection to that
 // neighbor actually crosses the tile boundary.
 const PORT_OFFSET = {N:[0.5,0], S:[0.5,1], E:[1,0.5], W:[0,0.5]};
 function trackPort(x, y, dir){
   const [ox,oy] = PORT_OFFSET[dir];
-  return [x*CELL + ox*CELL, y*CELL + oy*CELL];
+  return gridToScreen(x+ox, y+oy);
 }
 // Exactly 2 connected sides is the only case with one obvious, unambiguous
 // line to draw — straight through for an opposite pair (N-S/E-W), a clean
@@ -36,7 +85,7 @@ function trackPort(x, y, dir){
 // not one to straighten out.
 function drawTrackCell(x, y, dirs, color, margin){
   const width = CELL - margin*2;
-  const cx = x*CELL+CELL/2, cy = y*CELL+CELL/2;
+  const [cx, cy] = gridToScreen(x+0.5, y+0.5);
   if(dirs.length === 2){
     const [a,b] = dirs.map(d => trackPort(x,y,d));
     ctx.strokeStyle = color;
@@ -116,11 +165,26 @@ function undergroundLevelMargin(level){
 // straight line along the actual tile border the ramp-less connectivity
 // cap (MAX_ELEVATION_DELTA, commands.js) refuses to join.
 function cellEdgeSegment(x,y,dir){
-  const x0=x*CELL, y0=y*CELL;
-  if(dir==='N') return [[x0,y0],[x0+CELL,y0]];
-  if(dir==='S') return [[x0,y0+CELL],[x0+CELL,y0+CELL]];
-  if(dir==='E') return [[x0+CELL,y0],[x0+CELL,y0+CELL]];
-  return [[x0,y0],[x0,y0+CELL]]; // 'W'
+  if(dir==='N') return [gridToScreen(x,y), gridToScreen(x+1,y)];
+  if(dir==='S') return [gridToScreen(x,y+1), gridToScreen(x+1,y+1)];
+  if(dir==='E') return [gridToScreen(x+1,y), gridToScreen(x+1,y+1)];
+  return [gridToScreen(x,y), gridToScreen(x,y+1)]; // 'W'
+}
+// A cell's 4 corners as one filled/stroked diamond polygon, screen-space —
+// the isometric replacement for a plain fillRect(x*CELL,y*CELL,CELL,CELL);
+// linear projection turns a grid-aligned square into a parallelogram
+// (specifically a rhombus for a single 1x1 cell), never anything curved, so
+// this is still just 4 points and a closed path. `w,h` (grid units, default
+// 1x1) let the same helper draw a building's whole WxH footprint as one
+// diamond instead of a cell at a time.
+function diamondPath(x, y, w, h){
+  w = w||1; h = h||1;
+  const corners = [gridToScreen(x,y), gridToScreen(x+w,y), gridToScreen(x+w,y+h), gridToScreen(x,y+h)];
+  ctx.beginPath();
+  ctx.moveTo(corners[0][0], corners[0][1]);
+  for(let i=1;i<corners.length;i++) ctx.lineTo(corners[i][0], corners[i][1]);
+  ctx.closePath();
+  return corners;
 }
 
 function render(){
@@ -133,14 +197,24 @@ function render(){
     if(!color) continue;
     const [x,y] = k.split(',').map(Number);
     ctx.fillStyle = color;
-    ctx.fillRect(x*CELL, y*CELL, CELL, CELL);
+    diamondPath(x, y);
+    ctx.fill();
   }
 
-  // grid lines
+  // grid lines — a line of constant grid-x (or grid-y) is still a straight
+  // line after a LINEAR projection like gridToScreen, just angled instead
+  // of vertical/horizontal, so this is still exactly one line per grid
+  // index, only the two endpoints' pixel positions changed.
   ctx.strokeStyle = getCss('--grid-line');
   ctx.lineWidth = 1;
-  for(let x=0;x<=GRID_W;x++){ ctx.beginPath(); ctx.moveTo(x*CELL+.5,0); ctx.lineTo(x*CELL+.5,GRID_H*CELL); ctx.stroke(); }
-  for(let y=0;y<=GRID_H;y++){ ctx.beginPath(); ctx.moveTo(0,y*CELL+.5); ctx.lineTo(GRID_W*CELL,y*CELL+.5); ctx.stroke(); }
+  for(let x=0;x<=GRID_W;x++){
+    const [ax,ay] = gridToScreen(x,0), [bx,by] = gridToScreen(x,GRID_H);
+    ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(bx,by); ctx.stroke();
+  }
+  for(let y=0;y<=GRID_H;y++){
+    const [ax,ay] = gridToScreen(0,y), [bx,by] = gridToScreen(GRID_W,y);
+    ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(bx,by); ctx.stroke();
+  }
 
   // Cliff markers — a thick dark line along the shared border of two
   // adjacent cells whose terrain (ground.elevation) differs by more than
@@ -245,7 +319,7 @@ function render(){
   };
   for(const [k,cell] of world.grid){
     const [x,y] = k.split(',').map(Number);
-    const cx = x*CELL+CELL/2, cy = y*CELL+CELL/2;
+    const [cx, cy] = gridToScreen(x+0.5, y+0.5);
     for(const kind of ['road','rail']){
       for(const pair of RAMP_PAIRS){
         if(!cell.ramps[kind][pair.key]) continue;
@@ -320,7 +394,7 @@ function render(){
   for(const [k] of world.grid){
     const [x,y] = k.split(',').map(Number);
     if(!crossingCheckLayers.some(layer => isRoadRailCrossing(x,y,layer))) continue;
-    const cx = x*CELL+CELL/2, cy = y*CELL+CELL/2;
+    const [cx, cy] = gridToScreen(x+0.5, y+0.5);
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -355,12 +429,19 @@ function render(){
     if(dashed) ctx.setLineDash([]);
   }
   function drawOneWayArrow(x, y, dir, margin){
-    const cx = x*CELL+CELL/2, cy = y*CELL+CELL/2;
-    const rot = {N:-Math.PI/2, S:Math.PI/2, E:0, W:Math.PI}[dir];
+    // N/S/E/W no longer map to fixed screen-up/down/right/left angles once
+    // the grid is projected isometrically, so the rotation is computed from
+    // the actual on-screen direction toward this side's port (trackPort)
+    // rather than a hardcoded per-direction table — this generalizes
+    // correctly under any linear projection, iso or the old orthogonal one.
+    const [cx, cy] = gridToScreen(x+0.5, y+0.5);
+    const [px, py] = trackPort(x, y, dir);
+    const rot = Math.atan2(py-cy, px-cx);
+    const dist = Math.hypot(px-cx, py-cy);
     ctx.save();
     ctx.translate(cx,cy); ctx.rotate(rot);
     ctx.fillStyle = getCss('--amber');
-    const tip = CELL/2 - margin - 2, size = 5;
+    const tip = dist - margin - 2, size = 5;
     ctx.beginPath();
     ctx.moveTo(tip, 0);
     ctx.lineTo(tip-size, -size);
@@ -370,34 +451,48 @@ function render(){
     ctx.restore();
   }
 
-  // buildings
+  // buildings — the footprint itself is one filled diamond (diamondPath),
+  // covering exactly the WxH grid cells it actually occupies, same as the
+  // old fillRect did before the grid became isometric. Everything ELSE
+  // (label, storage bars, linked-dot) is drawn as a flat, unwarped overlay
+  // "billboarded" at the footprint's projected center instead of fitted to
+  // the diamond's slanted edges — the same convention most isometric games
+  // use for their in-scene UI text, and far simpler than trying to wrap
+  // text/bars onto a parallelogram. The platform-side highlight below is
+  // the one exception: it's showing WHICH physical edge of the real
+  // footprint the platform runs along, so it draws the actual diamond edge
+  // rather than a billboard.
   for(const id of queryEntities('Footprint')){
     const e = world.entities.get(id);
     const def = BUILDING_DEFS[e.type];
-    const px = e.x*CELL, py = e.y*CELL;
-    const pw = e.footprint.w*CELL, ph = e.footprint.h*CELL;
+    const fp = e.footprint;
     ctx.fillStyle = def.color;
+    diamondPath(e.x, e.y, fp.w, fp.h);
+    ctx.fill();
     const halted = producerHalted(e);
-    ctx.fillRect(px+2, py+2, pw-4, ph-4);
-    if(halted){ ctx.strokeStyle = getCss('--danger'); ctx.lineWidth=2; ctx.strokeRect(px+3, py+3, pw-6, ph-6); }
-    if(e===selected){ ctx.strokeStyle = getCss('--amber'); ctx.lineWidth=2; ctx.strokeRect(px+1, py+1, pw-2, ph-2); }
+    if(halted){ ctx.strokeStyle = getCss('--danger'); ctx.lineWidth=2; diamondPath(e.x, e.y, fp.w, fp.h); ctx.stroke(); }
+    if(e===selected){ ctx.strokeStyle = getCss('--amber'); ctx.lineWidth=2; diamondPath(e.x, e.y, fp.w, fp.h); ctx.stroke(); }
+
+    const [ccx, ccy] = gridToScreen(e.x+fp.w/2, e.y+fp.h/2);
     ctx.fillStyle = '#fff';
     ctx.font = '10px monospace';
-    ctx.fillText(`${def.label} #${e.id}`, px+5, py+13);
-    // Fill bar(s) span the building's full footprint width (Stations have
-    // no storage of their own — show a linked/unlinked indicator dot
-    // instead). A building with only one slot (Mine: out; Town: in) gets
-    // one bar; a dual-slot building (Mill: both) gets two stacked bars —
-    // output on top in teal, input below in a distinct color — so you can
-    // see both buffers at a glance instead of just one ambiguous number.
+    ctx.textAlign = 'center';
+    ctx.fillText(`${def.label} #${e.id}`, ccx, ccy-6);
+    ctx.textAlign = 'left';
+    // Fill bar(s) (Stations have no storage of their own — show a linked/
+    // unlinked indicator dot instead). A building with only one slot (Mine:
+    // out; Town: in) gets one bar; a dual-slot building (Mill: both) gets
+    // two stacked bars — output on top in teal, input below in a distinct
+    // color — so you can see both buffers at a glance instead of just one
+    // ambiguous number.
     if(e.type==='station'){
       const linked = !!findLinkedIndustry(e);
       ctx.fillStyle = linked ? getCss('--teal') : getCss('--danger');
-      ctx.beginPath(); ctx.arc(px+pw-8, py+ph-8, 4, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(ccx+14, ccy+8, 4, 0, Math.PI*2); ctx.fill();
       // notch on the facing side — the only side that can ever touch a road
       if(e.facing){
         const d = ROAD_DIRS.find(r=>r.dir===e.facing);
-        const nx = px+pw/2 + d.dx*(pw/2-2), ny = py+ph/2 + d.dy*(ph/2-2);
+        const [nx, ny] = gridToScreen(e.x+fp.w/2 + d.dx*fp.w*0.4, e.y+fp.h/2 + d.dy*fp.h*0.4);
         ctx.fillStyle = getCss('--amber');
         ctx.beginPath(); ctx.arc(nx, ny, 4, 0, Math.PI*2); ctx.fill();
       }
@@ -421,35 +516,37 @@ function render(){
         if(e.outStock!==undefined) bars.push({stock:e.outStock, cap:e.outCap, color:getCss('--teal')});
         if(e.inStock!==undefined) bars.push({stock:e.inStock, cap:e.inCap, color:'#7fb8c9'});
       }
-      const barH = 4, gap = 1;
+      const barW = 34, barH = 4, gap = 1;
       bars.forEach((bar, i)=>{
-        const y = py+ph-9-(bars.length-1-i)*(barH+gap);
+        const y = ccy+2+i*(barH+gap);
         const pct = bar.cap>0 ? bar.stock/bar.cap : 0;
         ctx.fillStyle = 'rgba(0,0,0,.5)';
-        ctx.fillRect(px+4, y, pw-8, barH);
+        ctx.fillRect(ccx-barW/2, y, barW, barH);
         ctx.fillStyle = bar.color;
-        ctx.fillRect(px+4, y, (pw-8)*pct, barH);
+        ctx.fillRect(ccx-barW/2, y, barW*pct, barH);
       });
     }
     // The platform edge — a real loading platform runs alongside the
     // track it serves for its whole length (§ Depot parallel-track
     // requirement), so highlight whichever long side actually qualifies,
-    // right against the footprint's edge, reading as "this is the side
-    // trains dock along" the same way a Station's facing notch reads as
-    // "this is the side that touches a road."
+    // right against the footprint's actual edge, reading as "this is the
+    // side trains dock along" the same way a Station's facing notch reads
+    // as "this is the side that touches a road."
     if(e.type==='depot'){
-      const platform = depotPlatformCells(e.x, e.y, e.footprint.w, e.footprint.h);
+      const platform = depotPlatformCells(e.x, e.y, fp.w, fp.h);
       if(platform){
         ctx.strokeStyle = getCss('--amber');
         ctx.lineWidth = 3;
         ctx.beginPath();
-        if(platform[0].x < e.x || platform[0].x >= e.x+e.footprint.w){
-          const lx = platform[0].x < e.x ? px : px+pw;
-          ctx.moveTo(lx, py); ctx.lineTo(lx, py+ph);
+        let a, b;
+        if(platform[0].x < e.x || platform[0].x >= e.x+fp.w){
+          const lx = platform[0].x < e.x ? e.x : e.x+fp.w;
+          a = gridToScreen(lx, e.y); b = gridToScreen(lx, e.y+fp.h);
         } else {
-          const ly = platform[0].y < e.y ? py : py+ph;
-          ctx.moveTo(px, ly); ctx.lineTo(px+pw, ly);
+          const ly = platform[0].y < e.y ? e.y : e.y+fp.h;
+          a = gridToScreen(e.x, ly); b = gridToScreen(e.x+fp.w, ly);
         }
+        ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]);
         ctx.stroke();
       }
     }
@@ -466,7 +563,7 @@ function render(){
       drawY = a.y + (b.y-a.y)*v.frac;
     }
     ctx.fillStyle = v.state==='blocked' ? getCss('--danger') : getVehicleStats(v).color;
-    const cx = drawX*CELL+CELL/2, cy = drawY*CELL+CELL/2;
+    const [cx, cy] = gridToScreen(drawX+0.5, drawY+0.5);
 
     // Every vehicle is drawn as a rectangle oriented along its direction of
     // travel, its long side scaled 1:1 with its own `length` (tile-units) —
@@ -481,21 +578,32 @@ function render(){
     // train-only case. A truck's much smaller (~1.2-1.7 tile) length still
     // reads as a subtle size difference between e.g. a Bulk Truck and the
     // slightly longer Flatbed, rather than needing its own compressed scale.
-    const horizontal = v.path && v.pathIndex < v.path.length-1
+    //
+    // Under the isometric projection grid-x and grid-y travel are no longer
+    // screen-horizontal/vertical, so the rectangle is drawn in a local frame
+    // rotated to match the real on-screen travel direction: `stepLen` is the
+    // screen-pixel distance covered by one grid-unit of travel along EITHER
+    // axis (equal for both, by diamond symmetry), and `angle` is that
+    // direction's screen angle.
+    const movingAlongX = v.path && v.pathIndex < v.path.length-1
       ? v.path[v.pathIndex+1].x !== v.path[v.pathIndex].x
       : true;
-    const longPx = CELL * v.length;
+    const dirVec = movingAlongX ? [ISO_W/2, ISO_H/2] : [-ISO_W/2, ISO_H/2];
+    const angle = Math.atan2(dirVec[1], dirVec[0]);
+    const stepLen = Math.hypot(ISO_W/2, ISO_H/2);
+    const longPx = stepLen * v.length;
     const shortPx = CELL * 0.42;
-    const w = horizontal ? longPx : shortPx;
-    const h = horizontal ? shortPx : longPx;
-    ctx.fillRect(cx-w/2, cy-h/2, w, h);
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+    ctx.fillRect(-longPx/2, -shortPx/2, longPx, shortPx);
     if(v.layer==='elevated' || v.layer==='railElevated' || v.layer==='airspace' || v.layer==='railAirspace'){
       // Same "above ground" outline for elevated AND airspace — both mean
       // "currently above ground level," so one shared visual cue is enough
       // (solid, vs. underground/deepUnderground's dashed "below ground"
       // outline below).
       ctx.strokeStyle='#7fb8c9'; ctx.lineWidth=2;
-      ctx.strokeRect(cx-w/2-2, cy-h/2-2, w+4, h+4);
+      ctx.strokeRect(-longPx/2-2, -shortPx/2-2, longPx+4, shortPx+4);
     }
     if(/^(rail)?[Uu]nderground\d*$/.test(v.layer) || v.layer==='deepUnderground' || v.layer==='railDeepUnderground'){
       // Same idea, dashed instead of solid — "below ground" (any
@@ -506,16 +614,16 @@ function render(){
       // railUnderground, railUnderground2, ...) without needing to list
       // them, the same way the draw calls above are generated from
       // UNDERGROUND_LEVELS rather than hardcoded.
-      ctx.save();
       ctx.setLineDash([4,3]);
       ctx.strokeStyle='#8a7a6a'; ctx.lineWidth=2;
-      ctx.strokeRect(cx-w/2-2, cy-h/2-2, w+4, h+4);
-      ctx.restore();
+      ctx.strokeRect(-longPx/2-2, -shortPx/2-2, longPx+4, shortPx+4);
+      ctx.setLineDash([]);
     }
     if(v===selected){
       ctx.strokeStyle='#fff'; ctx.lineWidth=2;
-      ctx.strokeRect(cx-w/2-3, cy-h/2-3, w+6, h+6);
+      ctx.strokeRect(-longPx/2-3, -shortPx/2-3, longPx+6, shortPx+6);
     }
+    ctx.restore();
   }
 
   // hover ghost for build tools — sized to the building's footprint where relevant
@@ -528,9 +636,11 @@ function render(){
       // Train Yard) gets a footprint-sized ghost; Depot's is length/
       // orientation-dependent, everyone else's is just their def.footprint.
       const fp = currentTool==='depot' ? effectiveFootprint('depot', BUILDING_DEFS.depot, currentDepotOrientation(), currentDepotLength()) : BUILDING_DEFS[currentTool].footprint;
-      ctx.strokeRect(hoverCell.x*CELL+1, hoverCell.y*CELL+1, fp.w*CELL-2, fp.h*CELL-2);
+      diamondPath(hoverCell.x, hoverCell.y, fp.w, fp.h);
+      ctx.stroke();
     } else if(currentTool==='road' || currentTool==='track' || VEHICLE_DEFS[currentTool] || currentTool==='assembletrain'){
-      ctx.strokeRect(hoverCell.x*CELL+1, hoverCell.y*CELL+1, CELL-2, CELL-2);
+      diamondPath(hoverCell.x, hoverCell.y, 1, 1);
+      ctx.stroke();
     }
   }
 
@@ -539,11 +649,14 @@ function render(){
   // track/terrain/vehicles rather than getting buried under them.
   ctx.font = '9px monospace';
   ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.textAlign = 'center';
   for(const [k,cell] of world.grid){
     if(!cell.elevation) continue;
     const [x,y] = k.split(',').map(Number);
-    ctx.fillText((cell.elevation>0?'+':'')+cell.elevation, x*CELL+3, y*CELL+CELL-3);
+    const [lx, ly] = gridToScreen(x+0.5, y+0.7);
+    ctx.fillText((cell.elevation>0?'+':'')+cell.elevation, lx, ly);
   }
+  ctx.textAlign = 'left';
 
   // HUD
   const treasuryEl = document.getElementById('treasury');

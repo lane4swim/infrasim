@@ -240,8 +240,14 @@ function currentWagonCount(){ return parseInt(document.getElementById('wagonCoun
 
 function cellFromEvent(evt){
   const rect = canvas.getBoundingClientRect();
-  const x = Math.floor((evt.clientX-rect.left)/CELL);
-  const y = Math.floor((evt.clientY-rect.top)/CELL);
+  // Canvas CSS size can differ from its backing pixel size (gridToScreen's
+  // coordinate space), so scale the client offset by that ratio before
+  // inverting the isometric projection.
+  const scaleX = canvas.width / rect.width, scaleY = canvas.height / rect.height;
+  const px = (evt.clientX-rect.left) * scaleX;
+  const py = (evt.clientY-rect.top) * scaleY;
+  const [gx, gy] = screenToGrid(px, py);
+  const x = Math.floor(gx), y = Math.floor(gy);
   if(!inBounds(x,y)) return null;
   return {x,y};
 }

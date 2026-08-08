@@ -2739,3 +2739,99 @@ All 11 test files pass. Verified end-to-end in a real browser via Playwright:
 a truck built the classic Mine→Station→Ramp→elevated→Ramp→Station→Town route
 through the real toolbar UI, climbed the Ramp, delivered ore, and never
 reported a negative or NaN speed, with zero console errors.
+
+# Phase 2 — Isometric grid rendering
+
+The whole screen is now drawn in a true 2:1 diamond isometric projection
+instead of a flat top-down orthogonal grid — buildings, terrain, track/road,
+and vehicles all read as pseudo-3D "box" shapes on a diamond lattice, closer
+to the classic transport-sim look this game is modeled after. This is a
+**rendering/interaction-only** change: `world.js`'s grid, `pathfinding.js`,
+`rail-blocks.js`, and every system in `systems.js` still operate on the exact
+same flat `(x,y)` integer grid as before — `CELL`/`GRID_W`/`GRID_H` are pure
+render/interaction constants that were never touched by simulation logic
+(confirmed by grep before starting), so the entire conversion is confined to
+`render.js` and `ui.js`'s click handling, with zero risk to the simulation
+core and zero change to any test in `test/`.
+
+## Design
+
+- **A linear projection, not a new coordinate system.** `gridToScreen(gx,gy)`
+  (`render.js`) is the classic diamond transform: `ISO_W = CELL*2` and
+  `ISO_H = CELL` (a diamond twice as wide as it is tall, the standard 2:1
+  isometric ratio), `sx = (gx-gy)*ISO_W/2 + ISO_ORIGIN_X`, `sy = (gx+gy)*ISO_H/2`,
+  with `ISO_ORIGIN_X = GRID_H*ISO_W/2` shifting the diamond's leftmost point
+  to screen-x 0. Being linear, straight lines stay straight (just angled) —
+  grid lines, track port-to-port lines, and cliff edges only needed their
+  *endpoints* recomputed through `gridToScreen`, not new polygon logic.
+  `screenToGrid(sx,sy)` is its algebraic inverse, used by `ui.js` to turn a
+  click back into a grid cell.
+- **Deliberately flat for now.** Elevation still only tints a cell's color
+  (§ Terrain elevation) — it does not yet lift a diamond up-screen. Doing
+  that correctly means solving mouse-picking against a height field, a
+  meaningfully harder and separate problem, left for a later increment.
+- **Shapes that relied on right angles become explicit polygons.** A new
+  `diamondPath(x,y,w,h)` helper builds a WxH footprint's 4 screen-space
+  corners via `gridToScreen` and closes the path — the isometric replacement
+  for `fillRect`, used for terrain fill, building footprints, and the hover
+  ghost preview (both building-sized and single-cell).
+- **Billboarded UI, not skewed.** A building's label, storage fill-bars,
+  Station linked-indicator dot, and facing-notch are anchored at the
+  footprint's projected center (`gridToScreen(e.x+fp.w/2, e.y+fp.h/2)`) and
+  drawn as flat, unrotated screen-space elements — text and bars fitted to
+  the diamond's slanted edges would be unreadable. The one exception is the
+  Depot's platform-edge highlight, which draws the real diamond edge (via two
+  `gridToScreen` corners) since it specifically needs to show a real physical
+  side of the footprint.
+- **One-way arrows rotate by real screen angle, not a hardcoded table.**
+  `drawOneWayArrow` used to map N/S/E/W to fixed screen angles, which was
+  only ever true because the grid was orthogonal. It now computes the
+  rotation via `Math.atan2` from the actual on-screen vector (cell-center to
+  port, via `trackPort`) — correct under any linear projection, this one
+  included, with no per-direction case.
+- **Vehicles rotate to match their real travel direction.** Grid-x and
+  grid-y movement are no longer screen-horizontal/vertical, so a vehicle is
+  drawn in a local frame rotated to its direction of travel: `stepLen =
+  Math.hypot(ISO_W/2, ISO_H/2)` is the screen-pixel distance one grid-unit of
+  travel covers along either axis (equal for both, by diamond symmetry), and
+  `angle = Math.atan2(...)` from the real direction vector. The rectangle
+  (and its elevated/underground/selected outline strokes) are drawn inside
+  one rotated `ctx.save()/translate/rotate/...restore()` block, in local
+  coordinates, so every stroke inherits the same rotation for free.
+  Long-side scale (1:1 with the vehicle's own `length`, § Vehicle length)
+  and short-side scale are unchanged from the orthogonal version.
+- **Click handling scales for CSS-vs-backing-pixel size, then inverts.**
+  `cellFromEvent` (`ui.js`) scales the client offset by
+  `canvas.width/rect.width` (and height) before calling `screenToGrid`, since
+  the canvas's CSS display size and its backing pixel size (the
+  `gridToScreen` coordinate space) aren't guaranteed to match.
+- **Canvas size is computed, not hardcoded.** `canvas.width`/`height` are set
+  in `render.js` from `(GRID_W+GRID_H)*ISO_W/2` and `*ISO_H/2` — the exact
+  bounding box of the projected diamond — rather than index.html's old fixed
+  `880x560` orthogonal attributes.
+
+## What changed
+
+- **`render.js`**: added the `gridToScreen`/`screenToGrid` transform,
+  `ISO_W`/`ISO_H`/`ISO_ORIGIN_X`/`ISO_ORIGIN_Y` constants, and dynamic canvas
+  sizing; added `diamondPath`; converted `trackPort`, `drawTrackCell`,
+  `cellEdgeSegment`, terrain fill, grid lines, cliff markers, the ramp/
+  crossing markers, `drawOneWayArrow`, the buildings block, the vehicles
+  block, the hover ghost preview, and the elevation-number labels to the iso
+  transform.
+- **`ui.js`**: `cellFromEvent` now scales the click position by the canvas's
+  CSS-to-backing-pixel ratio and inverts it through `screenToGrid` instead of
+  the old flat `Math.floor(clientOffset/CELL)`.
+
+## Testing
+
+No simulation-facing code changed, so all 11 existing test files pass
+unmodified. Verified end-to-end in a real browser via Playwright: built a
+Mine, a Town, and a connecting road entirely through real toolbar clicks —
+each click landed on exactly the intended cell (confirmed by the diamond
+tile appearing precisely under the cursor and the treasury being charged
+once per tile, matching the number of clicks) — and purchased a truck on the
+road, whose rendered rectangle appeared correctly rotated to match the
+road's on-screen diagonal. Terrain, buildings (with billboarded labels),
+track, the hover ghost, and a moving vehicle were all visually confirmed to
+align on the same diamond lattice, with zero console errors throughout.

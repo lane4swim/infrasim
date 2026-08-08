@@ -773,6 +773,22 @@ which is also the seam a modding UI could hook into later.
   income popup at the consumer (§16), so cost and income are as legible as
   storage state, not just numbers in a menu.
 
+> **Amended in Phase 2 (Isometric grid rendering).** The renderer is a plain
+> `<canvas>` 2D context (no PixiJS dependency, keeping the zero-install
+> `file://` constraint intact), and it draws in a true 2:1 diamond isometric
+> projection via a single linear transform, `gridToScreen(gx,gy)` — every
+> other render call (terrain fill, track, buildings, vehicles, the hover
+> ghost) computes its screen position through this one function rather than
+> maintaining its own coordinate math. Its inverse, `screenToGrid`, is the
+> only thing the UI layer needs to turn a click back into a grid cell.
+> Elevation still only tints a cell's color, not its screen-Y position, since
+> lifting a diamond by height would require solving mouse-picking against a
+> height field — deferred rather than solved here. The underlying simulation
+> grid, `Position` components, and pathfinding remain a flat `(x,y)` integer
+> grid, completely unaware that the screen projection is no longer
+> orthogonal; the isometric transform is confined entirely to the rendering
+> and click-handling boundary described in this section.
+
 ---
 
 ## 12. Persistence
