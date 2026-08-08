@@ -1668,6 +1668,56 @@ console errors.
 
 ---
 
+# Addendum — Vehicle length randomization removed
+
+Per-instance length randomization (the "Per-instance randomization" bullet
+in the addendum above) is gone. Every vehicle of a given spec now has
+exactly the same physical length — a purchased truck is exactly its
+`VEHICLE_DEFS` entry's `lengthTiles`; an assembled train is exactly
+`engine.lengthTiles + wagon.lengthTiles * wagonCount` — instead of a value
+drawn from a `±10%` window around that and snapped to the nearest quarter
+tile.
+
+## Design
+
+- **One line, not a redesign.** `randomizedMovement` (`entities.js`) still
+  exists and still randomizes `maxSpeed`/`massEmpty`/`engineForce`/
+  `brakeForce` per instance — only `length`'s `Math.max(0.25, Math.round(spec.
+  lengthTiles * (0.9 + Math.random()*0.2) / 0.25) * 0.25)` changed, to a
+  direct `spec.lengthTiles`. Nothing else needed to move: `render.js`'s
+  vehicle rectangle and `systems.js`'s trailing-cell reservation
+  (`footprintKeysFor`) both just read whatever number sits in `Movement.
+  length` — neither assumed, or depended on, that number varying between
+  same-spec vehicles.
+- **The quarter-tile constraint itself is untouched.** `validateContentPack`
+  still requires every `VEHICLE_DEFS`/`ENGINE_DEFS`/`WAGON_DEFS.lengthTiles`
+  to be a multiple of 0.25 — that constraint was always about the
+  content-pack's own base data reading as a "real" length class, not about
+  giving per-instance randomization something to snap to. A direct
+  `length = spec.lengthTiles` assignment is trivially still a quarter-tile
+  multiple, with no snapping needed, since the input already is one.
+
+## What changed
+
+- **`entities.js`**: `randomizedMovement`'s `length` field is now `spec.
+  lengthTiles` directly.
+- **`test/test-vehicle-length.js`**: Test 2's "variety exists across
+  instances" assertion (`new Set(lengths).size > 1`) replaced with the
+  opposite — every one of 50 purchased trucks has the *identical* length,
+  and it's exactly `VEHICLE_DEFS.flatbed.lengthTiles`. Test 3 now asserts
+  each assembled train's length exactly equals `engine.lengthTiles +
+  wagon.lengthTiles * wagonCount` for every wagon count from 1 to 6, not
+  just "some quarter-tile multiple." Test 1 (content-pack `lengthTiles`
+  quarter-tile validation) is unchanged — that constraint doesn't depend on
+  instance randomization existing.
+
+## Testing
+
+All 10 test files pass. Verified in a real browser via Playwright:
+purchased trucks and assembled trains render at a consistent, predictable
+length (no visible variation between same-type vehicles), with no console
+errors.
+
 # Phase 2 — Underground layer (initial implementation)
 
 A third grade, alongside ground and elevated — the last piece of §15's

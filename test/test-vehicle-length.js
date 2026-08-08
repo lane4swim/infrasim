@@ -1,9 +1,9 @@
-// Regression tests for quarter-tile vehicle lengths (§ vehicle length
-// quantization) — every truck, engine, and wagon's content-pack lengthTiles
-// must be a multiple of 0.25, and an individual vehicle/train's own
-// randomized length (Movement.length, see randomizedMovement) is snapped to
-// the nearest 0.25 too, not left as an arbitrary float. Run against the
-// real index.html code via test/harness.js.
+// Regression tests for vehicle lengths (§ vehicle length quantization; §
+// Vehicle length randomization removed) — every truck, engine, and wagon's
+// content-pack lengthTiles must be a multiple of 0.25, and an individual
+// vehicle/train's own Movement.length is now exactly that (or, for a train,
+// the exact engine+wagon*count sum) — deterministic, not randomized per
+// instance. Run against the real index.html code via test/harness.js.
 'use strict';
 const {newGameContext, run} = require('./harness.js');
 
@@ -33,44 +33,44 @@ section('Test 1 — the shipped content pack\'s lengthTiles are all quarter-tile
   }
 });
 
-section('Test 2 — an individual truck\'s randomized length always snaps to a quarter tile', () => {
-  // Uses the flatbed (base lengthTiles 1.5), not the bulk (1.25) — the
-  // bulk's own +/-10% randomization window happens to fall entirely
-  // within a single 0.25 bucket once snapped (there's no requirement that
-  // every base length straddle a bucket boundary), so it alone wouldn't
-  // demonstrate the snapping actually varies with the draw; the flatbed's
-  // wider absolute window does.
+section('Test 2 — every truck\'s length is exactly its content-pack lengthTiles, not randomized', () => {
   const ctx = newGameContext();
-  const lengths = run(ctx, `
+  const result = run(ctx, `
     world.treasury = 1000000;
     cmdBuildRoad(0, 0, 'ground', true);
-    const out = [];
     for(let i=0;i<50;i++){
       cmdPurchaseVehicle(0, 0, 'flatbed');
     }
-    for(const id of [...world.entities.values()].filter(e=>e.kind==='vehicle').map(e=>e.id)){
-      out.push(world.entities.get(id).length);
-    }
-    return out;
+    const lengths = [...world.entities.values()].filter(e=>e.kind==='vehicle').map(e=>e.length);
+    return {lengths, defLength: VEHICLE_DEFS.flatbed.lengthTiles};
   `);
-  check('50 randomized trucks were actually created', lengths.length === 50, `got ${lengths.length}`);
+  check('50 trucks were actually created', result.lengths.length === 50, `got ${result.lengths.length}`);
   check('every one of them has a length that is an exact multiple of 0.25',
-    lengths.every(isQuarterTile), JSON.stringify(lengths.filter(l=>!isQuarterTile(l))));
-  check('the randomization still produces some variety across a wide enough base length',
-    new Set(lengths).size > 1, JSON.stringify(lengths));
+    result.lengths.every(isQuarterTile), JSON.stringify(result.lengths.filter(l=>!isQuarterTile(l))));
+  check('every truck\'s length is identical (deterministic, no per-instance variation)',
+    new Set(result.lengths).size === 1, JSON.stringify(result.lengths));
+  check('that one length is exactly the content pack\'s own flatbed lengthTiles',
+    result.lengths[0] === result.defLength, `got ${result.lengths[0]}, expected ${result.defLength}`);
 });
 
-section('Test 3 — an assembled train\'s randomized length always snaps to a quarter tile too', () => {
+section('Test 3 — an assembled train\'s length is exactly engine + wagon*count, not randomized', () => {
   const ctx = newGameContext();
-  const lengths = run(ctx, `
+  const results = run(ctx, `
     const out = [];
-    for(let i=0;i<30;i++){
-      out.push(createTrain(0, 0, 'diesel', 'ore_wagon', 1 + (i%6)).length);
+    for(let i=1;i<=6;i++){
+      const wagonCount = i;
+      const train = createTrain(0, 0, 'diesel', 'ore_wagon', wagonCount);
+      const expected = ENGINE_DEFS.diesel.lengthTiles + WAGON_DEFS.ore_wagon.lengthTiles * wagonCount;
+      out.push({wagonCount, length: train.length, expected});
     }
     return out;
   `);
-  check('every assembled train has a length that is an exact multiple of 0.25',
-    lengths.every(isQuarterTile), JSON.stringify(lengths.filter(l=>!isQuarterTile(l))));
+  for(const {wagonCount, length, expected} of results){
+    check(`a train with ${wagonCount} wagon(s) has length exactly engine + wagon*count (${expected})`,
+      length === expected, `got ${length}, expected ${expected}`);
+  }
+  check('every assembled train\'s length is still a quarter-tile multiple',
+    results.every(r=>isQuarterTile(r.length)), JSON.stringify(results.filter(r=>!isQuarterTile(r.length))));
 });
 
 console.log(failures===0 ? `\nAll checks passed.` : `\n${failures} check(s) FAILED.`);

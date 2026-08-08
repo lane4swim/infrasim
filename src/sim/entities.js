@@ -137,12 +137,12 @@ function randomizedMovement(spec){
     massEmpty: spec.massEmpty * (0.9 + Math.random()*0.2),
     engineForce: spec.engineForce * (0.85 + Math.random()*0.3),
     brakeForce: spec.brakeForce * (0.85 + Math.random()*0.3), // always > engineForce by construction (base brakeForce > base engineForce)
-    // tile-units this vehicle's body occupies — snapped to the nearest
-    // quarter-tile (same as every content-pack lengthTiles, validated in
-    // loader.js) rather than left as an arbitrary float, so an individual
-    // vehicle's randomized length still reads as a "real" length class
-    // (1.25, 1.5, 1.75, ...) instead of e.g. 1.37429.
-    length: Math.max(0.25, Math.round(spec.lengthTiles * (0.9 + Math.random()*0.2) / 0.25) * 0.25),
+    // tile-units this vehicle's body occupies — exactly the content-pack's
+    // own lengthTiles (already validated as a quarter-tile multiple in
+    // loader.js), not randomized per instance (§ Vehicle length
+    // randomization removed) — every vehicle of the same spec has the same
+    // physical length now, the same way it has the same capacity or cost.
+    length: spec.lengthTiles,
     path:null, pathIndex:0,
     frac:0,                // 0..1 progress from path[pathIndex] toward path[pathIndex+1]
     trail:[],               // recently-occupied {x,y,layer} cells, most recent first — the physical
