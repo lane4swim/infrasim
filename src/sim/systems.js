@@ -141,27 +141,86 @@ function gapAheadFor(v, occupied){
   }
   return {gap: LOOKAHEAD - v.frac, buffer:0.5};
 }
-// Adjusts v.speed for this tick via F = ma. Accel/decel aren't fixed per
-// vehicle — they're derived every tick: a heavier vehicle (more cargo
-// currently loaded, since mass = massEmpty + cargo weight) gets less
-// acceleration AND less deceleration out of the same engine/brake force,
-// exactly like a real loaded truck (or train). decel > accel still holds at
-// any mass, since both divide by the same current mass in a given tick —
-// only the *ratio* of brakeForce to engineForce matters for that, not the
-// mass itself. Decelerates if the gap ahead isn't enough room to stop from
-// the current speed (d = v²/2a, the same physics as real braking distance,
-// plus a small buffer), otherwise accelerates toward this vehicle's own max
+// Real slope physics, approximated (§ Realistic ramp physics): gravity
+// along a grade opposes forward motion when climbing and aids it when
+// descending — it works AGAINST the engine (less net accel) but WITH the
+// brakes (more net decel) when climbing, and the reverse when descending
+// (more accel, less effective braking — the classic "runaway truck on a
+// downgrade" a real driver has to respect). GRADE_ACCEL_PER_LEVEL is a
+// game-balance constant, not a derived physical one — an elevation level
+// has no defined real-world height anywhere in this game, only an integer
+// used for connectivity/rendering — chosen so the steepest grade an
+// ordinary lateral connection ever allows (MAX_ELEVATION_DELTA=1, world.js)
+// meaningfully affects the weakest shipped vehicle without making climbing
+// effectively impossible.
+const GRADE_ACCEL_PER_LEVEL = 0.05;
+// decel's hard floor — however steep the downgrade, braking must never
+// fully vanish (a vehicle that literally can't stop would break the
+// gap/occupancy safety net every other system in this file relies on;
+// requiredGap below also divides by decel, so it must stay strictly
+// positive regardless of how grade-adjusted it gets).
+const MIN_DECEL = 0.02;
+// The real elevation change (elevationAt, world.js) the vehicle is about to
+// cross on its CURRENT path edge — not a lookahead average, just the one
+// edge `frac` is progressing along right now. elevationAt already treats
+// deepUnderground/airspace as flat global planes (a fixed Z regardless of
+// local terrain), so any edge that stays within one of those always reads
+// grade 0 here — "burrowing into a hillside" (the burial-depth darkening
+// those two layers get in render.js) is a render-only tint derived from
+// local GROUND elevation, not a real elevation of the deepUnderground/
+// airspace track itself, and must never leak into physics. Every other
+// grade (ground/elevated/every underground level) genuinely moves with
+// local terrain, so ordinary lateral travel there picks up whatever real
+// slope the terrain has (bounded by MAX_ELEVATION_DELTA, since nothing
+// steeper can ever be connected in the first place), and a same-cell
+// vertical Ramp or a lateral Tunnel/Rail Ramp picks up the real vertical
+// distance actually covered between its two endpoint cells — not always
+// exactly one level, since a Tunnel/Rail Ramp has no rule requiring its
+// two cells' own local terrain to match.
+function gradeForCurrentEdge(v){
+  if(!v.path || v.pathIndex >= v.path.length-1) return 0;
+  const next = v.path[v.pathIndex+1];
+  const nextLayer = next.layer!==undefined ? next.layer : v.layer;
+  // elevationAt takes a GRADE ('ground', 'elevated', 'underground', ...),
+  // not a LAYER ('rail', 'railElevated', 'underground2', ...) — v.layer/
+  // path nodes always store the layer (trucks and trains alike need to
+  // know road vs rail, not just the grade), so it has to go through
+  // LAYER_GRADE_KIND first, same as trackAt (world.js) does for every
+  // other grid lookup.
+  const curGrade = LAYER_GRADE_KIND[v.layer][0];
+  const nextGrade = LAYER_GRADE_KIND[nextLayer][0];
+  return elevationAt(next.x, next.y, nextGrade) - elevationAt(v.x, v.y, curGrade);
+}
+// Adjusts v.speed for this tick via F = ma, now grade-aware. Accel/decel
+// aren't fixed per vehicle — they're derived every tick: a heavier vehicle
+// (more cargo currently loaded, since mass = massEmpty + cargo weight) gets
+// less acceleration AND less deceleration out of the same engine/brake
+// force, exactly like a real loaded truck (or train); grade then shifts
+// both further, in opposite directions, per gradeForCurrentEdge above.
+// decel is floored at MIN_DECEL rather than left to possibly go non-
+// positive on a steep enough downgrade — see that constant's own comment.
+// accel is allowed to go negative (a heavy vehicle can genuinely fail to
+// out-climb a steep enough grade and slow down while nominally
+// "accelerating," exactly like a real underpowered vehicle stalling on a
+// hill) but speed itself is always floored at 0 in both branches — this
+// game has no reverse gear, a vehicle that can't keep climbing just stops,
+// it never rolls backward. Decelerates if the gap ahead isn't enough room
+// to stop from the current speed (d = v²/2a, the same physics as real
+// braking distance, plus a small buffer, using the grade-adjusted decel so
+// a downgrade correctly demands a longer stopping distance and an upgrade
+// a shorter one), otherwise accelerates toward this vehicle's own max
 // speed — required stopping distance grows with the SQUARE of speed, so a
 // faster (or heavier) vehicle needs a disproportionately bigger gap.
 function applySpeedStep(v, occupied){
   const unitWeight = v.cargoResource ? RESOURCES[v.cargoResource].unitWeight : 0; // a train between loads carries no resource yet
   const mass = v.massEmpty + v.cargoAmount * unitWeight;
-  const accel = v.engineForce / mass;
-  const decel = v.brakeForce / mass;
+  const gradeAccel = GRADE_ACCEL_PER_LEVEL * gradeForCurrentEdge(v);
+  const accel = v.engineForce / mass - gradeAccel;
+  const decel = Math.max(MIN_DECEL, v.brakeForce / mass + gradeAccel);
   const {gap, buffer} = gapAheadFor(v, occupied);
   const requiredGap = (v.speed*v.speed) / (2*decel) + buffer;
   if(gap < requiredGap) v.speed = Math.max(0, v.speed - decel);
-  else v.speed = Math.min(v.maxSpeed, v.speed + accel);
+  else v.speed = Math.max(0, Math.min(v.maxSpeed, v.speed + accel));
 }
 // Advances v along its path by its current speed, crossing cell boundaries
 // one at a time. Each crossing is checked against the occupancy map as a

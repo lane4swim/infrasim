@@ -2646,3 +2646,96 @@ lists (`engineSelect`, `wagonSelect`, `townResourceSelect`) included the
 addon's own `coal_hopper`/`coal` entries. Also confirmed the hover-ghost
 regression fix directly: hovering the Colliery tool draws a 2x2 ghost,
 hovering Coal Hauler draws a 1x1 ghost. Zero console errors throughout.
+
+# Phase 2 — Realistic ramp physics
+
+Grade now genuinely affects movement. Before this, `applySpeedStep`'s F=ma
+model never looked at layer, grade, or elevation at all — a truck or train
+climbing a Ramp, a Tunnel Ramp, or an ordinary sloped stretch of terrain-
+following track behaved exactly like it was on flat ground: same
+acceleration, same braking distance, same everything. Climbing now measurably
+reduces net acceleration and adds free braking power (gravity opposing
+forward motion helps the brakes); descending does the reverse (more
+acceleration, less effective braking — the classic "runaway truck on a
+downgrade" a real driver has to respect).
+
+## Design
+
+- **One real elevation delta per edge, not a fixed "ramps are always one
+  level" constant.** `gradeForCurrentEdge(v)` (`systems.js`) reads `elevationAt`
+  (`world.js`) for the vehicle's current cell and the next node on its path,
+  in whatever grade each one is actually in, and takes the difference. This
+  is deliberately NOT special-cased per edge type — the same formula handles
+  an ordinary lateral move on terrain-following track (ground/elevated/every
+  underground level, where the real slope is bounded by `MAX_ELEVATION_DELTA`
+  since nothing steeper could ever connect), a same-cell vertical Ramp
+  (ground↔elevated — always exactly ±1, since both grades move with local
+  terrain together, so raising a hill under a Ramp can never throw its grade
+  off), and a lateral Tunnel/Rail Ramp (which has no rule requiring its two
+  endpoint cells' own terrain to match — see below).
+- **"Burrowing into a hillside" is a render tint, never real elevation.**
+  `elevationAt` already returns a fixed constant (`DEEP_UNDERGROUND_Z`/
+  `AIRSPACE_Z`) for `deepUnderground`/`airspace` regardless of local terrain
+  — that flat-plane design (§ Terrain elevation) means any edge that stays on
+  one of those two grades reads grade 0 through the exact same formula, no
+  special-casing needed. The burial-depth darkening those two layers get in
+  `render.js` (§ "burrows into a hillside") is a color computed from local
+  *ground* elevation for a totally different cell than the one being lit —
+  it was never a real elevation of the deepUnderground/airspace track itself,
+  and `gradeForCurrentEdge` never reads it.
+- **A Tunnel/Rail Ramp's real grade can differ from the nominal one level —
+  intentionally.** Nothing requires a Tunnel Ramp's two endpoint cells to
+  share the same local terrain elevation (only the same-grade lateral
+  connectivity check, `elevationBlocksConnection`, has ever enforced a
+  terrain-difference cap, and a Tunnel Ramp is a cross-grade link, not a
+  same-grade one). If the lower cell's own terrain happens to be raised
+  relative to the upper cell's, the level change and the terrain difference
+  can partially or fully cancel — a real, if surprising, consequence of
+  underground levels tracking local terrain (§ Terrain elevation): the tunnel
+  isn't boring through a fixed absolute depth, it's following a fixed depth
+  *below whatever's directly above it*, exactly like a near-surface tunnel
+  would.
+- **Accel can go negative (a vehicle can genuinely stall on a grade its
+  engine can't out-climb) but speed is always floored at 0 — no reverse
+  gear.** `GRADE_ACCEL_PER_LEVEL` (0.05, a game-balance constant — elevation
+  levels have no defined real-world height anywhere in this game) shifts
+  accel and decel in opposite directions by the grade. decel is separately
+  floored at `MIN_DECEL` (0.02) so braking can never fully vanish even on an
+  extreme grade (a Tunnel Ramp with maximally mismatched terrain can produce
+  a grade far steeper than the nominal one level) — a vehicle that literally
+  couldn't stop would break the gap/occupancy safety net every other system
+  in `systems.js` relies on.
+- **Stopping distance is grade-aware for free.** `requiredGap` already used
+  `decel` to compute `v²/2a`; since `decel` is now grade-adjusted, a downgrade
+  correctly demands a longer stopping distance and an upgrade a shorter one,
+  with no separate change needed — the existing gap-braking logic just
+  inherited the correct behavior from feeding it a better `decel`.
+
+## What changed
+
+- **`systems.js`**: new `GRADE_ACCEL_PER_LEVEL`/`MIN_DECEL` constants and
+  `gradeForCurrentEdge(v)`; `applySpeedStep` computes `gradeAccel =
+  GRADE_ACCEL_PER_LEVEL * gradeForCurrentEdge(v)` and applies it to both
+  `accel` (subtracted) and `decel` (added, floored at `MIN_DECEL`); both
+  branches of the final speed update are floored at 0.
+
+## Testing
+
+New `test/test-ramp-physics.js` (3 sections, 18 checks): direct
+`gradeForCurrentEdge` checks for every edge type (flat and sloped lateral
+moves, a same-cell Ramp at both flat and raised terrain, a Tunnel Ramp at
+matching and deliberately mismatched terrain, and — the specific "burrowing
+into a hillside" guarantee — deepUnderground/airspace staying grade 0 moving
+from under a max-height hill to under a max-depth valley); an end-to-end
+comparison (per-instance random Movement stats pinned to the content pack's
+base values so the comparison isolates grade, not noise) showing a truck
+climbing a staircase terrain reaches measurably lower speed than an identical
+flat-control trip after the same number of ticks, and descending the same
+staircase in reverse reaches measurably higher speed; and a stress test
+building an intentionally extreme mismatched-terrain Tunnel Ramp (grade far
+steeper than the nominal one level) confirming a real truck driving it into a
+dead end never goes negative-speed or NaN and still reaches a settled state.
+All 11 test files pass. Verified end-to-end in a real browser via Playwright:
+a truck built the classic Mine→Station→Ramp→elevated→Ramp→Station→Town route
+through the real toolbar UI, climbed the Ramp, delivered ore, and never
+reported a negative or NaN speed, with zero console errors.

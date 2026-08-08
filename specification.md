@@ -954,6 +954,25 @@ renderer needing to inspect simulation internals directly.
 > faster or heavier vehicle needs (and gets) more room than a slower or
 > lighter one. Worth carrying into every future vehicle-having mode (trains,
 > ships) rather than treating Phase 1's trucks as a special case.
+>
+> **Amended in Phase 2 (Realistic ramp physics).** `engineForce/mass` and
+> `brakeForce/mass` are no longer the whole story — a real elevation change
+> (`elevationAt`, §4.3) along a vehicle's current path edge now shifts both
+> terms: climbing subtracts from accel and adds to decel (gravity opposing
+> forward motion works against the engine but with the brakes), descending
+> does the reverse. This applies uniformly to every kind of grade a vehicle
+> can cross — an ordinary lateral move on terrain-following track, a
+> same-cell Ramp, a lateral Tunnel/Rail Ramp — via one shared function
+> reading real elevations, not a fixed "ramps are always one level" constant.
+> The two flat global grades (`deepUnderground`/`airspace`) read grade 0
+> automatically, since `elevationAt` already returns a fixed Z for them
+> regardless of local terrain — the render-only burial-depth darkening those
+> two layers get (§4.3) is a color, never a real elevation, and was never at
+> risk of being read as one. decel is floored above zero so braking can
+> never fully vanish even on the steepest constructible grade; accel is
+> allowed to go negative (a heavy vehicle can genuinely fail to out-climb a
+> grade and stall) but speed itself stays floored at 0 — this game has no
+> reverse gear.
 
 ### 16.4 Delivery income
 
