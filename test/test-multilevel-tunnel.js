@@ -89,7 +89,7 @@ section('Test 2 — a level-2 Tunnel Ramp connects level 1 to level 2, never gro
   check('omitting the level argument still defaults to level 1', defaultLevel === 'underground', defaultLevel);
 });
 
-section('Test 3 — a level-2 ramp also allows a perpendicular connection at either side (§ Rail crossings\' generalization), and a cell can be both a lower and an upper side at once', () => {
+section('Test 3 — straight-through-only still applies at a level-2 ramp, and a cell can be both a lower and an upper side at once', () => {
   const perpendicular = run(newGameContext(), `
     cmdBuildRoad(2,2,'underground',true);
     cmdBuildRoad(1,2,'underground',true); // a turn at the level-1 side
@@ -97,8 +97,8 @@ section('Test 3 — a level-2 ramp also allows a perpendicular connection at eit
     cmdBuildUndergroundRamp(2,2,2,3,2);
     return {built: trackAt(2,2,'underground').rampEdge.S, warnLogs: pendingLogs.filter(l=>l.cls==='warn').map(l=>l.msg)};
   `);
-  check('a level-2 ramp still builds when the level-1 side already has a perpendicular connection', !!perpendicular.built, JSON.stringify(perpendicular));
-  check('no warnings on that build', perpendicular.warnLogs.length === 0, JSON.stringify(perpendicular.warnLogs));
+  check('rejected when the level-1 side has a perpendicular connection', !perpendicular.built, JSON.stringify(perpendicular));
+  check('rejection names the straight-through requirement', perpendicular.warnLogs.some(m=>/straight/i.test(m)), JSON.stringify(perpendicular.warnLogs));
 
   // A continuous straight tunnel through three levels: the level-1 cell at
   // (2,5) is simultaneously the LOWER side of the ground<->level-1 ramp

@@ -5,14 +5,8 @@
 // through such a cell is restricted to continuing straight on whichever
 // line was actually entered on — no turning onto the other line. A T/3-way
 // junction (still no such thing as "the other line" — only one line ever
-// splits there) keeps its ordinary any-to-any behavior, unchanged. Tests 5
-// and 6 additionally cover a ramp (Tunnel Ramp or same-cell vertical Ramp)
-// sharing the same tile as a crossing — all 6 pairwise lateral direction
-// combinations plus a ramp are buildable at once (§ Rail crossings'
-// generalization removed the old build-time cap in commands.js), and the
-// Tunnel Ramp move is subject to the same straight-through restriction as
-// any other lateral move. Run against the real index.html code via
-// test/harness.js.
+// splits there) keeps its ordinary any-to-any behavior, unchanged. Run
+// against the real index.html code via test/harness.js.
 'use strict';
 const {newGameContext, run} = require('./harness.js');
 
@@ -166,69 +160,6 @@ section('Test 4 — end to end: a real train can load at a depot reached straigh
     finalState.state==='blocked' && finalState.cargoAmount > 0, `finalState=${JSON.stringify(finalState)}`);
   const depotBStock = run(ctx, `return world.entities.get(${ids.depotBId}).outStock;`);
   check('no ore was ever delivered to Depot B', depotBStock === 0, `depotB stock: ${depotBStock}`);
-});
-
-section('Test 5 — a Tunnel Ramp can coexist with a full 4-way crossing on the same tile (all 6 pairwise directions + the ramp), and the ramp move is subject to the same straight-through restriction', () => {
-  const ctx = newGameContext();
-  const s = run(ctx, `
-    // Same "+" crossing as Test 1, at (5,5): N-S line y=2..8, W-E line x=2..8.
-    for(let y=2; y<=8; y++) cmdBuildTrack(5, y, 'rail', true);
-    for(let x=2; x<=8; x++) cmdBuildTrack(x, 5, 'rail', true);
-    // A Tunnel Ramp down to railUnderground, sitting on the crossing's own
-    // EAST arm — (5,5) is the ground/upper side, (6,5) (already ground
-    // track, part of the E-W line) additionally gets its own independent
-    // railUnderground tile as the ramp's lower side.
-    cmdBuildTrack(6, 5, 'railUnderground', true);
-    cmdBuildRailUndergroundRamp(5, 5, 6, 5);
-    const crossing = getCell(5,5).layers.ground.rail;
-    return {
-      allFourStillConnected: crossing.edges.N && crossing.edges.S && crossing.edges.E && crossing.edges.W,
-      rampBuilt: crossing.rampEdge.E === 'underground',
-      noWarnings: pendingLogs.filter(l=>l.cls==='warn').length === 0,
-      // Entering the crossing heading SOUTH (from the north arm) must never
-      // be able to duck into the east-arm's tunnel — that's still a turn.
-      nToRampBlocked: !findRailPath({x:5,y:2,layer:'rail'}, {x:6,y:5,layer:'railUnderground'}),
-      // Entering heading EAST (from the west arm) CAN take the ramp — still
-      // continuing the same line, just sloping down.
-      wToRampAllowed: !!findRailPath({x:2,y:5,layer:'rail'}, {x:6,y:5,layer:'railUnderground'}),
-      // The crossing's own straight-through behavior (Test 1) is unaffected
-      // by the ramp also being here.
-      nToSStillWorks: !!findRailPath({x:5,y:2,layer:'rail'}, {x:5,y:8,layer:'rail'}),
-    };
-  `);
-  check('the Tunnel Ramp built with no rejection at a busy crossing cell', s.rampBuilt, JSON.stringify(s));
-  check('no warnings building it', s.noWarnings, JSON.stringify(s));
-  check('the crossing itself still has all 4 directions connected', s.allFourStillConnected);
-  check('descending into the tunnel from the wrong (perpendicular) line is still blocked', s.nToRampBlocked);
-  check('descending into the tunnel from the line that actually leads there is allowed', s.wToRampAllowed);
-  check('plain straight-through crossing travel is unaffected by the ramp being present too', s.nToSStillWorks);
-});
-
-section('Test 6 — a same-cell vertical Ramp at a full 4-way crossing was already unrestricted, and stays that way', () => {
-  // Unlike the lateral Tunnel Ramp above, a same-cell Ramp (ground<->
-  // elevated, same x,y different layer) never had a straight-through cap —
-  // it's a vertical step, not a lateral one, so it was never gated by
-  // isRailCrossing's lateral-only restriction. This is a pure regression
-  // check that adding it alongside a crossing needed no code change.
-  const ctx = newGameContext();
-  const s = run(ctx, `
-    for(let y=2; y<=8; y++) cmdBuildTrack(5, y, 'rail', true);
-    for(let x=2; x<=8; x++) cmdBuildTrack(x, 5, 'rail', true);
-    cmdBuildTrack(5, 5, 'railElevated', true);
-    cmdBuildRailRamp(5, 5);
-    return {
-      rampBuilt: getCell(5,5).ramps.rail.groundElevated === true,
-      noWarnings: pendingLogs.filter(l=>l.cls==='warn').length === 0,
-      // A vertical step doesn't consume a lateral "line," so it's reachable
-      // regardless of which line the train arrived on.
-      nToElevated: !!findRailPath({x:5,y:2,layer:'rail'}, {x:5,y:5,layer:'railElevated'}),
-      wToElevated: !!findRailPath({x:2,y:5,layer:'rail'}, {x:5,y:5,layer:'railElevated'}),
-    };
-  `);
-  check('a same-cell Rail Ramp builds with no rejection at a busy crossing cell', s.rampBuilt, JSON.stringify(s));
-  check('no warnings building it', s.noWarnings, JSON.stringify(s));
-  check('reachable from the north-south line', s.nToElevated);
-  check('reachable from the east-west line too', s.wToElevated);
 });
 
 console.log(failures===0 ? '\nAll checks passed.' : `\n${failures} check(s) FAILED.`);

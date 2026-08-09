@@ -219,17 +219,10 @@ function findLayerPath(start, end){
     // boolean, since a cell partway down the underground stack can have a
     // ramp edge going up a level in one direction and a different one
     // going down a level in another — there's no fixed "the other grade"
-    // to swap to the way ground<->underground alone could assume. Subject
-    // to the SAME `straightOnly` restriction as the lateral edges above —
-    // a Tunnel Ramp can now coexist with a full 4-way rail crossing at one
-    // cell (§ Rail crossings' generalization — commands.js no longer caps a
-    // ramp cell's other connections at build time), so descending into the
-    // tunnel still counts as "continuing this line," not a free turn onto
-    // whichever line happens to have the ramp.
+    // to swap to the way ground<->underground alone could assume.
     for(const {dir,dx,dy} of ROAD_DIRS){
       const targetGrade = track.rampEdge[dir];
       if(!targetGrade) continue;
-      if(straightOnly && dir !== straightOnly) continue;
       const found = tryVisit({x:cur.x+dx, y:cur.y+dy, layer:GRADE_KIND_LAYER[targetGrade][kind]}, cur);
       if(found) return found;
     }

@@ -190,8 +190,8 @@ function toolHint(t){
     road:'Click or drag to build road on the selected layer ($10/tile, x2 elevated). Uncheck auto-connect to place tiles without joining them. On the ground layer, crosses rail track at a right angle only — it won\'t connect through track running the same direction.',
     ramp:'Click a cell that already has both a ground and an elevated road tile to link them ($40).',
     railramp:'Click a cell that already has both a rail and an elevated rail tile to link them ($40) — rail\'s own Ramp, entirely independent of the road one.',
-    tunnelramp:(()=>{ const level = currentUndergroundLevel(); const upper = level===1 ? 'ground' : `underground level ${level-1}`; return `Click a ${upper} road tile, then click an adjacent underground level ${level} road tile ($${rampCostForUndergroundLevel(level)}) — a sloped link, not a same-cell one. Select the deeper of the two levels above to build a ramp further down the stack.`; })(),
-    railtunnelramp:(()=>{ const level = currentUndergroundLevel(); const upper = level===1 ? 'ground' : `underground level ${level-1}`; return `Click a ${upper} rail tile, then click an adjacent underground level ${level} rail tile ($${rampCostForUndergroundLevel(level)}) — rail's own Tunnel Ramp, entirely independent of the road one.`; })(),
+    tunnelramp:(()=>{ const level = currentUndergroundLevel(); const upper = level===1 ? 'ground' : `underground level ${level-1}`; return `Click a ${upper} road tile, then click an adjacent underground level ${level} road tile ($${rampCostForUndergroundLevel(level)}) — a sloped link, not a same-cell one. Select the deeper of the two levels above to build a ramp further down the stack. Only works along a straight stretch: neither tile may have any other connection besides the straight-through continuation.`; })(),
+    railtunnelramp:(()=>{ const level = currentUndergroundLevel(); const upper = level===1 ? 'ground' : `underground level ${level-1}`; return `Click a ${upper} rail tile, then click an adjacent underground level ${level} rail tile ($${rampCostForUndergroundLevel(level)}) — rail's own Tunnel Ramp, entirely independent of the road one. Same straight-through-only rule.`; })(),
     raiseterrain:`Click a cell to raise its terrain by one level ($${TERRAFORM_COST}). Requires the cell be clear of all track and buildings first.`,
     lowerterrain:`Click a cell to lower its terrain by one level ($${TERRAFORM_COST}). Requires the cell be clear of all track and buildings first.`,
     connect:'Click a road tile, then click an adjacent road tile on the same layer — connects them if not joined, disconnects them if they are.',
@@ -430,8 +430,8 @@ function handleUndergroundRampClick(x,y){
   // the upper tile, the other its lower neighbor, in either order
   // (cmdBuildUndergroundRamp/cmdBuildRailUndergroundRamp auto-detect which
   // is which) — so there's no single "layer" to check for track against
-  // here; the command itself validates grade/adjacency once both clicks
-  // are in. WHICH pair of grades (level 1 = ground<->
+  // here; the command itself validates grade/adjacency/straight-through
+  // once both clicks are in. WHICH pair of grades (level 1 = ground<->
   // underground, level N>1 = one level deeper — § Multi-level tunnels) is
   // fixed by currentUndergroundLevel() at the moment the FIRST click
   // lands, so switching the layer dropdown mid-click can't retarget an
