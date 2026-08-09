@@ -97,7 +97,10 @@ function trackPort(x, y, dir){
 // direction (the one with no opposite present) has no default line at
 // all — it's real, built track, just not connected by default — so it
 // gets its own short stub spoke to the center instead, reading as
-// "present but not through-routed." Road's own T/4-way intersections
+// "present but not through-routed," UNLESS a corner switch already
+// connects it (see `diagonalPairs` below), in which case the stub is
+// skipped — the real corner line is the only line drawn to that port, not
+// a second redundant one. Road's own T/4-way intersections
 // (turning IS allowed there) are untouched — `kind` is only ever 'rail'
 // for this case. `diagonalPairs` (only meaningful here, at a genuine rail
 // switch — see cmdToggleDiagonalConnection, commands.js) draws one
@@ -121,6 +124,14 @@ function drawTrackCell(x, y, dirs, color, margin, kind, diagonalPairs){
     const throughDirs = new Set(throughPairs.flat());
     for(const dir of dirs){
       if(throughDirs.has(dir)) continue; // a T-junction's lone branch direction
+      // A branch already reachable via a thrown corner switch (drawn as its
+      // own corner line below) is a real, USABLE connection — drawing the
+      // plain center stub on top of it would just be a second, redundant
+      // line to the same port. The stub is only for a branch with no
+      // switch thrown at all, where it really is unreachable track.
+      const reachableViaSwitch = diagonalPairs && Object.keys(DIAGONAL_PAIR_PORTS).some(k =>
+        diagonalPairs[k] && DIAGONAL_PAIR_PORTS[k].includes(dir));
+      if(reachableViaSwitch) continue;
       const [px,py] = trackPort(x,y,dir);
       ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(px,py); ctx.stroke();
     }

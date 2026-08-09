@@ -3210,3 +3210,28 @@ completely unaffected (regression check), and visually confirmed the
 render: before the toggle the branch reads as a stub notch off the
 through-line, after it the junction reads as a fully connected "Y" with no
 gap — zero console errors throughout.
+
+# Addendum — a T-junction's branch stub disappears once a switch actually connects it
+
+The branch stub added above (a short spoke from center to the branch's port,
+reading as "real track, not connected by default") was drawn unconditionally
+— even after the player threw a corner switch that made the branch a real,
+usable connection. At that point the stub is stale: it duplicates the same
+port with a second, pathfinding-meaningless line, and visually implies the
+branch still routes through a hidden center hub instead of the actual
+diagonal switch line. `drawTrackCell` (render.js) now skips the stub for a
+branch direction the instant any corner pair touching it is enabled,
+leaving only the real corner line drawn to that port — the stub reappears
+the moment the switch is thrown back off. Pathfinding itself was never
+affected either way; this is a rendering-only fix.
+
+## Testing
+
+Existing `test/test-rail-crossing.js` checks are unaffected (pathfinding
+behavior is unchanged) and all 13 test files still pass. Verified in a real
+browser via Playwright: built a live T-junction, screenshotted it before any
+toggle, toggled its NE switch on with the real tool and confirmed (via
+pixel diff) the rendering actually changed, then toggled it back off and
+confirmed the result is pixel-identical to the original screenshot — the
+stub reliably reappears, not just conceptually reverts — zero console
+errors.
