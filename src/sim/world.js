@@ -98,6 +98,17 @@ function newTrack(){
     // cmdBuildUndergroundRamp in commands.js and findLayerPath in
     // pathfinding.js for the two places this is read).
     rampEdge:{N:null,S:null,E:null,W:null},
+    // Diagonal pairs (§ Rail crossings' selective diagonal connections) —
+    // only ever meaningful at a genuine 4-way RAIL crossing (isRailCrossing,
+    // pathfinding.js): the two straight pairs (N-S, E-W) are always
+    // connected there by default (a plain crossing, no switch), but a
+    // player can additionally enable one or more of the 4 "corner" pairs —
+    // NE, NW, SE, SW — via cmdToggleDiagonalConnection, modeling a real
+    // switch/points at that crossing. False for every pair by default, and
+    // meaningless (never read) anywhere the cell isn't a genuine 4-way rail
+    // crossing right now — present on every track object (road included)
+    // purely for shape-uniformity, the same reason `blockId`/`rampEdge` are.
+    diagonalPairs:{NE:false, NW:false, SE:false, SW:false},
   };
 }
 // Terrain elevation (§ Terrain elevation) — an integer height per (x,y)

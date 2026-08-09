@@ -7,6 +7,7 @@ let pickingStopFor = null; // {vehicle, action} awaiting a click on a building t
 let oneWayFirst = null;    // first tile picked for the One-Way tool, awaiting a second click
 let connectFirst = null;   // first tile picked for the Connect/Disconnect tool, awaiting a second click
 let undergroundRampFirst = null; // first tile picked for the Tunnel Ramp tool, awaiting a second click
+let diagonalConnectFirst = null; // the crossing cell picked for the Diagonal Connect tool, awaiting a second click on one of its corners
 let hoverCell = null;
 
 // Underground level dropdown options (§ Multi-level tunnels) — generated
@@ -161,6 +162,7 @@ document.querySelectorAll('.tool-btn[data-tool]').forEach(btn=>{
     oneWayFirst = null;
     connectFirst = null;
     undergroundRampFirst = null;
+    diagonalConnectFirst = null;
     document.getElementById('hint').textContent = toolHint(currentTool);
   });
 });
@@ -202,6 +204,7 @@ function toolHint(t){
     track:`Click or drag to build rail track on the selected layer ($${RAIL_DEFS.track.costPerTile}/tile, x2 elevated). Uncheck auto-connect to place tiles without joining them. Crosses the same-grade road layer at a right angle only — it won't connect through road running the same direction.`,
     trackconnect:'Click a track tile, then click an adjacent track tile on the same layer — connects them if not joined, disconnects them if they are.',
     signal:'Click a track tile, then click an adjacent connected tile on the same layer — trains will only be allowed to travel from the first to the second. A signal also marks a hard block boundary.',
+    diagonalconnect:'Click a 4-way rail crossing, then click one of its 4 diagonal corner tiles to toggle a switch there (lets trains turn between the two lines through that corner) — toggles off again the same way. Only applies at a real 4-way crossing.',
     depot:(()=>{ const fp = effectiveFootprint('depot', BUILDING_DEFS.depot, currentDepotOrientation(), currentDepotLength()); return `Click the top-left cell for a Rail Depot (${fp.w}x${fp.h}). It must run alongside a straight, unbroken length of track on one of its long sides — no track there yet, and the build is rejected. Choose which resource it buffers and build a Station touching it for road access.`; })(),
     trainyard:`Click the top-left cell for a Train Yard (${BUILDING_DEFS.trainyard.footprint.w}x${BUILDING_DEFS.trainyard.footprint.h}). This is where trains get assembled — it doesn't move cargo itself. Any touching track tile gives it rail access.`,
     assembletrain:'Pick an engine, a wagon type, and a wagon count, then click a rail track tile touching a Train Yard to assemble and pay for the train there.',
@@ -395,6 +398,7 @@ function handleClick(cell){
   if(currentTool==='track'){ postCommand('cmdBuildTrack', [x,y,currentRailLayer(),currentAutoConnect()]); return; }
   if(currentTool==='trackconnect'){ handleConnectClick(x,y); return; }
   if(currentTool==='signal'){ handleOneWayClick(x,y); return; }
+  if(currentTool==='diagonalconnect'){ handleDiagonalConnectClick(x,y); return; }
   if(currentTool==='depot'){ postCommand('cmdBuildBuilding', ['depot', x, y, currentTier(), currentDepotOrientation(), currentDepotResource(), currentDepotLength()]); return; }
   if(currentTool==='trainyard'){ postCommand('cmdBuildBuilding', ['trainyard', x, y, 'small']); return; }
   if(currentTool==='assembletrain'){ postCommand('cmdAssembleTrain', [x, y, currentEngine(), currentWagon(), currentWagonCount()]); return; }
@@ -474,6 +478,26 @@ function handleOneWayClick(x,y){
   }
   postCommand('cmdToggleOneWay', [oneWayFirst.x, oneWayFirst.y, x, y, layer]);
   oneWayFirst = null;
+  document.getElementById('hint').textContent = toolHint(currentTool);
+}
+
+// § Rail crossings' selective diagonal connections. Two-click, same shape
+// as handleConnectClick/handleOneWayClick above, but the second click isn't
+// "an adjacent tile to connect to" — it's "which corner of the crossing to
+// toggle," picked by clicking one of the crossing's 4 DIAGONAL neighbors
+// (the command derives the N/S+E/W pair from that neighbor's offset). No
+// upfront validation here beyond picking the first tile — cmdToggleDiagonal
+// Connection itself rejects a non-crossing first tile or a non-diagonal
+// second click with a clear message, same division of labor every other
+// command here already uses.
+function handleDiagonalConnectClick(x,y){
+  if(!diagonalConnectFirst){
+    diagonalConnectFirst = {x,y};
+    document.getElementById('hint').textContent = 'Now click one of the crossing\'s 4 diagonal corner tiles to toggle a switch there.';
+    return;
+  }
+  postCommand('cmdToggleDiagonalConnection', [diagonalConnectFirst.x, diagonalConnectFirst.y, x, y, currentRailLayer()]);
+  diagonalConnectFirst = null;
   document.getElementById('hint').textContent = toolHint(currentTool);
 }
 

@@ -94,7 +94,12 @@ function trackPort(x, y, dir){
 // forbids — so it's drawn as two straight through-lines instead, with no
 // center hub at all. Road's own 4-way intersections (turning IS allowed
 // there) are untouched — `kind` is only ever 'rail' for this case.
-function drawTrackCell(x, y, dirs, color, margin, kind){
+// `diagonalPairs` (only meaningful here, at a genuine 4-way rail crossing —
+// see cmdToggleDiagonalConnection, commands.js) draws one additional
+// corner-cutting line per enabled pair, in the SAME port-to-port style the
+// plain 2-connected case already uses below — a real, player-added switch
+// reads as a real extra line, not a hidden pathfinding-only rule.
+function drawTrackCell(x, y, dirs, color, margin, kind, diagonalPairs){
   const width = CELL - margin*2;
   const [cx, cy] = gridToScreen(x+0.5, y+0.5);
   if(kind==='rail' && dirs.length===4){
@@ -105,6 +110,12 @@ function drawTrackCell(x, y, dirs, color, margin, kind){
     ctx.lineCap = 'butt';
     ctx.beginPath(); ctx.moveTo(n[0],n[1]); ctx.lineTo(s[0],s[1]); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(e[0],e[1]); ctx.lineTo(w[0],w[1]); ctx.stroke();
+    const DIAGONAL_PORTS = {NE:['N','E'], NW:['N','W'], SE:['S','E'], SW:['S','W']};
+    for(const pairKey in DIAGONAL_PORTS){
+      if(!diagonalPairs || !diagonalPairs[pairKey]) continue;
+      const [a,b] = DIAGONAL_PORTS[pairKey].map(d => trackPort(x,y,d));
+      ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke();
+    }
     return;
   }
   if(dirs.length === 2){
@@ -523,7 +534,7 @@ function render(){
       // layer the way every other grade does.
       const cellColor = buries ? burialColor(color, getCell(x,y).elevation) : color;
       const connectedDirs = ROAD_DIRS.filter(d => track.edges[d.dir]).map(d => d.dir);
-      drawTrackCell(x, y, connectedDirs, cellColor, margin, kind);
+      drawTrackCell(x, y, connectedDirs, cellColor, margin, kind, track.diagonalPairs);
       for(const {dir,dx,dy,opp} of ROAD_DIRS){
         if(!track.edges[dir]) continue;
         // One-way arrow: drawn only from the side that's still allowed to

@@ -771,6 +771,18 @@ which is also the seam a modding UI could hook into later.
 > state. A T/3-way junction (only one line ever splits there) is unaffected,
 > and so is road, where real intersections legitimately allow turning.
 
+> **Further amended in Phase 2 (Diagonal connections).** The straight-only
+> restriction above is now a default, not an absolute: each of a crossing's
+> 4 corners (the two lateral pairs a real switch could join — NE, NW, SE,
+> SW) can be independently toggled on by the player, letting a train turn
+> through that specific corner while the other 3 stay restricted. Off is
+> still the default for a freshly-built crossing, and the two
+> straight-through pairs are never affected — a corner switch only ever
+> adds a reachable turn. This is independent of the ramp connection
+> constraint (§4.3 amendments, "Realistic ramp physics"): a ramp cell can
+> never reach the 4-connected state this section's crossing rule requires,
+> so the two mechanisms never interact.
+
 ---
 
 ## 11. Rendering Pipeline

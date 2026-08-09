@@ -3027,3 +3027,93 @@ crossing through the real toolbar, confirmed straight-through pathfinding
 succeeds and turning fails from within the running page, and visually
 confirmed the crossing renders as a clean two-line "X" with no center hub,
 with zero console errors.
+
+# Addendum — Diagonal connections: a per-corner switch at a rail crossing
+
+The straight-only default above ("Phase 2 — Rail crossings") is realistic
+but total — a real 4-way crossing can also carry an actual switch/points at
+one or more of its corners, letting a train turn from one line onto the
+other there. Rather than replace the default, each of the crossing's 4
+corners (NE, NW, SE, SW — named by the two physical tile-sides they join)
+can now be individually toggled on with a new tool, modeling a real switch
+laid into the crossing. Off is still the default (a fresh crossing behaves
+exactly as before); toggling a corner on only ever *adds* a reachable turn,
+never removes the two straight-through pairs.
+
+This is unrelated to, and does not touch, the ramp connection rule
+("Phase 2 — Realistic ramp physics": a ramp cell's `directionBlockedByRamp`
+still caps it to a single straight pair). A ramp cell can never reach the
+4-connected state `isRailCrossing` requires, so the two mechanisms simply
+never interact.
+
+## Design
+
+- **New per-track state, not a new tile shape.** `track.diagonalPairs =
+  {NE,NW,SE,SW}` (`world.js`, `newTrack()`) — four independent booleans,
+  all `false` by default, meaningful only at a cell where `isRailCrossing`
+  is already true.
+- **`entryPort`, not `straightOnly`, names the corner.** `findLayerPath`
+  already computes `straightOnly` — the direction of *travel* — for the
+  existing straight-through check. A diagonal pair name is a physical
+  *side* of the tile, which is the opposite of the direction of travel (a
+  train heading south arrived through the crossing's own north side). A
+  second variable, `entryPort = entryDir.opp`, is computed alongside
+  `straightOnly` and is what a new lookup table, `DIAGONAL_PAIR_KEY`
+  (`{fromSide: {toSide: pairKey}}`), is keyed on — getting this backwards
+  makes every toggle silently a no-op, since travel direction and physical
+  side are opposite compass points at exactly the cell where this matters.
+  When `dir !== straightOnly`, the departure is now allowed if
+  `track.diagonalPairs[DIAGONAL_PAIR_KEY[entryPort][dir]]` is on.
+- **No block-graph changes.** Same reasoning as the original crossing
+  rule: `railCellIsHub` treats any cell of degree ≠ 2 as a hub already, and
+  a diagonal pair never changes a cell's degree — it only changes which
+  lateral moves pathfinding will take through a hub that already existed.
+  `cmdToggleDiagonalConnection` therefore never calls `computeRailBlocks()`.
+- **A new two-click tool**, `diagonalconnect` — same click-then-click
+  pattern as the existing Connect/Disconnect and One-Way tools. The first
+  click names the crossing; the second click must land on one of its 4
+  diagonally-adjacent tiles (not an edge-adjacent one), and the pair is
+  derived from the offset sign (`(+1,-1)`→NE, `(-1,-1)`→NW, `(+1,+1)`→SE,
+  `(-1,+1)`→SW). Clicking a non-crossing, non-rail, or non-diagonal target
+  logs a clear warning and changes nothing.
+- **A matching visual.** `drawTrackCell` (render.js) already draws a
+  4-way rail crossing as a clean two-line "X"; one additional corner-to-
+  corner line is now drawn per enabled pair, in the same port-to-port style
+  the plain 2-connected case already uses — a player-added switch reads as
+  a real extra line on the crossing, not a hidden pathfinding-only rule.
+
+## What changed
+
+- **`world.js`**: `newTrack()` gains `diagonalPairs:{NE,NW,SE,SW}`, all
+  `false`.
+- **`pathfinding.js`**: new `DIAGONAL_PAIR_KEY` lookup; `findLayerPath`
+  computes `entryPort` alongside `straightOnly` and allows a non-straight
+  departure when the corresponding pair is enabled.
+- **`commands.js`**: new `cmdToggleDiagonalConnection(cx,cy,nx,ny,layer)` —
+  validates rail-only, diagonal adjacency, and a real 4-way crossing, then
+  flips the named pair and logs the result.
+- **`render.js`**: `drawTrackCell` takes an added `diagonalPairs` param and
+  draws one corner-cutting line per enabled pair inside the existing
+  4-connected rail branch; `drawRoadLayer`'s call site passes
+  `track.diagonalPairs` through.
+- **`ui.js`** / **`index.html`**: new `diagonalconnect` tool, hint text, and
+  toolbar button/icon, wired with the same two-click state machine already
+  used by the Connect/Disconnect and One-Way tools.
+
+## Testing
+
+New checks in `test/test-rail-crossing.js`: `cmdToggleDiagonalConnection`
+selectively enables turning through one named corner of a crossing at a
+time (each of the 4 pairs independently verified via `findRailPath`, with
+the other 3 confirmed to stay off); the same command rejects a non-rail
+target, a non-crossing target, and a non-diagonal second click with a clear
+warning and no state change; and an end-to-end real train scenario reaches
+a Depot that plain straight-through crossing behavior can't, only after the
+corner it needs is switched on. All 13 test files pass. Verified in a real
+browser via Playwright: built a live 4-way crossing through the real
+toolbar, selected the new tool, clicked the crossing then a diagonal
+corner, confirmed both the `findRailPath`-level effect (a turn now
+succeeds; the other 3 corners and the 2 straight pairs are unaffected) and
+the visual effect (a pixel-level render diff against the untoggled crossing
+confirms the new corner line actually draws), then toggled the same corner
+back off and confirmed both effects revert — zero console errors.

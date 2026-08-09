@@ -134,6 +134,20 @@ function buildingRailAccessCell(building){
 function isRailCrossing(track, kind){
   return kind==='rail' && track.edges.N && track.edges.S && track.edges.E && track.edges.W;
 }
+// A crossing's 2 straight pairs (N-S, E-W) are always connected by default
+// — the case above. The 4 "corner" pairs (N-E, N-W, S-E, S-W) are OFF by
+// default (a plain crossing has no switch) but individually selectable via
+// cmdToggleDiagonalConnection (commands.js) and track.diagonalPairs (world.js)
+// — a player-modeled points/switch at that one crossing. Looks up which
+// diagonalPairs key (if any) connects two given directions; returns
+// undefined for a straight pair (N-S/E-W) or two equal directions, neither
+// of which is ever a "diagonal" pair.
+const DIAGONAL_PAIR_KEY = {
+  N: {E:'NE', W:'NW'},
+  S: {E:'SE', W:'SW'},
+  E: {N:'NE', S:'SE'},
+  W: {N:'NW', S:'SW'},
+};
 
 // BFS over {x,y,layer} nodes: lateral moves follow only established,
 // direction-allowed edges within a layer (respecting one-way blocks). A
@@ -173,28 +187,38 @@ function findLayerPath(start, end){
     const track = trackAt(cur.x, cur.y, cur.layer);
     const [grade, kind] = LAYER_GRADE_KIND[cur.layer];
     // At a rail crossing (isRailCrossing above), continuing is restricted to
-    // straight through on whichever line was actually arrived on —
-    // dirBetween(prev,cur) is the direction of TRAVEL that reached `cur`
-    // (the exit side `prev` used), and straight-through means departing
-    // `cur` the same compass direction, not its opposite (arriving while
-    // heading east means continuing east on the far side of the crossing,
-    // not reversing west). The very first node (no cameFrom entry — cur ===
-    // start) has no established direction to be consistent with, so it's
-    // left unrestricted; that's a narrow, harmless gap in practice, since a
-    // fresh path is only ever computed while a vehicle is fully at rest
-    // (startMovingTo/startMovingToRail, systems.js), and a bare crossing is
-    // never itself a rest point (nothing docks at a crossing) in any built
-    // layout.
+    // straight through on whichever line was actually arrived on, PLUS
+    // whichever corner pairs (if any) the player has switched on for this
+    // exact entry direction (track.diagonalPairs — see DIAGONAL_PAIR_KEY
+    // above) — dirBetween(prev,cur) is the direction of TRAVEL that reached
+    // `cur` (the exit side `prev` used), and straight-through means
+    // departing `cur` the same compass direction, not its opposite
+    // (arriving while heading east means continuing east on the far side of
+    // the crossing, not reversing west). The very first node (no cameFrom
+    // entry — cur === start) has no established direction to be consistent
+    // with, so it's left unrestricted; that's a narrow, harmless gap in
+    // practice, since a fresh path is only ever computed while a vehicle is
+    // fully at rest (startMovingTo/startMovingToRail, systems.js), and a
+    // bare crossing is never itself a rest point (nothing docks at a
+    // crossing) in any built layout.
     let straightOnly = null;
+    let entryPort = null; // the physical side `cur` was entered through — the OPPOSITE compass direction from the direction of travel (straightOnly): arriving while traveling south means the connection actually used is cur's NORTH side.
     if(isRailCrossing(track, kind)){
       const prev = cameFrom.get(nodeKey(cur));
       const entryDir = prev && dirBetween(prev, cur);
-      if(entryDir) straightOnly = entryDir.dir;
+      if(entryDir){ straightOnly = entryDir.dir; entryPort = entryDir.opp; }
     }
     for(const {dir,dx,dy} of ROAD_DIRS){
       if(!track.edges[dir]) continue;          // no connection this way
       if(track.oneWayBlocked[dir]) continue;   // one-way: can't depart via this side
-      if(straightOnly && dir !== straightOnly) continue; // rail crossing: no turning onto the other line
+      if(straightOnly && dir !== straightOnly){
+        // A diagonal pair names the two PHYSICAL SIDES it links (e.g. "NE"
+        // = the north side and the east side), so the lookup keys off
+        // entryPort (the side actually used to arrive), not straightOnly
+        // (the direction of travel, its opposite).
+        const diagonalKey = DIAGONAL_PAIR_KEY[entryPort] && DIAGONAL_PAIR_KEY[entryPort][dir];
+        if(!diagonalKey || !track.diagonalPairs[diagonalKey]) continue; // rail crossing: no turning unless that corner's switch is on
+      }
       const found = tryVisit({x:cur.x+dx, y:cur.y+dy, layer:cur.layer}, cur);
       if(found) return found;
     }
