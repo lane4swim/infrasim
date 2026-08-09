@@ -73,15 +73,160 @@ function trackPort(x, y, dir){
   const [ox,oy] = PORT_OFFSET[dir];
   return gridToScreen(x+ox, y+oy);
 }
+// ---------------------------------------------------------------------
+// TRACK SPRITES (§ SVG track sprites) — every possible track shape (dead
+// end, straight, corner, T-junction/crossing switch, road intersection) is
+// assembled at draw time from a small set of reusable "building block"
+// sprites — one drawn SVG segment per PAIR of local points a track can
+// run between (a port-to-center spoke, a port-to-port straight or corner
+// cut) — rather than either (a) one baked sprite per whole shape (a huge,
+// hard-to-keep-consistent combinatorial surface: 16 direction combos × rail
+// vs road × every diagonal-switch state) or (b) the old live ctx.stroke()
+// line art. A cell's shape is just which of these ~11 blocks (4 spokes, 2
+// straights, 4 corners, 1 "nub") get drawn together, exactly mirroring how
+// the OLD procedural version already decomposed each shape into individual
+// line-draws — only the actual mark-making per segment changed, from a
+// flat-color stroke to a real textured SVG asset (ballast/ties/rails for
+// rail, asphalt/edge-lines/lane-dashes for road).
+//
+// Segment endpoints are the 4 ports (trackPort's own N/S/E/W midpoints)
+// plus the cell center, expressed in a LOCAL coordinate space sized
+// exactly ISO_W x ISO_H (80x40) — i.e. exactly the same size as one cell's
+// on-screen diamond bounding box. That's not a coincidence: these are
+// gridToScreen's own port offsets, re-derived relative to a single cell's
+// top corner instead of the whole grid's origin (see the worked-out
+// derivation in README's SVG track sprites addendum). Because every
+// cell's diamond bounding box is the SAME size regardless of position, a
+// sprite built in this local space and stretched into that exact bounding
+// box (the same drawImage-into-bbox technique § Isometric sprites already
+// uses for building/vehicle art) lines up pixel-exact with the real
+// trackPort positions, with zero distortion — no per-direction rotation
+// or skew math needed at draw time.
+const LOCAL_PORT = { N:[60,10], S:[20,30], E:[60,30], W:[20,10], C:[40,20] };
+const TRACK_SPRITE_VIEWBOX = '0 0 80 40'; // == ISO_W x ISO_H — see LOCAL_PORT above
+// Canonical segment key for an (unordered) pair of directions, or 'C' paired
+// with a direction for a spoke — matches DIAGONAL_PAIR_KEY's NE/NW/SE/SW
+// naming for the corner cases so a diagonal switch reuses the exact same
+// segment as the plain 2-connected corner case.
+const TRACK_SEGMENT_KEY = {
+  'N,C':'N-C', 'C,N':'N-C', 'S,C':'S-C', 'C,S':'S-C', 'E,C':'E-C', 'C,E':'E-C', 'W,C':'W-C', 'C,W':'W-C',
+  'N,S':'N-S', 'S,N':'N-S', 'E,W':'E-W', 'W,E':'E-W',
+  'N,E':'N-E', 'E,N':'N-E', 'N,W':'N-W', 'W,N':'N-W', 'S,E':'S-E', 'E,S':'S-E', 'S,W':'S-W', 'W,S':'S-W',
+};
+// A rail segment is a real physical stretch of track: a ballast bed (the
+// dominant fill — this is what `color` tints, so a cell's grade/depth
+// still reads exactly the way the old flat-color line did), a handful of
+// perpendicular wooden ties along its length, and two parallel steel rails
+// inset from center. `dashed` (underground/airspace grades only — the
+// grades that were always a muted "X-ray hint," never real visible track)
+// skips all of that for a plain dashed hint-line in the same color, both
+// because there's nothing to texture through solid ground and because a
+// dashed FILL doesn't have a clean meaning the way a dashed stroke does.
+function railSegmentSVG(p1, p2, color, width, dashed){
+  const [x1,y1] = p1, [x2,y2] = p2;
+  if(dashed) return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="${width}" stroke-dasharray="6,5" stroke-linecap="butt"/>`;
+  const angle = Math.atan2(y2-y1, x2-x1) * 180/Math.PI;
+  const len = Math.hypot(x2-x1, y2-y1);
+  const tie = mixTowardBlack(color, 0.45);
+  const rail = mixTowardWhite(color, 0.65);
+  let svg = `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="${width}" stroke-linecap="butt"/>`;
+  const tieLen = width+6, tieThick = 2.4;
+  const tieCount = Math.max(2, Math.round(len/9));
+  for(let i=0;i<=tieCount;i++){
+    const t = i/tieCount, tx = x1+(x2-x1)*t, ty = y1+(y2-y1)*t;
+    svg += `<rect x="${-tieLen/2}" y="${-tieThick/2}" width="${tieLen}" height="${tieThick}" fill="${tie}" transform="translate(${tx},${ty}) rotate(${angle})"/>`;
+  }
+  const rad = angle*Math.PI/180, nx = -Math.sin(rad), ny = Math.cos(rad), off = width*0.28;
+  for(const s of [-1,1]){
+    svg += `<line x1="${x1+nx*off*s}" y1="${y1+ny*off*s}" x2="${x2+nx*off*s}" y2="${y2+ny*off*s}" stroke="${rail}" stroke-width="1.6" stroke-linecap="butt"/>`;
+  }
+  return svg;
+}
+// A road segment is asphalt (`color`, same "still reads as the old flat
+// line's color" contract as rail's ballast) with two thin edge lines, plus
+// — only for a genuine straight through-lane (`center`, true only for the
+// N-S/E-W segments, never a spoke or a turn) — a dashed yellow lane line,
+// the one piece of standard road markings that only makes sense along an
+// unbroken lane rather than a stub or a corner cut.
+function roadSegmentSVG(p1, p2, color, width, dashed, center){
+  const [x1,y1] = p1, [x2,y2] = p2;
+  if(dashed) return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="${width}" stroke-dasharray="6,5" stroke-linecap="butt"/>`;
+  const angle = Math.atan2(y2-y1, x2-x1) * 180/Math.PI;
+  const edge = mixTowardWhite(color, 0.55);
+  let svg = `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="${width}" stroke-linecap="butt"/>`;
+  const rad = angle*Math.PI/180, nx = -Math.sin(rad), ny = Math.cos(rad), off = width/2-1;
+  for(const s of [-1,1]){
+    svg += `<line x1="${x1+nx*off*s}" y1="${y1+ny*off*s}" x2="${x2+nx*off*s}" y2="${y2+ny*off*s}" stroke="${edge}" stroke-width="1" stroke-linecap="butt" opacity="0.75"/>`;
+  }
+  if(center) svg += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#f2d24a" stroke-width="1.4" stroke-dasharray="5,4" stroke-linecap="butt"/>`;
+  return svg;
+}
+// The isolated/dead-end/hub "core" — a small patch at the cell center,
+// the same role the old fillRect core played (an isolated tile reads as
+// disconnected; a dead-end's spoke blends into it; a road T/4-way's
+// spokes all meet on it as a real intersection pad).
+function nubSVG(color, width, dashed){
+  const r = Math.max(4, width*0.35);
+  const [cx,cy] = LOCAL_PORT.C;
+  if(dashed) return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="3,3"/>`;
+  return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}"/>`;
+}
+// One Image per (kind, segment, color, width, dashed) combination, built
+// once and cached forever — same contract as spriteImageFor's content-pack
+// cache, just keyed by a plain string since these are engine-generated,
+// not per-def. The color/width/dashed axes are exactly the parameters the
+// old procedural version already varied per grade (ground/elevated/
+// underground/airspace, each with their own margin and color) — nothing
+// new to precompute, this just generates real markup for each combination
+// the first time it's actually needed instead of live-stroking it every
+// frame.
+const trackSpriteCache = new Map();
+function trackSegmentImage(kind, segKey, color, width, dashed){
+  const key = `${kind}|${segKey}|${color}|${width}|${dashed}`;
+  let img = trackSpriteCache.get(key);
+  if(img) return img;
+  const inner = segKey==='NUB' ? nubSVG(color, width, dashed)
+    : (kind==='rail' ? railSegmentSVG(LOCAL_PORT[segKey[0]], LOCAL_PORT[segKey[2]], color, width, dashed)
+                      : roadSegmentSVG(LOCAL_PORT[segKey[0]], LOCAL_PORT[segKey[2]], color, width, dashed, segKey==='N-S'||segKey==='E-W'));
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${TRACK_SPRITE_VIEWBOX}">${inner}</svg>`;
+  img = new Image();
+  img.src = spriteDataUri({type:'svg', markup: svg});
+  trackSpriteCache.set(key, img);
+  return img;
+}
+// One-way arrow and level-crossing marker (§ Rail crossings' road/rail
+// marker) — the two other track-adjacent overlays, sprite-ified the same
+// way. Both are a single fixed asset (color/style never varies per grade
+// or kind the way a track segment's does), so each is built once ever, on
+// first use, and cached in a plain module-level variable rather than a Map.
+let oneWayArrowImg = null;
+function oneWayArrowImage(){
+  if(oneWayArrowImg) return oneWayArrowImg;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 10"><polygon points="12,5 0,0 0,10" fill="${getCss('--amber')}"/></svg>`;
+  oneWayArrowImg = new Image();
+  oneWayArrowImg.src = spriteDataUri({type:'svg', markup: svg});
+  return oneWayArrowImg;
+}
+let crossingMarkerImg = null;
+function crossingMarkerImage(){
+  if(crossingMarkerImg) return crossingMarkerImg;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+    <rect x="1" y="1" width="22" height="22" rx="4" fill="#1a1410" stroke="#f2d24a" stroke-width="2"/>
+    <line x1="6" y1="6" x2="18" y2="18" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+    <line x1="18" y1="6" x2="6" y2="18" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+  </svg>`;
+  crossingMarkerImg = new Image();
+  crossingMarkerImg.src = spriteDataUri({type:'svg', markup: svg});
+  return crossingMarkerImg;
+}
 // Exactly 2 connected sides is the only case with one obvious, unambiguous
-// line to draw — straight through for an opposite pair (N-S/E-W), a clean
-// 45° diagonal cutting the corner for an adjacent pair (e.g. N-W) — so
-// that's the only case drawn as a direct port-to-port line. Everything
-// else has no single pair to prefer: 0 connections (isolated tile) or 1
-// (dead end) draws a core with at most one spoke — a ROAD T- or 4-way
-// junction does too, one spoke per side meeting at the tile's center,
-// since a real road junction genuinely lets traffic converge there. Rail
-// is the exception below.
+// segment to draw — straight through for an opposite pair (N-S/E-W), a
+// clean 45° diagonal cutting the corner for an adjacent pair (e.g. N-W).
+// Everything else has no single pair to prefer: 0 connections (isolated
+// tile) or 1 (dead end) draws a core with at most one spoke — a ROAD T- or
+// 4-way junction does too, one spoke per side meeting at the tile's
+// center, since a real road junction genuinely lets traffic converge
+// there. Rail is the exception below.
 //
 // The one exception: a rail cell with 3 or more directions connected (§
 // Rail crossings — isRailSwitch, pathfinding.js: a T/3-way junction just
@@ -92,82 +237,61 @@ function trackPort(x, y, dir){
 // whichever one was entered on. Drawing it with the ordinary
 // spoke-from-a-filled-center treatment would visually read as "any of
 // these directions can reach any other," exactly the turning this shape
-// forbids — so each straight-through pair is drawn as a clean line
-// instead, with no center hub joining them. A T-junction's lone "branch"
-// direction (the one with no opposite present) has no default line at
+// forbids — so each straight-through pair is drawn as its own straight
+// segment, with no center hub joining them. A T-junction's lone "branch"
+// direction (the one with no opposite present) has no default segment at
 // all — it's real, built track, just not connected by default — so it
-// gets its own short stub spoke to the center instead, reading as
-// "present but not through-routed," UNLESS a corner switch already
-// connects it (see `diagonalPairs` below), in which case the stub is
-// skipped — the real corner line is the only line drawn to that port, not
-// a second redundant one. Road's own T/4-way intersections
-// (turning IS allowed there) are untouched — `kind` is only ever 'rail'
-// for this case. `diagonalPairs` (only meaningful here, at a genuine rail
-// switch — see cmdToggleDiagonalConnection, commands.js) draws one
-// additional corner-cutting line per enabled pair whose both directions
-// are actually connected here, in the SAME port-to-port style the plain
-// 2-connected case already uses below — a real, player-thrown switch
-// reads as a real extra line, not a hidden pathfinding-only rule.
-function drawTrackCell(x, y, dirs, color, margin, kind, diagonalPairs){
+// gets its own spoke segment instead, reading as "present but not
+// through-routed," UNLESS a corner switch already connects it (see
+// `diagonalPairs` below), in which case the spoke is skipped — the real
+// corner segment is the only one drawn to that port, not a second
+// redundant one. Road's own T/4-way intersections (turning IS allowed
+// there) are untouched — `kind` is only ever 'rail' for this case.
+// `diagonalPairs` (only meaningful here, at a genuine rail switch — see
+// cmdToggleDiagonalConnection, commands.js) draws one additional corner
+// segment per enabled pair whose both directions are actually connected
+// here — the SAME segment the plain 2-connected corner case uses, so a
+// player-thrown switch reads as a real extra piece of track, not a hidden
+// pathfinding-only rule.
+function drawTrackCell(x, y, dirs, color, margin, kind, diagonalPairs, dashed){
   const width = CELL - margin*2;
-  const [cx, cy] = gridToScreen(x+0.5, y+0.5);
+  const corners = diamondPath(x, y);
+  const xs = corners.map(c=>c[0]), ys = corners.map(c=>c[1]);
+  const minX = Math.min(...xs), minY = Math.min(...ys);
+  const bw = Math.max(...xs)-minX, bh = Math.max(...ys)-minY;
+  const drawSeg = (segKey) => ctx.drawImage(trackSegmentImage(kind, segKey, color, width, dashed), minX, minY, bw, bh);
   if(kind==='rail' && dirs.length>=3){
     const present = new Set(dirs);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = width;
-    ctx.lineCap = 'butt';
     const throughPairs = [['N','S'],['E','W']].filter(([a,b]) => present.has(a) && present.has(b));
-    for(const [a,b] of throughPairs){
-      const [pa,pb] = [a,b].map(d => trackPort(x,y,d));
-      ctx.beginPath(); ctx.moveTo(pa[0],pa[1]); ctx.lineTo(pb[0],pb[1]); ctx.stroke();
-    }
+    for(const [a,b] of throughPairs) drawSeg(TRACK_SEGMENT_KEY[a+','+b]);
     const throughDirs = new Set(throughPairs.flat());
     for(const dir of dirs){
       if(throughDirs.has(dir)) continue; // a T-junction's lone branch direction
       // A branch already reachable via a thrown corner switch (drawn as its
-      // own corner line below) is a real, USABLE connection — drawing the
-      // plain center stub on top of it would just be a second, redundant
-      // line to the same port. The stub is only for a branch with no
+      // own corner segment below) is a real, USABLE connection — drawing
+      // the plain spoke on top of it would just be a second, redundant
+      // segment to the same port. The spoke is only for a branch with no
       // switch thrown at all, where it really is unreachable track.
       const reachableViaSwitch = diagonalPairs && Object.keys(DIAGONAL_PAIR_PORTS).some(k =>
         diagonalPairs[k] && DIAGONAL_PAIR_PORTS[k].includes(dir));
       if(reachableViaSwitch) continue;
-      const [px,py] = trackPort(x,y,dir);
-      ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(px,py); ctx.stroke();
+      drawSeg(TRACK_SEGMENT_KEY[dir+',C']);
     }
     for(const pairKey in DIAGONAL_PAIR_PORTS){
       if(!diagonalPairs || !diagonalPairs[pairKey]) continue;
       const [d1,d2] = DIAGONAL_PAIR_PORTS[pairKey];
       if(!present.has(d1) || !present.has(d2)) continue; // corner not buildable here (e.g. a T missing that side)
-      const [a,b] = [d1,d2].map(d => trackPort(x,y,d));
-      ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke();
+      drawSeg(TRACK_SEGMENT_KEY[d1+','+d2]);
     }
     return;
   }
   if(dirs.length === 2){
-    const [a,b] = dirs.map(d => trackPort(x,y,d));
-    ctx.strokeStyle = color;
-    ctx.lineWidth = width;
-    ctx.lineCap = 'butt';
-    ctx.beginPath();
-    ctx.moveTo(a[0], a[1]);
-    ctx.lineTo(b[0], b[1]);
-    ctx.stroke();
+    drawSeg(TRACK_SEGMENT_KEY[dirs[0]+','+dirs[1]]);
     return;
   }
-  ctx.fillStyle = color;
-  ctx.fillRect(cx-width/2, cy-width/2, width, width); // core — also what a lone spoke's flat end blends into
-  if(dirs.length === 0) return; // isolated tile: core only, reads as disconnected
-  ctx.strokeStyle = color;
-  ctx.lineWidth = width;
-  ctx.lineCap = 'butt';
-  for(const dir of dirs){
-    const [px,py] = trackPort(x,y,dir);
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.lineTo(px, py);
-    ctx.stroke();
-  }
+  if(dirs.length === 0){ drawSeg('NUB'); return; } // isolated tile: core only, reads as disconnected
+  drawSeg('NUB'); // core — also what a lone spoke's flat end blends into, or a road junction's intersection pad
+  for(const dir of dirs) drawSeg(TRACK_SEGMENT_KEY[dir+',C']);
 }
 
 // Terrain elevation (§ Terrain elevation) — a subtle tint per cell, cool
@@ -195,6 +319,16 @@ function elevationColor(elevation){
 function mixTowardBlack(hex, t){
   const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
   const mix = c => Math.round(c * (1-t));
+  return `rgb(${mix(r)},${mix(g)},${mix(b)})`;
+}
+// Its mirror image, toward white — used by the track sprite generators
+// (railSegmentSVG/roadSegmentSVG above) to derive a lighter rail/edge-line
+// shade from the same base color that tints the dominant ballast/asphalt
+// fill, so every grade's sprite stays internally consistent without a
+// second color parameter anywhere in the call chain.
+function mixTowardWhite(hex, t){
+  const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+  const mix = c => Math.round(c + (255-c)*t);
   return `rgb(${mix(r)},${mix(g)},${mix(b)})`;
 }
 function burialColor(hex, elevation){
@@ -539,16 +673,10 @@ function render(){
     const [x,y] = k.split(',').map(Number);
     if(!crossingCheckLayers.some(layer => isRoadRailCrossing(x,y,layer))) continue;
     const [cx, cy] = gridToScreen(x+0.5, y+0.5);
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(cx-6,cy-6); ctx.lineTo(cx+6,cy+6);
-    ctx.moveTo(cx+6,cy-6); ctx.lineTo(cx-6,cy+6);
-    ctx.stroke();
+    ctx.drawImage(crossingMarkerImage(), cx-8, cy-8, 16, 16);
   }
 
   function drawRoadLayer(layerName, color, margin, dashed, buries){
-    if(dashed) ctx.setLineDash([5,4]); // underground/railUnderground only — see the call sites above
     const [, kind] = LAYER_GRADE_KIND[layerName];
     for(const [k] of world.grid){
       const [x,y] = k.split(',').map(Number);
@@ -560,7 +688,7 @@ function render(){
       // layer the way every other grade does.
       const cellColor = buries ? burialColor(color, getCell(x,y).elevation) : color;
       const connectedDirs = ROAD_DIRS.filter(d => track.edges[d.dir]).map(d => d.dir);
-      drawTrackCell(x, y, connectedDirs, cellColor, margin, kind, track.diagonalPairs);
+      drawTrackCell(x, y, connectedDirs, cellColor, margin, kind, track.diagonalPairs, dashed);
       for(const {dir,dx,dy,opp} of ROAD_DIRS){
         if(!track.edges[dir]) continue;
         // One-way arrow: drawn only from the side that's still allowed to
@@ -571,7 +699,6 @@ function render(){
         if(!thisBlocked && otherBlocked) drawOneWayArrow(x, y, dir, margin);
       }
     }
-    if(dashed) ctx.setLineDash([]);
   }
   function drawOneWayArrow(x, y, dir, margin){
     // N/S/E/W no longer map to fixed screen-up/down/right/left angles once
@@ -579,20 +706,19 @@ function render(){
     // the actual on-screen direction toward this side's port (trackPort)
     // rather than a hardcoded per-direction table — this generalizes
     // correctly under any linear projection, iso or the old orthogonal one.
+    // The arrow itself is a small SVG sprite (oneWayArrowImage below,
+    // pointing local +X) rotated/positioned with the exact same
+    // translate+rotate this used before switching from a hand-drawn
+    // triangle path to a drawImage call.
     const [cx, cy] = gridToScreen(x+0.5, y+0.5);
     const [px, py] = trackPort(x, y, dir);
     const rot = Math.atan2(py-cy, px-cx);
     const dist = Math.hypot(px-cx, py-cy);
+    const img = oneWayArrowImage();
+    const len = 12, size = 5, tip = dist - margin - 2;
     ctx.save();
     ctx.translate(cx,cy); ctx.rotate(rot);
-    ctx.fillStyle = getCss('--amber');
-    const tip = dist - margin - 2, size = 5;
-    ctx.beginPath();
-    ctx.moveTo(tip, 0);
-    ctx.lineTo(tip-size, -size);
-    ctx.lineTo(tip-size, size);
-    ctx.closePath();
-    ctx.fill();
+    ctx.drawImage(img, tip-len, -size, len, size*2);
     ctx.restore();
   }
 

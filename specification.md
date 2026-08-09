@@ -851,6 +851,21 @@ which is also the seam a modding UI could hook into later.
 > replaces always occupy identical screen space and share the same rotation/
 > direction logic.
 
+> **Further amended in Phase 2 (SVG track sprites).** Road/rail track —
+> the one thing the isometric sprites amendment above didn't cover — no
+> longer draws as a live flat-color canvas stroke either. Every track
+> shape (dead end, straight, corner, T-junction/crossing switch, road
+> intersection) is assembled at draw time from a small set of reusable
+> SVG segment sprites (a spoke, a straight, a corner cut, a core — see the
+> README's "SVG track sprites" addendum for the full derivation), each
+> rendered with real texture (ballast/ties/rails for rail, asphalt/
+> edge-lines/lane-dashes for road) rather than a bare line, while a
+> segment's dominant color still carries the same per-grade/depth meaning
+> the old flat stroke color did. This is engine-generated art (not a
+> content-pack-authorable field, unlike the building/vehicle sprites
+> above) — every possible track shape is covered unconditionally, with no
+> "falls back to the procedural look" case to maintain.
+
 ---
 
 ## 12. Persistence

@@ -3235,3 +3235,107 @@ pixel diff) the rendering actually changed, then toggled it back off and
 confirmed the result is pixel-identical to the original screenshot — the
 stub reliably reappears, not just conceptually reverts — zero console
 errors.
+
+# Phase 2 — SVG track sprites
+
+Every road/rail track shape — dead end, straight, corner, T-junction/
+crossing switch, road intersection — used to be drawn as a live
+`ctx.stroke()`/`ctx.fillRect()` call each frame: flat colored lines, no
+texture. Rail now renders as real ballast/ties/rails, and road as asphalt
+with edge lines and a dashed lane marking, all built from real SVG markup
+rather than raw canvas paths — while keeping every existing behavior
+(per-grade color/margin, underground's dashed "X-ray hint" look, deep
+burial darkening, diagonal switches, one-way arrows, crossing markers)
+working exactly as before.
+
+## Design
+
+- **Building blocks, not one sprite per shape.** Enumerating a baked
+  sprite for every (direction combo) × (rail/road) × (diagonal switch
+  state) would be a huge, hard-to-keep-consistent surface. Instead, every
+  shape is assembled at draw time from ~11 reusable segment sprites: a
+  spoke from each of the 4 ports to the cell center, the 2 straight
+  through-lines (N-S, E-W), the 4 corner cuts (NE/NW/SE/SW), and one
+  "nub" core. This is the exact same decomposition the OLD procedural
+  version already used (drawTrackCell already only ever drew individual
+  port-to-port or port-to-center lines) — only the actual mark-making per
+  segment changed, from a flat stroke to a textured SVG asset. A
+  diagonal switch reuses the literal same corner segment the plain
+  2-connected corner case draws, so a player-thrown switch reads as a
+  real extra piece of track, not a different asset.
+- **A local coordinate space sized exactly like one cell's screen bounding
+  box, so a straight drawImage-into-bbox stretch is pixel-exact, not an
+  approximation.** Every segment is authored in a `viewBox="0 0 80 40"`
+  local space (80x40 = ISO_W x ISO_H, one cell's diamond bounding box).
+  The 4 ports' local positions are gridToScreen's own per-cell deltas,
+  re-derived relative to a single cell's top corner instead of the whole
+  grid's origin: `N=(60,10) S=(20,30) E=(60,30) W=(20,10) C=(40,20)` —
+  worked out by expanding `gridToScreen(x+lx, y+ly)` for `lx,ly∈[0,1]`
+  and reading off the local deltas at each port's `(lx,ly)`. Because
+  every cell's diamond bounding box is the SAME size regardless of
+  position, a sprite built in this space and stretched into a cell's real
+  screen bounding box (the same drawImage-into-bbox technique §
+  Isometric sprites already uses for building/vehicle art) lines up
+  exactly with the real `trackPort` positions, with zero distortion — no
+  per-direction rotation/skew math needed at draw time, and old margin/
+  width values (`CELL - margin*2`) carry over completely unchanged, since
+  the local space's units already equal real screen pixels 1:1.
+- **Color stays a single parameter, texture is derived from it.** A
+  segment's dominant fill (ballast/asphalt) is still exactly the `color`
+  the old flat stroke used, so a cell's grade/depth reads identically to
+  before; sleeper/rail or edge-line shades are derived from that one
+  color via `mixTowardWhite`/`mixTowardBlack` (the latter already existed
+  for burial darkening) rather than threading a second color parameter
+  through every call site.
+- **`dashed` grades (underground, airspace — always a muted "X-ray hint,"
+  never real visible track) skip texture entirely** for a plain dashed
+  line in the same color: there's nothing to texture through solid
+  ground, and a dashed FILL doesn't have a clean meaning the way a dashed
+  stroke does. `drawTrackCell` gained a `dashed` parameter (threaded
+  through from `drawRoadLayer`, which already knew it locally but never
+  passed it on) purely to pick which sprite variant to use — the old
+  `ctx.setLineDash` calls, now meaningless against drawImage calls, were
+  removed.
+- **One-way arrows and the road/rail crossing marker are sprites too.**
+  Same rotate-and-position math as before, just a `drawImage` of a small
+  SVG asset instead of a hand-drawn canvas path — built once (their style
+  never varies per grade) and cached in a plain variable rather than a
+  keyed Map.
+- **Every sprite is cached by its exact parameters** (`kind|segment|
+  color|width|dashed` for track segments), generated once on first use
+  and reused forever after — the same contract § Isometric sprites'
+  content-pack sprite cache already uses, just keyed by a plain string
+  since these are engine-generated, not per-def. Reuses the existing
+  `spriteDataUri({type:'svg', markup})` helper (loader.js) that already
+  turns SVG markup into an `<img>`-loadable data URI for exactly this
+  purpose.
+
+## What changed
+
+- **`render.js`**: `drawTrackCell` rewritten around `trackSegmentImage`/
+  `railSegmentSVG`/`roadSegmentSVG`/`nubSVG` (new); `LOCAL_PORT`,
+  `TRACK_SPRITE_VIEWBOX`, `TRACK_SEGMENT_KEY`, `trackSpriteCache` (new);
+  `mixTowardWhite` (new, alongside the existing `mixTowardBlack`);
+  `drawOneWayArrow` and the level-crossing marker loop now `drawImage` a
+  cached sprite instead of hand-drawing a path; `drawRoadLayer` passes its
+  `dashed` flag through to `drawTrackCell` and no longer calls
+  `ctx.setLineDash`.
+
+## Testing
+
+No sim-layer behavior changed (pathfinding, commands, and every existing
+test file are untouched and still pass — this is a pure rendering
+change), so the full unit suite is a regression check, not new coverage:
+all 13 test files pass. Verified in a real browser via Playwright across
+every shape this system draws: a dead end/straight/corner rail cluster, a
+T-junction with a thrown diagonal switch, a genuine 4-way rail crossing, a
+real 4-way road intersection, a one-way road edge, a ground↔elevated Rail
+Ramp with elevated rail beyond it, an underground rail dead end (dashed)
+next to its ground counterpart (solid) with a tunnel ramp marker, and a
+road/rail level crossing — zero console errors across the whole scenario,
+confirmed visually (ballast/ties/rails and asphalt/edge-lines/lane-dashes
+all render correctly, the dashed underground variant is visibly distinct
+from the solid ground one, and the one-way arrow/crossing marker/ramp
+diamond all still render in the right place). Also ran a real train
+scenario for several seconds of live simulation ticks (sustained per-frame
+`drawImage` calls, not just one static screenshot) with zero errors.
