@@ -78,42 +78,57 @@ function trackPort(x, y, dir){
 // 45° diagonal cutting the corner for an adjacent pair (e.g. N-W) — so
 // that's the only case drawn as a direct port-to-port line. Everything
 // else has no single pair to prefer: 0 connections (isolated tile) or 1
-// (dead end) draws a core with at most one spoke, same as multiple
-// directions (a T- or 4-way junction) draws a core with one spoke per
-// side, all meeting at the tile's center — unchanged from before this
-// scheme, since a junction genuinely has multiple lines converging here,
-// not one to straighten out.
+// (dead end) draws a core with at most one spoke — a ROAD T- or 4-way
+// junction does too, one spoke per side meeting at the tile's center,
+// since a real road junction genuinely lets traffic converge there. Rail
+// is the exception below.
 //
-// The one exception: a rail cell with all 4 directions connected (§ Rail
-// crossings — isRailCrossing, pathfinding.js) is never a real junction —
-// this game has no switch/points equipment, so it's always two independent
-// straight lines (N-S, E-W) crossing at grade, and travel through it is
-// restricted to whichever line was entered on. Drawing it with the ordinary
+// The one exception: a rail cell with 3 or more directions connected (§
+// Rail crossings — isRailSwitch, pathfinding.js: a T/3-way junction just
+// as much as a genuine 4-way crossing) is never a real any-to-any junction
+// — this game has no switch/points equipment, so its straight-through
+// pair(s) (N-S and/or E-W, whichever the connected directions complete)
+// are always independent through-lines, and travel is restricted to
+// whichever one was entered on. Drawing it with the ordinary
 // spoke-from-a-filled-center treatment would visually read as "any of
-// these 4 directions can reach any other," exactly the turning this shape
-// forbids — so it's drawn as two straight through-lines instead, with no
-// center hub at all. Road's own 4-way intersections (turning IS allowed
-// there) are untouched — `kind` is only ever 'rail' for this case.
-// `diagonalPairs` (only meaningful here, at a genuine 4-way rail crossing —
-// see cmdToggleDiagonalConnection, commands.js) draws one additional
-// corner-cutting line per enabled pair, in the SAME port-to-port style the
-// plain 2-connected case already uses below — a real, player-added switch
+// these directions can reach any other," exactly the turning this shape
+// forbids — so each straight-through pair is drawn as a clean line
+// instead, with no center hub joining them. A T-junction's lone "branch"
+// direction (the one with no opposite present) has no default line at
+// all — it's real, built track, just not connected by default — so it
+// gets its own short stub spoke to the center instead, reading as
+// "present but not through-routed." Road's own T/4-way intersections
+// (turning IS allowed there) are untouched — `kind` is only ever 'rail'
+// for this case. `diagonalPairs` (only meaningful here, at a genuine rail
+// switch — see cmdToggleDiagonalConnection, commands.js) draws one
+// additional corner-cutting line per enabled pair whose both directions
+// are actually connected here, in the SAME port-to-port style the plain
+// 2-connected case already uses below — a real, player-thrown switch
 // reads as a real extra line, not a hidden pathfinding-only rule.
 function drawTrackCell(x, y, dirs, color, margin, kind, diagonalPairs){
   const width = CELL - margin*2;
   const [cx, cy] = gridToScreen(x+0.5, y+0.5);
-  if(kind==='rail' && dirs.length===4){
-    const [n,s] = ['N','S'].map(d => trackPort(x,y,d));
-    const [e,w] = ['E','W'].map(d => trackPort(x,y,d));
+  if(kind==='rail' && dirs.length>=3){
+    const present = new Set(dirs);
     ctx.strokeStyle = color;
     ctx.lineWidth = width;
     ctx.lineCap = 'butt';
-    ctx.beginPath(); ctx.moveTo(n[0],n[1]); ctx.lineTo(s[0],s[1]); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(e[0],e[1]); ctx.lineTo(w[0],w[1]); ctx.stroke();
-    const DIAGONAL_PORTS = {NE:['N','E'], NW:['N','W'], SE:['S','E'], SW:['S','W']};
-    for(const pairKey in DIAGONAL_PORTS){
+    const throughPairs = [['N','S'],['E','W']].filter(([a,b]) => present.has(a) && present.has(b));
+    for(const [a,b] of throughPairs){
+      const [pa,pb] = [a,b].map(d => trackPort(x,y,d));
+      ctx.beginPath(); ctx.moveTo(pa[0],pa[1]); ctx.lineTo(pb[0],pb[1]); ctx.stroke();
+    }
+    const throughDirs = new Set(throughPairs.flat());
+    for(const dir of dirs){
+      if(throughDirs.has(dir)) continue; // a T-junction's lone branch direction
+      const [px,py] = trackPort(x,y,dir);
+      ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(px,py); ctx.stroke();
+    }
+    for(const pairKey in DIAGONAL_PAIR_PORTS){
       if(!diagonalPairs || !diagonalPairs[pairKey]) continue;
-      const [a,b] = DIAGONAL_PORTS[pairKey].map(d => trackPort(x,y,d));
+      const [d1,d2] = DIAGONAL_PAIR_PORTS[pairKey];
+      if(!present.has(d1) || !present.has(d2)) continue; // corner not buildable here (e.g. a T missing that side)
+      const [a,b] = [d1,d2].map(d => trackPort(x,y,d));
       ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke();
     }
     return;

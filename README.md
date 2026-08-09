@@ -3117,3 +3117,96 @@ succeeds; the other 3 corners and the 2 straight pairs are unaffected) and
 the visual effect (a pixel-level render diff against the untoggled crossing
 confirms the new corner line actually draws), then toggled the same corner
 back off and confirmed both effects revert — zero console errors.
+
+# Addendum — T-junctions are rail switches too, exactly like 4-way crossings
+
+The default-restricted, player-toggled-switch model above only ever applied
+to a genuine 4-way crossing; a T/3-way junction kept its original, separate
+behavior — turning was always fully allowed there, no switch needed. That
+was an inconsistency: a real T-junction (one line splitting into two) is
+just as much a switch/points location as a 4-way crossing (two lines
+sharing a tile) — this game just happened to model only one of the two
+shapes that way. A T-junction now behaves identically to a 4-way crossing:
+whichever straight-through pair it has (there's only ever one — a T-junction
+always has exactly one direction with no opposite present, its "branch")
+is connected by default, and turning onto the branch requires the player to
+throw a corner switch there, the exact same `diagonalconnect` tool and
+`track.diagonalPairs` mechanism a 4-way crossing already used.
+
+## Design
+
+- **One gate, generalized, not a second code path.** `isRailCrossing`
+  (`pathfinding.js`) required exactly all 4 directions connected; it's
+  renamed `isRailSwitch` and now requires only **3 or more** — `ROAD_DIRS.
+  filter(d => track.edges[d.dir]).length >= 3`. Every caller
+  (`findLayerPath`, `cmdToggleDiagonalConnection`, `drawTrackCell`) already
+  worked purely off which directions are actually connected (`track.edges`),
+  never assumed all 4 exist, so widening the gate is the entire behavioral
+  change — no other logic needed touching. A T-junction's missing 4th
+  direction is never a candidate move in `findLayerPath`'s own `ROAD_DIRS`
+  loop (`if(!track.edges[dir]) continue`), so "no straight-through
+  continuation for a train arriving via the branch" falls out for free,
+  matching the real "must go through the points" case.
+- **Not every corner is buildable at a T-junction.** A 4-way crossing's 4
+  corners are always all valid, since all 4 directions exist — but a
+  T-junction missing its west side, say, has no NW or SW corner at all (a
+  pair naming a direction that was never built). `cmdToggleDiagonalConnection`
+  now checks both of a pair's named directions are real connected edges
+  before toggling it, rejecting an unbuildable corner (e.g. clicking NW at
+  a T missing west) with a clear message instead of silently recording a
+  switch state that could never affect any path. A new shared
+  `DIAGONAL_PAIR_PORTS` constant (pathfinding.js — the inverse of the
+  existing `DIAGONAL_PAIR_KEY`) is what both this check and the render code
+  below use to name a pair's 2 directions.
+- **A matching visual, generalized the same way.** `drawTrackCell`
+  (render.js) used to special-case exactly `dirs.length===4`; it now
+  handles `dirs.length>=3`. Whichever opposite pair(s) are present (one for
+  a T, both for a 4-way) each draw as a clean through-line, same as before.
+  A T-junction's lone branch direction — no longer drawn as a hub with an
+  equal spoke, since that would visually claim it's already through-routed
+  — instead gets a short stub spoke to the center, reading as "real track,
+  just not connected here by default" until a corner switch is thrown, at
+  which point the existing corner-line drawing (already generalized to
+  check both a pair's directions are actually present, for the same reason
+  the command does) fills in the gap and the junction reads as a fully
+  connected turn.
+
+## What changed
+
+- **`pathfinding.js`**: `isRailCrossing` → `isRailSwitch`, gate widened
+  from "all 4" to "3 or more" connected directions; new `DIAGONAL_PAIR_PORTS`
+  constant shared with commands.js and render.js.
+- **`commands.js`**: `cmdToggleDiagonalConnection` uses `isRailSwitch`; new
+  check rejects a pair whose 2 named directions aren't both connected
+  edges, with a clear warning.
+- **`render.js`**: `drawTrackCell`'s special rail-junction branch widened
+  from `dirs.length===4` to `dirs.length>=3`, computing whichever
+  through-pair(s) are actually present rather than assuming both; a
+  present-but-not-through direction draws a stub spoke to center; the
+  corner-line loop now also checks both of a pair's directions are present
+  before drawing it.
+- **`world.js`**: updated comments only — `diagonalPairs`' meaning was
+  already generic per-direction state, no field or default changed.
+
+## Testing
+
+`test/test-rail-crossing.js` Test 2 rewritten (a T-junction now asserts the
+SAME default-restricted behavior Test 1 asserts for a 4-way crossing:
+straight-through works, every turn is blocked); new Test 2b mirrors Test
+5's per-corner toggle coverage at a T-junction specifically, including
+confirming an unbuildable corner (NW/SW at a T missing its west side) is
+rejected with a clear message and no state change, while its 2 buildable
+corners (NE/SE) toggle independently exactly like a 4-way crossing's do. A
+stale test comment implying a west arm was needed to avoid "just a
+T-junction" was corrected, since T-junctions no longer need avoiding for
+that reason. All 13 test files pass (46 checks in this file, up from 24).
+Verified in a real browser via Playwright: built a live T-junction through
+the real toolbar, confirmed straight-through works and every turn is
+blocked by default (`findRailPath`), toggled its NE corner with the real
+`diagonalconnect` tool and confirmed the turn now succeeds, attempted its
+(unbuildable) NW corner and confirmed it's rejected with no state change
+and no crash, confirmed a genuine 4-way crossing built elsewhere is
+completely unaffected (regression check), and visually confirmed the
+render: before the toggle the branch reads as a stub notch off the
+through-line, after it the junction reads as a fully connected "Y" with no
+gap — zero console errors throughout.

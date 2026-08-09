@@ -120,34 +120,45 @@ function buildingRailAccessCell(building){
   return null;
 }
 
-// A rail cell with all 4 lateral directions connected has no possible
-// interpretation other than two independent straight lines crossing at
-// grade — this game has no switch/points equipment, so a genuine junction
-// that lets a train CHANGE from one line onto the other needs a player to
-// leave one direction disconnected, exactly like a T/3-way junction already
-// works (and stays fully any-to-any, unrestricted — a real switch DOES let
-// a train divert). Only rail gets this: a real road intersection lets
-// traffic turn in any direction, so a 4-way road cell keeps its ordinary
-// any-to-any behavior. See findLayerPath below for where this is enforced,
-// and drawTrackCell (render.js) for the matching "two crossing lines, not a
-// hub" visual.
-function isRailCrossing(track, kind){
-  return kind==='rail' && track.edges.N && track.edges.S && track.edges.E && track.edges.W;
+// A rail cell with 3 or more of its 4 lateral directions connected — a
+// T/3-way junction just as much as a genuine 4-way crossing — has no
+// possible interpretation other than a real switch/points location: this
+// game has no switch/points equipment as its own entity, so by default
+// travel through it is restricted to whichever straight-through pair(s)
+// the connected directions actually complete (a T has exactly one, N-S or
+// E-W; a 4-way has both), continuing on whichever line was entered. A
+// player-toggled corner switch (see DIAGONAL_PAIR_KEY/DIAGONAL_PAIR_PORTS
+// below) is what lets a train turn from one line onto another — same
+// mechanism, same default, whether the cell has 3 connected directions or
+// 4. Only rail gets this: a real road intersection lets traffic turn in
+// any direction, so a T/4-way road cell keeps its ordinary any-to-any
+// behavior. See findLayerPath below for where this is enforced, and
+// drawTrackCell (render.js) for the matching visual.
+function isRailSwitch(track, kind){
+  if(kind !== 'rail') return false;
+  return ROAD_DIRS.filter(d => track.edges[d.dir]).length >= 3;
 }
-// A crossing's 2 straight pairs (N-S, E-W) are always connected by default
+// A switch's straight-through pair(s) (N-S and/or E-W, whichever the
+// connected directions actually complete) are always connected by default
 // — the case above. The 4 "corner" pairs (N-E, N-W, S-E, S-W) are OFF by
-// default (a plain crossing has no switch) but individually selectable via
-// cmdToggleDiagonalConnection (commands.js) and track.diagonalPairs (world.js)
-// — a player-modeled points/switch at that one crossing. Looks up which
-// diagonalPairs key (if any) connects two given directions; returns
-// undefined for a straight pair (N-S/E-W) or two equal directions, neither
-// of which is ever a "diagonal" pair.
+// default (no switch thrown) but individually selectable via
+// cmdToggleDiagonalConnection (commands.js) and track.diagonalPairs
+// (world.js) — a player-modeled points/switch at that one cell. Only ever
+// meaningful for a pair whose BOTH directions are actually connected edges
+// — a T-junction missing its west side, for instance, has no buildable
+// NW/SW corner at all, only NE/SE (see cmdToggleDiagonalConnection's own
+// check). DIAGONAL_PAIR_KEY looks up which diagonalPairs key (if any)
+// connects two given directions; DIAGONAL_PAIR_PORTS is its inverse (pair
+// name -> the 2 directions it names) — shared with render.js and
+// commands.js so all three agree on the same 4 names. Neither ever
+// produces/accepts a straight pair (N-S/E-W) or two equal directions.
 const DIAGONAL_PAIR_KEY = {
   N: {E:'NE', W:'NW'},
   S: {E:'SE', W:'SW'},
   E: {N:'NE', S:'SE'},
   W: {N:'NW', S:'SW'},
 };
+const DIAGONAL_PAIR_PORTS = {NE:['N','E'], NW:['N','W'], SE:['S','E'], SW:['S','W']};
 
 // BFS over {x,y,layer} nodes: lateral moves follow only established,
 // direction-allowed edges within a layer (respecting one-way blocks). A
@@ -186,24 +197,28 @@ function findLayerPath(start, end){
     const cur = queue.shift();
     const track = trackAt(cur.x, cur.y, cur.layer);
     const [grade, kind] = LAYER_GRADE_KIND[cur.layer];
-    // At a rail crossing (isRailCrossing above), continuing is restricted to
-    // straight through on whichever line was actually arrived on, PLUS
-    // whichever corner pairs (if any) the player has switched on for this
-    // exact entry direction (track.diagonalPairs — see DIAGONAL_PAIR_KEY
-    // above) — dirBetween(prev,cur) is the direction of TRAVEL that reached
-    // `cur` (the exit side `prev` used), and straight-through means
-    // departing `cur` the same compass direction, not its opposite
-    // (arriving while heading east means continuing east on the far side of
-    // the crossing, not reversing west). The very first node (no cameFrom
-    // entry — cur === start) has no established direction to be consistent
-    // with, so it's left unrestricted; that's a narrow, harmless gap in
-    // practice, since a fresh path is only ever computed while a vehicle is
-    // fully at rest (startMovingTo/startMovingToRail, systems.js), and a
-    // bare crossing is never itself a rest point (nothing docks at a
-    // crossing) in any built layout.
+    // At a rail switch (isRailSwitch above — a T/3-way junction just as
+    // much as a 4-way crossing), continuing is restricted to straight
+    // through on whichever line was actually arrived on, PLUS whichever
+    // corner pairs (if any) the player has switched on for this exact
+    // entry direction (track.diagonalPairs — see DIAGONAL_PAIR_KEY above)
+    // — dirBetween(prev,cur) is the direction of TRAVEL that reached `cur`
+    // (the exit side `prev` used), and straight-through means departing
+    // `cur` the same compass direction, not its opposite (arriving while
+    // heading east means continuing east on the far side of the switch,
+    // not reversing west). A T-junction's lone "branch" direction has no
+    // straight-through continuation at all (its opposite side was never
+    // built) — arriving via the branch always requires a corner pair to
+    // depart at all, exactly the real "must go through the points" case.
+    // The very first node (no cameFrom entry — cur === start) has no
+    // established direction to be consistent with, so it's left
+    // unrestricted; that's a narrow, harmless gap in practice, since a
+    // fresh path is only ever computed while a vehicle is fully at rest
+    // (startMovingTo/startMovingToRail, systems.js), and a bare switch is
+    // never itself a rest point (nothing docks at one) in any built layout.
     let straightOnly = null;
     let entryPort = null; // the physical side `cur` was entered through — the OPPOSITE compass direction from the direction of travel (straightOnly): arriving while traveling south means the connection actually used is cur's NORTH side.
-    if(isRailCrossing(track, kind)){
+    if(isRailSwitch(track, kind)){
       const prev = cameFrom.get(nodeKey(cur));
       const entryDir = prev && dirBetween(prev, cur);
       if(entryDir){ straightOnly = entryDir.dir; entryPort = entryDir.opp; }
@@ -217,7 +232,7 @@ function findLayerPath(start, end){
         // entryPort (the side actually used to arrive), not straightOnly
         // (the direction of travel, its opposite).
         const diagonalKey = DIAGONAL_PAIR_KEY[entryPort] && DIAGONAL_PAIR_KEY[entryPort][dir];
-        if(!diagonalKey || !track.diagonalPairs[diagonalKey]) continue; // rail crossing: no turning unless that corner's switch is on
+        if(!diagonalKey || !track.diagonalPairs[diagonalKey]) continue; // rail switch: no turning unless that corner's points are thrown
       }
       const found = tryVisit({x:cur.x+dx, y:cur.y+dy, layer:cur.layer}, cur);
       if(found) return found;

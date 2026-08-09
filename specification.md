@@ -783,6 +783,22 @@ which is also the seam a modding UI could hook into later.
 > never reach the 4-connected state this section's crossing rule requires,
 > so the two mechanisms never interact.
 
+> **Further amended in Phase 2 (T-junctions are switches too).** The
+> restriction and corner-switch model above originally applied only to a
+> genuine 4-way crossing; a T/3-way junction kept the ordinary any-to-any
+> behavior every other junction shape has. That was inconsistent — a real
+> T-junction (one line splitting into two) is exactly as much a
+> switch/points location as a 4-way crossing (two lines sharing a tile),
+> this game just modeled only one of the two shapes that way. The gate is
+> now "3 or more of the 4 lateral directions connected," not "all 4" — a
+> T-junction's single straight-through pair is connected by default,
+> exactly like a 4-way crossing's two are, and turning onto its one
+> "branch" direction needs the same player-thrown corner switch. Not every
+> corner is buildable at a T-junction (one missing side means 2 of the 4
+> corner names reference a direction that was never built there); toggling
+> an unbuildable corner is rejected rather than silently recording a
+> switch state that could never affect any path.
+
 ---
 
 ## 11. Rendering Pipeline

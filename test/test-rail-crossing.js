@@ -1,12 +1,13 @@
-// Regression tests for rail crossings (§ Rail crossings) — a rail cell with
-// all 4 lateral directions connected (an N-S line and a W-E line sharing
-// one tile) is always two independent straight lines crossing at grade,
-// never a switch: this game has no points/switch equipment, so travel
-// through such a cell is restricted to continuing straight on whichever
-// line was actually entered on — no turning onto the other line. A T/3-way
-// junction (still no such thing as "the other line" — only one line ever
-// splits there) keeps its ordinary any-to-any behavior, unchanged. Run
-// against the real index.html code via test/harness.js.
+// Regression tests for rail crossings and switches (§ Rail crossings, §
+// Addendum — Diagonal connections, § Addendum — T-junctions are switches
+// too) — a rail cell with 3 or more of its 4 lateral directions connected
+// (a T/3-way junction just as much as a genuine 4-way crossing) is always
+// independent straight-through line(s), never automatically a switch: this
+// game has no points/switch equipment, so travel through such a cell is
+// restricted to continuing straight on whichever line was actually entered
+// on, UNLESS the player has thrown a corner switch there (§ Addendum —
+// Diagonal connections) enabling that specific turn. Run against the real
+// index.html code via test/harness.js.
 'use strict';
 const {newGameContext, run} = require('./harness.js');
 
@@ -59,7 +60,7 @@ section('Test 1 — a 4-way rail crossing allows straight-through travel but nev
   check('W-S turn is blocked (no path)', !s.wToS);
 });
 
-section('Test 2 — a T/3-way rail junction is unaffected: turning is still fully allowed', () => {
+section('Test 2 — a T/3-way rail junction behaves exactly like a 4-way crossing: straight-through works, every turn is blocked by default', () => {
   const ctx = newGameContext();
   const s = run(ctx, `
     // A T-junction at (5,5): N-S line y=2..8, plus a single east stub —
@@ -70,18 +71,61 @@ section('Test 2 — a T/3-way rail junction is unaffected: turning is still full
     return {
       threeConnected: junction.edges.N && junction.edges.S && junction.edges.E && !junction.edges.W,
       nToS: !!findRailPath({x:5,y:2,layer:'rail'}, {x:5,y:8,layer:'rail'}),
+      sToN: !!findRailPath({x:5,y:8,layer:'rail'}, {x:5,y:2,layer:'rail'}),
       nToE: !!findRailPath({x:5,y:2,layer:'rail'}, {x:8,y:5,layer:'rail'}),
       sToE: !!findRailPath({x:5,y:8,layer:'rail'}, {x:8,y:5,layer:'rail'}),
       eToN: !!findRailPath({x:8,y:5,layer:'rail'}, {x:5,y:2,layer:'rail'}),
       eToS: !!findRailPath({x:8,y:5,layer:'rail'}, {x:5,y:8,layer:'rail'}),
     };
   `);
-  check('the junction really only has 3 directions connected (precondition — not a crossing)', s.threeConnected);
-  check('N-S straight through still works', s.nToS);
-  check('N-E turn is still allowed (a real switch, not a crossing)', s.nToE);
-  check('S-E turn is still allowed', s.sToE);
-  check('E-N turn is still allowed', s.eToN);
-  check('E-S turn is still allowed', s.eToS);
+  check('the junction really only has 3 directions connected (precondition)', s.threeConnected);
+  check('N-S straight through is allowed', s.nToS);
+  check('S-N straight through is allowed', s.sToN);
+  check('N-E turn is blocked by default (no path)', !s.nToE);
+  check('S-E turn is blocked by default (no path)', !s.sToE);
+  check('E-N turn is blocked by default (no path)', !s.eToN);
+  check('E-S turn is blocked by default (no path)', !s.eToS);
+});
+
+section('Test 2b — cmdToggleDiagonalConnection works at a T-junction the same way it does at a 4-way crossing, one corner at a time', () => {
+  const ctx = newGameContext();
+  const s = run(ctx, `
+    // Same T-junction as Test 2: N-S line y=2..8, east stub x=5..8,y=5 —
+    // missing the west side entirely, so only NE and SE are ever
+    // buildable corners here (NW/SW would need a west side that was never
+    // built).
+    for(let y=2; y<=8; y++) cmdBuildTrack(5, y, 'rail', true);
+    for(let x=5; x<=8; x++) cmdBuildTrack(x, 5, 'rail', true);
+
+    cmdToggleDiagonalConnection(5,5, 6,4, 'rail'); // NE corner: (6,4) is diagonally NE of the junction
+    const withNE = {
+      nToE: !!findRailPath({x:5,y:2,layer:'rail'}, {x:8,y:5,layer:'rail'}),
+      eToN: !!findRailPath({x:8,y:5,layer:'rail'}, {x:5,y:2,layer:'rail'}),
+      sToE: !!findRailPath({x:5,y:8,layer:'rail'}, {x:8,y:5,layer:'rail'}), // SE still off
+      nToS: !!findRailPath({x:5,y:2,layer:'rail'}, {x:5,y:8,layer:'rail'}), // straight-through unaffected
+    };
+    cmdToggleDiagonalConnection(5,5, 6,4, 'rail'); // toggle NE back off
+    const afterToggleOff = { nToE: !!findRailPath({x:5,y:2,layer:'rail'}, {x:8,y:5,layer:'rail'}) };
+
+    cmdToggleDiagonalConnection(5,5, 6,6, 'rail'); // SE corner: (6,6) is diagonally SE of the junction
+    const withSE = { sToE: !!findRailPath({x:5,y:8,layer:'rail'}, {x:8,y:5,layer:'rail'}) };
+
+    // NW/SW have no west side to connect to here — rejected, not silently
+    // toggled on as a switch that could never actually do anything.
+    const nwRejected = (() => {
+      cmdToggleDiagonalConnection(5,5, 4,4, 'rail'); // NW corner: (4,4)
+      return {changed: trackAt(5,5,'rail').diagonalPairs.NW, warnLogs: pendingLogs.filter(l=>l.cls==='warn').map(l=>l.msg)};
+    })();
+
+    return {withNE, afterToggleOff, withSE, nwRejected};
+  `);
+  check('enabling the NE pair at a T-junction allows N<->E turning', s.withNE.nToE && s.withNE.eToN, JSON.stringify(s.withNE));
+  check('enabling NE does not enable SE', !s.withNE.sToE);
+  check('straight-through is unaffected by NE being enabled', s.withNE.nToS);
+  check('toggling NE again turns it back off', !s.afterToggleOff.nToE);
+  check('the SE pair works the same way, independently', s.withSE.sToE);
+  check('NW is rejected — this T-junction has no west side to connect', !s.nwRejected.changed, JSON.stringify(s.nwRejected));
+  check('the rejection explains the missing side', s.nwRejected.warnLogs.some(m=>/corner|side/i.test(m)), JSON.stringify(s.nwRejected.warnLogs));
 });
 
 section('Test 3 — a one-way block on the straight-through side still applies at a crossing', () => {
@@ -119,7 +163,7 @@ section('Test 4 — end to end: a real train can load at a depot reached straigh
     for(let y=2; y<=6; y++) cmdBuildTrack(10, y, 'rail', true); // north arm
     for(let y=6; y<=9; y++) cmdBuildTrack(10, y, 'rail', true); // south arm
     for(let x=10; x<=18; x++) cmdBuildTrack(x, 6, 'rail', true); // east arm
-    for(let x=6; x<=10; x++) cmdBuildTrack(x, 6, 'rail', true); // west arm — needed so (10,6) is a genuine 4-way crossing, not just a T-junction
+    for(let x=6; x<=10; x++) cmdBuildTrack(x, 6, 'rail', true); // west arm — completes (10,6) to a genuine 4-way crossing
 
     cmdBuildBuilding('trainyard', 9, 0, 'small'); // touches (10,2), the north arm's top tile
 

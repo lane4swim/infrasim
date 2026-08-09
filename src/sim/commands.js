@@ -167,35 +167,42 @@ function cmdToggleConnection(x1,y1,x2,y2,layer){
   }
   if(LAYER_GRADE_KIND[layer][1]==='rail') computeRailBlocks();
 }
-// Toggles one of the 4 "corner" pairs (N-E, N-W, S-E, S-W) at a genuine
-// 4-way RAIL crossing (isRailCrossing, pathfinding.js) — modeling a real
-// switch/points there, on top of the 2 straight pairs (N-S, E-W) a plain
-// crossing always has by default. Unlike cmdToggleConnection above, this
-// never creates or removes an `edges` connection itself (all 4 sides must
-// already be built and connected — that's what makes it a crossing in the
-// first place); it only changes which of the ALREADY-connected sides
-// pathfinding is willing to route a turn between (see findLayerPath's
-// DIAGONAL_PAIR_KEY check). `(cx,cy)` is the crossing cell; `(nx,ny)` is
-// one of its 4 diagonal neighbors (dx,dy each ±1) — the pair to toggle is
-// derived from which corner that neighbor sits in, so the player picks a
-// pair by clicking "the corner it points toward" rather than naming N/E
-// directly. Rail only: a road intersection already allows every turn by
-// default, so there's nothing here for road to select.
+// Toggles one of the 4 "corner" pairs (N-E, N-W, S-E, S-W) at a rail
+// switch — a T/3-way junction just as much as a genuine 4-way crossing
+// (isRailSwitch, pathfinding.js) — modeling a real switch/points there, on
+// top of whichever straight pair(s) (N-S and/or E-W) the switch already
+// has connected by default. Unlike cmdToggleConnection above, this never
+// creates or removes an `edges` connection itself (both directions a pair
+// names must already be built and connected — a T-junction missing its
+// west side, for instance, simply has no buildable NW/SW corner, only
+// NE/SE); it only changes which of the ALREADY-connected sides pathfinding
+// is willing to route a turn between (see findLayerPath's DIAGONAL_PAIR_KEY
+// check). `(cx,cy)` is the switch cell; `(nx,ny)` is one of its 4 diagonal
+// neighbors (dx,dy each ±1) — the pair to toggle is derived from which
+// corner that neighbor sits in, so the player picks a pair by clicking
+// "the corner it points toward" rather than naming N/E directly. Rail
+// only: a road intersection already allows every turn by default, so
+// there's nothing here for road to select.
 function cmdToggleDiagonalConnection(cx,cy,nx,ny,layer){
   if(LAYER_GRADE_KIND[layer][1] !== 'rail'){
-    logEvent('Diagonal connections only apply to rail crossings.', 'warn');
+    logEvent('Diagonal connections only apply to rail switches.', 'warn');
     return;
   }
   const ddx = nx-cx, ddy = ny-cy;
   const pairKey = (ddx===1 && ddy===-1) ? 'NE' : (ddx===-1 && ddy===-1) ? 'NW'
     : (ddx===1 && ddy===1) ? 'SE' : (ddx===-1 && ddy===1) ? 'SW' : null;
   if(!pairKey){
-    logEvent('Click a tile diagonally adjacent to the crossing (its corner) to pick which pair to toggle.', 'warn');
+    logEvent('Click a tile diagonally adjacent to the switch (its corner) to pick which pair to toggle.', 'warn');
     return;
   }
   const track = trackAt(cx,cy,layer);
-  if(!isRailCrossing(track, 'rail')){
-    logEvent('That tile is not a 4-way rail crossing — diagonal connections only apply there.', 'warn');
+  if(!isRailSwitch(track, 'rail')){
+    logEvent('That tile is not a rail switch (needs a T-junction or 4-way crossing, at least 3 connected directions) — diagonal connections only apply there.', 'warn');
+    return;
+  }
+  const [d1,d2] = DIAGONAL_PAIR_PORTS[pairKey];
+  if(!track.edges[d1] || !track.edges[d2]){
+    logEvent(`That corner doesn't connect two built rail lines here — this switch has no ${pairKey} side.`, 'warn');
     return;
   }
   track.diagonalPairs[pairKey] = !track.diagonalPairs[pairKey];
