@@ -63,8 +63,15 @@ function currentUndergroundView(){ return document.getElementById('undergroundVi
 const BUILDING_ICON = {mine:'icon-mine', mill:'icon-mill'};
 const VEHICLE_ICON = {bulk:'icon-bulktruck', flatbed:'icon-flatbedtruck'};
 
-function toolButtonHtml(color, icon, label, costText){
-  return `<span class="tool-swatch" style="background:${color}"><span class="badge"></span><svg class="tool-icon" viewBox="0 0 24 24"><use href="#${icon}"/></svg></span>${label}${costText ? `<span class="cost">${costText}</span>` : ''}`;
+// `menuSprite` (§ Isometric sprites) is a def's own optional
+// `sprites.menu` entry — when a content pack supplies one, it replaces the
+// hand-drawn <use> icon with the pack's own art; every def without one
+// keeps today's icon exactly as before.
+function toolButtonHtml(color, icon, label, costText, menuSprite){
+  const iconHtml = menuSprite
+    ? `<img class="tool-icon" src="${spriteDataUri(menuSprite)}" alt="">`
+    : `<svg class="tool-icon" viewBox="0 0 24 24"><use href="#${icon}"/></svg>`;
+  return `<span class="tool-swatch" style="background:${color}"><span class="badge"></span>${iconHtml}</span>${label}${costText ? `<span class="cost">${costText}</span>` : ''}`;
 }
 
 // One tool button per BUILDING_DEFS entry with a `recipe` — the same
@@ -83,7 +90,7 @@ function toolButtonHtml(color, icon, label, costText){
     const btn = document.createElement('button');
     btn.className = 'tool-btn';
     btn.dataset.tool = type;
-    btn.innerHTML = toolButtonHtml(def.color, BUILDING_ICON[type] || 'icon-generic-building', `Build ${def.label}`, `$${def.buildCost}`);
+    btn.innerHTML = toolButtonHtml(def.color, BUILDING_ICON[type] || 'icon-generic-building', `Build ${def.label}`, `$${def.buildCost}`, def.sprites && def.sprites.menu);
     container.appendChild(btn);
   }
 })();
@@ -98,7 +105,7 @@ function toolButtonHtml(color, icon, label, costText){
     const btn = document.createElement('button');
     btn.className = 'tool-btn';
     btn.dataset.tool = type;
-    btn.innerHTML = toolButtonHtml(def.color, VEHICLE_ICON[type] || 'icon-generic-vehicle', `Buy ${def.label}`, `$${def.purchaseCost}`);
+    btn.innerHTML = toolButtonHtml(def.color, VEHICLE_ICON[type] || 'icon-generic-vehicle', `Buy ${def.label}`, `$${def.purchaseCost}`, def.sprites && def.sprites.menu);
     container.appendChild(btn);
   }
 })();

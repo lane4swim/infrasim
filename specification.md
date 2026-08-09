@@ -723,6 +723,21 @@ which is also the seam a modding UI could hook into later.
 > (`recipe.inputs`/`recipe.outputs`) was already fully data-driven — fixed
 > by keying that check on the def having a `recipe` at all, matching what
 > the surrounding code already claimed to do.
+>
+> **Amended in Phase 2 (Isometric sprites).** A building/vehicle/engine/
+> wagon def can now optionally carry a `sprites` object — up to 9 entries
+> (n/s/e/w mandatory once present at all, ne/nw/se/sw and menu optional),
+> each either `{type:'svg', markup}` or `{type:'png', dataUri}` — that
+> replaces the renderer's procedural diamond/rotated-rect fill with real
+> art. This is the same "optional field, graceful fallback, validated at
+> load time" shape every content-pack extension since this section's own
+> addon example has followed: a def without `sprites` renders exactly as
+> before, and a malformed one is rejected by name at load time
+> (`validateSprites`, loader.js) rather than surfacing as an obscure
+> rendering bug three systems away. Only n/s/e/w are ever actually
+> selectable, since the sim grid is strictly 4-connected (§10) — the
+> diagonal keys are reserved so a future diagonal-movement mode costs no
+> schema migration, not because 8-directional movement exists today.
 
 ---
 
@@ -788,6 +803,14 @@ which is also the seam a modding UI could hook into later.
 > grid, completely unaware that the screen projection is no longer
 > orthogonal; the isometric transform is confined entirely to the rendering
 > and click-handling boundary described in this section.
+>
+> **Amended in Phase 2 (Isometric sprites).** Buildings/vehicles' procedural
+> diamond/rotated-rect fill is now optionally replaceable per content-pack
+> def with real art (§9's own amendment covers the schema) — drawn as a
+> plain image fit to the same screen-space bounding box `gridToScreen`
+> already computes for the procedural shape, so a sprite and the shape it
+> replaces always occupy identical screen space and share the same rotation/
+> direction logic.
 
 ---
 

@@ -187,6 +187,92 @@ function diamondPath(x, y, w, h){
   return corners;
 }
 
+// ---------------------------------------------------------------------
+// ISOMETRIC SPRITES (§ Isometric sprites) — an optional per-def `sprites`
+// object (loader.js's validateSprites) lets a content pack replace a
+// building/vehicle's procedural diamond/rotated-rect fill with real art,
+// picked per the direction the entity is actually facing/traveling right
+// now. Absent entirely by default — every def without `sprites` keeps
+// today's flat-color rendering untouched, same graceful-degrade contract
+// every other optional content-pack field already follows.
+// ---------------------------------------------------------------------
+
+// Only n/s/e/w are ever produced by resolveDirectionKey below — the sim
+// grid is strictly 4-connected (pathfinding.js's ROAD_DIRS has no diagonal
+// edge), so ne/nw/se/sw are validated/stored but never selected here. The
+// screen vector each real direction produces is NOT the screen-cardinal
+// direction the name suggests: running gridToScreen's deltas through each
+// grid direction lands e/w on the down-right/up-left diagonal and n/s on
+// the up-right/down-left diagonal (diamond projection), so this table is
+// derived from gridToScreen itself, not hand-picked angles.
+const DIR_SCREEN_VECTOR = {
+  e: [ ISO_W/2,  ISO_H/2],
+  w: [-ISO_W/2, -ISO_H/2],
+  s: [-ISO_W/2,  ISO_H/2],
+  n: [ ISO_W/2, -ISO_H/2],
+};
+// A moving vehicle's real direction key, from the actual next-node delta on
+// its path (not just "which axis", the old movingAlongX boolean this
+// replaces) — idle/no path defaults to 'e', the same direction the old
+// movingAlongX-true default drew.
+function vehicleDirectionKey(v){
+  if(v.path && v.pathIndex < v.path.length-1){
+    const cur = v.path[v.pathIndex], next = v.path[v.pathIndex+1];
+    if(next.x > cur.x) return 'e';
+    if(next.x < cur.x) return 'w';
+    if(next.y > cur.y) return 's';
+    if(next.y < cur.y) return 'n';
+  }
+  return 'e';
+}
+// A train (one Movement entity spanning engine+wagons — see § Vehicle
+// length's "one big literal rectangle" choice, unchanged here) has no
+// single content-pack def of its own; it's an assembled Consist. Its
+// sprite, if any, is the ENGINE's — the same "one rect, optionally filled
+// with an image instead of a flat color" idea trucks use, just sourced from
+// a different def, with no new segmented per-wagon drawing logic.
+function spriteDefForVehicle(v){
+  return isTrain(v.id) ? ENGINE_DEFS[v.consist.engineType] : VEHICLE_DEFS[v.type];
+}
+// A building has no travel direction, but Stations have a real player-
+// chosen `facing` (n/s/e/w) and a Depot's `orientation` ('ns'/'ew') is
+// exactly the same 2-state real property depotPlatformCells (pathfinding.js)
+// already infers from footprint w-vs-h — reused here rather than adding new
+// storage, mapped to 'n' (tall/ns) or 'e' (wide/ew) as representative
+// direction keys. Every other building type (Mine/Mill/Town/Train Yard, any
+// content-pack production building) has no facing at all and always uses 'n'.
+function buildingDirectionKey(e){
+  if(e.type==='depot') return e.footprint.h >= e.footprint.w ? 'n' : 'e';
+  if(e.facing) return e.facing;
+  return 'n';
+}
+
+// Sprite defs are decoded into a real Image exactly once per (def,
+// direction) and cached forever after — content packs don't change at
+// runtime, so there's nothing to invalidate. Keyed by the def object itself
+// (BUILDING_DEFS/VEHICLE_DEFS/ENGINE_DEFS entries are already unique per
+// type) rather than a string id, so no naming collision is possible across
+// sections. Returns null (draw the procedural fallback instead) whenever
+// there's no sprite for this exact direction, or the Image hasn't finished
+// decoding yet — a data: URI decodes same-tick in every browser this game
+// targets, but checking `complete` costs nothing and keeps this correct
+// even if that ever isn't true.
+const spriteImageCache = new Map(); // def -> {dirKey: Image}
+function spriteImageFor(def, dirKey){
+  if(!def || !def.sprites) return null;
+  const sprite = def.sprites[dirKey];
+  if(!sprite) return null;
+  let byDir = spriteImageCache.get(def);
+  if(!byDir){ byDir = {}; spriteImageCache.set(def, byDir); }
+  let img = byDir[dirKey];
+  if(!img){
+    img = new Image();
+    img.src = spriteDataUri(sprite);
+    byDir[dirKey] = img;
+  }
+  return (img.complete && img.naturalWidth>0) ? img : null;
+}
+
 function render(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
 
@@ -466,9 +552,22 @@ function render(){
     const e = world.entities.get(id);
     const def = BUILDING_DEFS[e.type];
     const fp = e.footprint;
-    ctx.fillStyle = def.color;
-    diamondPath(e.x, e.y, fp.w, fp.h);
-    ctx.fill();
+    const corners = diamondPath(e.x, e.y, fp.w, fp.h);
+    const spriteImg = spriteImageFor(def, buildingDirectionKey(e));
+    if(spriteImg){
+      // A sprite is pre-rendered art, not a shape to fill — drawn as a
+      // plain rect fit to the diamond's screen-space bounding box (the
+      // artist bakes the isometric look into the image itself, transparent
+      // corners and all), the same way real isometric games composite
+      // pre-rendered building art rather than warping a texture onto a
+      // parallelogram.
+      const xs = corners.map(c=>c[0]), ys = corners.map(c=>c[1]);
+      const minX = Math.min(...xs), minY = Math.min(...ys);
+      ctx.drawImage(spriteImg, minX, minY, Math.max(...xs)-minX, Math.max(...ys)-minY);
+    } else {
+      ctx.fillStyle = def.color;
+      ctx.fill();
+    }
     const halted = producerHalted(e);
     if(halted){ ctx.strokeStyle = getCss('--danger'); ctx.lineWidth=2; diamondPath(e.x, e.y, fp.w, fp.h); ctx.stroke(); }
     if(e===selected){ ctx.strokeStyle = getCss('--amber'); ctx.lineWidth=2; diamondPath(e.x, e.y, fp.w, fp.h); ctx.stroke(); }
@@ -562,7 +661,6 @@ function render(){
       drawX = a.x + (b.x-a.x)*v.frac;
       drawY = a.y + (b.y-a.y)*v.frac;
     }
-    ctx.fillStyle = v.state==='blocked' ? getCss('--danger') : getVehicleStats(v).color;
     const [cx, cy] = gridToScreen(drawX+0.5, drawY+0.5);
 
     // Every vehicle is drawn as a rectangle oriented along its direction of
@@ -584,19 +682,28 @@ function render(){
     // rotated to match the real on-screen travel direction: `stepLen` is the
     // screen-pixel distance covered by one grid-unit of travel along EITHER
     // axis (equal for both, by diamond symmetry), and `angle` is that
-    // direction's screen angle.
-    const movingAlongX = v.path && v.pathIndex < v.path.length-1
-      ? v.path[v.pathIndex+1].x !== v.path[v.pathIndex].x
-      : true;
-    const dirVec = movingAlongX ? [ISO_W/2, ISO_H/2] : [-ISO_W/2, ISO_H/2];
-    const angle = Math.atan2(dirVec[1], dirVec[0]);
+    // direction's screen angle (DIR_SCREEN_VECTOR, § Isometric sprites — the
+    // same table a sprite lookup uses to pick which of the 4 real directions
+    // this vehicle is facing).
+    const dirKey = vehicleDirectionKey(v);
+    const angle = Math.atan2(DIR_SCREEN_VECTOR[dirKey][1], DIR_SCREEN_VECTOR[dirKey][0]);
     const stepLen = Math.hypot(ISO_W/2, ISO_H/2);
     const longPx = stepLen * v.length;
     const shortPx = CELL * 0.42;
+    const spriteImg = spriteImageFor(spriteDefForVehicle(v), dirKey);
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(angle);
-    ctx.fillRect(-longPx/2, -shortPx/2, longPx, shortPx);
+    if(spriteImg){
+      ctx.drawImage(spriteImg, -longPx/2, -shortPx/2, longPx, shortPx);
+      if(v.state==='blocked'){
+        ctx.strokeStyle = getCss('--danger'); ctx.lineWidth=2;
+        ctx.strokeRect(-longPx/2-2, -shortPx/2-2, longPx+4, shortPx+4);
+      }
+    } else {
+      ctx.fillStyle = v.state==='blocked' ? getCss('--danger') : getVehicleStats(v).color;
+      ctx.fillRect(-longPx/2, -shortPx/2, longPx, shortPx);
+    }
     if(v.layer==='elevated' || v.layer==='railElevated' || v.layer==='airspace' || v.layer==='railAirspace'){
       // Same "above ground" outline for elevated AND airspace — both mean
       // "currently above ground level," so one shared visual cue is enough

@@ -2835,3 +2835,119 @@ road, whose rendered rectangle appeared correctly rotated to match the
 road's on-screen diagonal. Terrain, buildings (with billboarded labels),
 track, the hover ghost, and a moving vehicle were all visually confirmed to
 align on the same diamond lattice, with zero console errors throughout.
+
+# Phase 2 — Isometric sprites
+
+A content pack can now replace any building/vehicle's procedural diamond/
+rotated-rect fill with real per-direction art — up to 9 sprites per def (one
+per compass direction, plus a toolbar "menu" icon), entirely optional and
+falling back to today's flat-color rendering when absent, exactly like every
+other optional content-pack field.
+
+## Design
+
+- **Only 4 of the 9 direction keys are ever selected — the other 4 are
+  reserved, not dead.** The sim grid is strictly 4-connected
+  (`pathfinding.js`'s `ROAD_DIRS` has no diagonal edge anywhere), so a
+  vehicle only ever travels, and a building only ever faces, one of n/s/e/w.
+  `sprites.n/s/e/w` are mandatory once `sprites` is present at all;
+  `sprites.ne/nw/se/sw` are validated (a typo'd key is still caught) but
+  optional and never drawn by anything today — reserved key names for a
+  possible future diagonal-movement mode, so adding one later needs no
+  content-pack migration, only a `render.js` dispatch change. `sprites.menu`
+  (the toolbar icon) is independent of the direction keys and optional too.
+- **The names are grid directions, not screen directions — and under this
+  game's isometric projection those don't visually match.** Running
+  `gridToScreen`'s deltas through each real grid direction: `e` and `w` land
+  on the screen's down-right/up-left diagonal, `n` and `s` land on the
+  up-right/down-left diagonal (`DIR_SCREEN_VECTOR`, `render.js`, derived
+  directly from the projection rather than hand-picked angles). True
+  screen-cardinal motion would require a diagonal grid edge, which never
+  exists.
+- **SVG or PNG, per sprite slot.** `{type:'svg', markup:'<svg>...</svg>'}` or
+  `{type:'png', dataUri:'data:image/png;base64,...'}` — a pack can mix both
+  freely across slots. SVG is percent-encoded into a `data:image/svg+xml,...`
+  URI rather than base64'd, since `btoa` throws on any non-Latin1 character
+  arbitrary hand-authored SVG text could easily contain; PNG sprites already
+  arrive as a full data URI and pass through unchanged (`spriteDataUri`,
+  loader.js — the one place either format gets decoded, shared by render.js
+  and ui.js so neither reimplements it).
+- **A sprite is composited art, not a shape to fill.** It's drawn as a plain
+  rect fit to the entity's screen-space bounding box (a building's diamond
+  corners' min/max, or a vehicle's rotated local frame) rather than clipped
+  to the diamond outline or warped onto it — the artist bakes the isometric
+  look (and transparent corners) into the image itself, the same way real
+  isometric games composite pre-rendered building/unit art.
+- **Vehicle rotation and sprite selection share one direction resolution.**
+  `vehicleDirectionKey(v)` reads the REAL next-node delta on the vehicle's
+  path (replacing the old `movingAlongX` boolean, which only distinguished
+  axis, not sign) — the same key both picks the sprite and looks up
+  `DIR_SCREEN_VECTOR` for the procedural-rectangle rotation angle, so a
+  sprite and the shape it replaces always agree on facing.
+- **A train has no content-pack def of its own — it borrows the engine's
+  sprite.** A train's single Movement entity spans engine+wagons as one
+  rectangle (§ Vehicle length's "one big literal rectangle" choice,
+  unchanged) with no per-wagon drawing; `spriteDefForVehicle(v)` resolves to
+  `VEHICLE_DEFS[v.type]` for a truck or `ENGINE_DEFS[v.consist.engineType]`
+  for a train, so the engine's sprite (if any) stretches over the train's
+  full length exactly the way its flat color did before — no new segmented-
+  rendering logic. Wagon `sprites` are validated for schema consistency but
+  reserved, same as the diagonal direction keys, for a possible future
+  segmented-train renderer.
+- **A building's direction key comes from data it already has, not new
+  storage.** A Station's real `facing` (n/s/e/w) is used directly; a Depot's
+  `orientation` ('ns'/'ew') maps to 'n'/'e' via the exact same
+  `footprint.h >= footprint.w` inference `depotPlatformCells`
+  (`pathfinding.js`) already uses — no new field. Every other building type
+  has no facing at all and always resolves to 'n'.
+- **Sprites decode once and cache forever.** `spriteImageFor(def, dirKey)`
+  (`render.js`) builds a real `Image` from a sprite's data URI the first
+  time that exact (def, direction) pair is drawn, keyed by the def object
+  itself, and reuses it every frame after — content packs don't change at
+  runtime, so there's nothing to invalidate. Returns `null` (draw the
+  procedural fallback) whenever there's no sprite for that direction, or the
+  `Image` hasn't finished decoding.
+
+## What changed
+
+- **`loader.js`**: `validateSprites`/`SPRITE_DIRECTION_KEYS`/
+  `REQUIRED_SPRITE_DIRECTION_KEYS`, wired into `validateContentPack` for
+  buildings, vehicles, engines, and wagons; `spriteDataUri`, shared by
+  render.js and ui.js.
+- **`render.js`**: `DIR_SCREEN_VECTOR`, `vehicleDirectionKey`,
+  `spriteDefForVehicle`, `buildingDirectionKey`, `spriteImageFor` +
+  its cache; the buildings and vehicles draw blocks now check for a sprite
+  before falling back to the old flat fill/`fillRect`.
+- **`ui.js`**: `toolButtonHtml` takes an optional `menuSprite` and swaps the
+  hand-drawn `<use>` icon for an `<img>` when a def's `sprites.menu` is
+  present; both dynamic toolbar generators (production buildings, vehicles)
+  pass it through.
+- **`index.html`**: `img.tool-icon{object-fit:contain}` alongside the
+  existing hand-drawn-icon rule.
+
+## Testing
+
+New `test/test-sprites.js` (20 checks): `validateSprites` accepts a
+well-formed sprites object on every entity type (building/vehicle/engine/
+wagon) including the reserved diagonal keys when present, and rejects a
+battery of deliberately-broken fixtures (missing required direction, unknown
+key, invalid type, svg missing markup, png missing/invalid dataUri, sprites
+as a non-object); `spriteDataUri` decodes both formats correctly (svg
+round-trips through `decodeURIComponent`, png passes its dataUri straight
+through, no sprite yields `null`); and a later content-pack block overriding
+a building by id carries its own `sprites` through the merge correctly
+(mergeContentPacks replaces an id's entry wholesale, so the override restates
+the whole def, sprites included — verified both that the override's sprites
+land and that the rest of the def's fields survive).
+
+render.js's actual drawing isn't headlessly testable (needs a real canvas),
+so it was verified in a real browser via Playwright instead: built a Mine
+and a Bulk Truck with test sprites defined in every direction alongside a
+Steel Mill with none, and confirmed `spriteImageFor` resolved a real decoded
+`Image` for the Mine (direction `n`, its default) and the truck (direction
+`e`, its actual travel direction) while the Mill correctly resolved nothing
+and kept rendering its old flat diamond fill; visually confirmed the Mine's
+sprite fills its diamond's bounding box as a flat rect, the truck's sprite
+rotates correctly with its direction of travel, and both toolbar buttons
+switched to `<img>` while the spriteless Mill's button kept its hand-drawn
+icon — zero console errors throughout.

@@ -78,6 +78,35 @@ function validateContentPack(pack){
   for(const section of ['resources','recipes','buildings','vehicles','rail','engines','wagons']){
     need(pack && typeof pack[section]==='object' && pack[section]!==null, `missing "${section}" section`);
   }
+  // Isometric per-direction sprites (§ Isometric sprites) — optional on any
+  // renderable entity def (building/vehicle/engine/wagon). Only n/s/e/w are
+  // ever actually selectable today: the sim grid is strictly 4-connected
+  // (see pathfinding.js's ROAD_DIRS — no diagonal edge exists anywhere), so
+  // a vehicle only ever travels, and a building only ever faces, one of
+  // those four. ne/nw/se/sw are RESERVED key names for a possible future
+  // diagonal-movement mode — validated if present (so a typo'd key is still
+  // caught), but never required and never drawn by anything today; an
+  // author who only cares about the reachable four isn't forced to draw
+  // four sprites nothing can select. `menu` is the toolbar-icon sprite —
+  // also optional, also independent of the direction keys.
+  const SPRITE_DIRECTION_KEYS = ['n','s','e','w','ne','nw','se','sw'];
+  const REQUIRED_SPRITE_DIRECTION_KEYS = ['n','s','e','w'];
+  function validateSprites(ownerLabel, sprites){
+    if(sprites===undefined) return;
+    need(typeof sprites==='object' && sprites!==null && !Array.isArray(sprites), `${ownerLabel} has an invalid "sprites" — must be an object`);
+    for(const key of Object.keys(sprites)){
+      need(SPRITE_DIRECTION_KEYS.includes(key) || key==='menu', `${ownerLabel} sprites has an unknown key "${key}" (expected one of ${SPRITE_DIRECTION_KEYS.join('/')}, or "menu")`);
+    }
+    for(const key of REQUIRED_SPRITE_DIRECTION_KEYS){
+      need(sprites[key]!==undefined, `${ownerLabel} sprites is missing required direction "${key}" (n/s/e/w are mandatory once "sprites" is present at all — ne/nw/se/sw and menu stay optional)`);
+    }
+    for(const [key, sprite] of Object.entries(sprites)){
+      need(sprite && typeof sprite==='object', `${ownerLabel} sprite "${key}" must be an object`);
+      need(sprite.type==='svg' || sprite.type==='png', `${ownerLabel} sprite "${key}" has an invalid "type" (must be "svg" or "png")`);
+      if(sprite.type==='svg') need(typeof sprite.markup==='string' && sprite.markup.length>0, `${ownerLabel} sprite "${key}" is missing "markup"`);
+      else need(typeof sprite.dataUri==='string' && sprite.dataUri.startsWith('data:image/png'), `${ownerLabel} sprite "${key}" is missing a valid "dataUri" (must start with "data:image/png")`);
+    }
+  }
   for(const [id, r] of Object.entries(pack.resources)){
     need(typeof r.name==='string', `resource "${id}" is missing a name`);
     need(typeof r.baseValue==='number', `resource "${id}" is missing a numeric baseValue`);
@@ -109,6 +138,7 @@ function validateContentPack(pack){
     // the same as every building before this feature existed.
     if(b.blockedUndergroundLevels!==undefined) need(Number.isInteger(b.blockedUndergroundLevels) && b.blockedUndergroundLevels>=0,
       `building "${id}" has an invalid blockedUndergroundLevels — must be a non-negative integer`);
+    validateSprites(`building "${id}"`, b.sprites);
   }
   for(const [id, v] of Object.entries(pack.vehicles)){
     need(typeof v.purchaseCost==='number', `vehicle "${id}" is missing a numeric purchaseCost`);
@@ -120,6 +150,7 @@ function validateContentPack(pack){
     need(typeof v.transferRate==='number', `vehicle "${id}" is missing a numeric transferRate`);
     need(typeof v.lengthTiles==='number', `vehicle "${id}" is missing a numeric lengthTiles`);
     need(isQuarterTile(v.lengthTiles), `vehicle "${id}" lengthTiles (${v.lengthTiles}) must be a multiple of 0.25`);
+    validateSprites(`vehicle "${id}"`, v.sprites);
   }
   for(const [id, t] of Object.entries(pack.rail)){
     need(typeof t.costPerTile==='number', `rail def "${id}" is missing a numeric costPerTile`);
@@ -135,6 +166,7 @@ function validateContentPack(pack){
     need(typeof e.massEmpty==='number', `engine "${id}" is missing a numeric massEmpty`);
     need(typeof e.lengthTiles==='number', `engine "${id}" is missing a numeric lengthTiles`);
     need(isQuarterTile(e.lengthTiles), `engine "${id}" lengthTiles (${e.lengthTiles}) must be a multiple of 0.25`);
+    validateSprites(`engine "${id}"`, e.sprites);
   }
   for(const [id, w] of Object.entries(pack.wagons)){
     need(typeof w.purchaseCost==='number', `wagon "${id}" is missing a numeric purchaseCost`);
@@ -144,7 +176,30 @@ function validateContentPack(pack){
     need(typeof w.lengthTiles==='number', `wagon "${id}" is missing a numeric lengthTiles`);
     need(isQuarterTile(w.lengthTiles), `wagon "${id}" lengthTiles (${w.lengthTiles}) must be a multiple of 0.25`);
     need(typeof w.transferRate==='number', `wagon "${id}" is missing a numeric transferRate`);
+    // Validated for schema consistency with every other entity type, but
+    // not yet drawn by anything: a train renders as one single rectangle
+    // spanning engine+wagons (§ Vehicle length's own "one big literal
+    // rectangle" choice — wagons were never individually rendered even
+    // before sprites existed), using the ENGINE's sprite stretched over the
+    // whole train's length (see spriteDefForVehicle, render.js). Per-wagon
+    // sprites are reserved for a possible future segmented-train renderer.
+    validateSprites(`wagon "${id}"`, w.sprites);
   }
+}
+
+// Decodes one validated sprite entry (§ Isometric sprites) into a `src`
+// string an <img> element or a canvas Image can load directly — the one
+// place that knows how to turn either sprite `type` into a data URI, shared
+// by render.js (canvas Image objects, drawn per building/vehicle) and
+// ui.js (toolbar <img> tags, the "menu" sprite). SVG markup is percent-
+// encoded rather than base64'd (`btoa` throws on any non-Latin1 character,
+// which arbitrary hand-authored SVG text — a stray em dash in a <title>,
+// non-ASCII content — would easily contain); PNG sprites already arrive as
+// a full data URI (validateSprites requires the "data:image/png" prefix),
+// so there's nothing to do but pass it through.
+function spriteDataUri(sprite){
+  if(!sprite) return null;
+  return sprite.type==='svg' ? 'data:image/svg+xml,' + encodeURIComponent(sprite.markup) : sprite.dataUri;
 }
 
 // Multiple content packs (§9 — "A ContentPack loader merges base-game data
