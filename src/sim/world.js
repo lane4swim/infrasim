@@ -117,8 +117,7 @@ const ELEVATION_MIN = -4, ELEVATION_MAX = 4;
 // a road/track can actually climb, rather than a cliff. Deliberately a
 // flat constant, not a per-vehicle or content-pack field (unlike
 // transferRate/lengthTiles) — how steep a connection can be is a property
-// of the infrastructure itself, the same way the straight-through-only
-// rule for a Tunnel Ramp is, not something a vehicle def would vary.
+// of the infrastructure itself, not something a vehicle def would vary.
 const MAX_ELEVATION_DELTA = 1;
 // deepUnderground and airspace (below) are FLAT global planes — every
 // cell's deepUnderground/airspace track sits at the same absolute height

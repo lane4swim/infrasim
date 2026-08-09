@@ -27,18 +27,6 @@ function directionClaimedByOtherNetwork(x,y,layer,dir){
   }
   return false;
 }
-// A cell with a ramp edge (§ Underground layer) reads as a straight-through
-// slope, never a turn or junction — so once ANY direction has a ramp edge,
-// the only OTHER direction still allowed a new `edges` connection is that
-// ramp's own straight opposite; every other direction is blocked, whether
-// the new connection would be auto- or manually-made (connectNewTileEdges/
-// cmdToggleConnection below).
-function directionBlockedByRamp(track, dir){
-  for(const {dir:rDir, opp} of ROAD_DIRS){
-    if(track.rampEdge[rDir] && dir !== opp) return true;
-  }
-  return false;
-}
 // Ground, elevated, and underground all follow local terrain (elevationAt
 // in world.js) — ELEVATION_OFFSET moves elevated/underground with whatever
 // ground.elevation is at that (x,y), so the delta between two ADJACENT
@@ -46,10 +34,9 @@ function directionBlockedByRamp(track, dir){
 // ground.elevation values, regardless of which of the three grades is
 // asking. A connection between them is only real infrastructure if that
 // climb is gentle (MAX_ELEVATION_DELTA — § Terrain elevation), checked at
-// both auto-connect and manual Connect time, same as directionBlockedByRamp
-// above. deepUnderground/airspace are flat global planes (elevationAt
-// returns the same constant everywhere), so their delta is always 0 and
-// this never blocks them.
+// both auto-connect and manual Connect time. deepUnderground/airspace are
+// flat global planes (elevationAt returns the same constant everywhere), so
+// their delta is always 0 and this never blocks them.
 function elevationBlocksConnection(x1,y1,x2,y2,grade){
   return Math.abs(elevationAt(x1,y1,grade) - elevationAt(x2,y2,grade)) > MAX_ELEVATION_DELTA;
 }
@@ -63,14 +50,23 @@ function elevationBlocksConnection(x1,y1,x2,y2,grade){
 // crossing instead of two networks silently fusing. Shared by every "lay
 // a tile" command (road, rail track, and whatever's added later) since
 // none of this is road- or rail-specific.
+//
+// A Tunnel Ramp's rampEdge no longer caps how many OTHER directions this
+// cell can also connect (§ Rail crossings' generalization — removed the
+// old "straight-through-only" cap this function used to enforce via
+// directionBlockedByRamp): a cell can be a Tunnel Ramp AND a full 4-way
+// crossing AND anything in between, all 6 pairwise direction combinations
+// (N-S/E-W/N-E/N-W/S-E/S-W) buildable at once. What travel is actually
+// physically sensible through a shape like that is entirely pathfinding's
+// job now (findLayerPath's `straightOnly`, applied uniformly to both the
+// lateral edges and any rampEdge move at a genuine 4-way crossing), not a
+// build-time restriction on which edges are even allowed to exist.
 function connectNewTileEdges(x,y,layer,track){
   const [grade] = LAYER_GRADE_KIND[layer];
   for(const {dir,dx,dy,opp} of ROAD_DIRS){
     if(directionClaimedByOtherNetwork(x,y,layer,dir)) continue;
     if(directionClaimedByOtherNetwork(x+dx,y+dy,layer,opp)) continue;
-    if(directionBlockedByRamp(track,dir)) continue;
     const nTrack = trackAt(x+dx,y+dy,layer);
-    if(directionBlockedByRamp(nTrack,opp)) continue;
     if(elevationBlocksConnection(x,y,x+dx,y+dy,grade)) continue;
     if(nTrack.track){ track.edges[dir] = true; nTrack.edges[opp] = true; }
   }
@@ -154,10 +150,6 @@ function cmdToggleConnection(x1,y1,x2,y2,layer){
       logEvent(`Can't connect — ${other} track already runs through here in that direction; only a perpendicular crossing is possible.`, 'warn');
       return;
     }
-    if(directionBlockedByRamp(aTrack,d.dir) || directionBlockedByRamp(bTrack,d.opp)){
-      logEvent(`Can't connect — a ramp here only allows a straight-through connection.`, 'warn');
-      return;
-    }
     if(elevationBlocksConnection(x1,y1,x2,y2,LAYER_GRADE_KIND[layer][0])){
       logEvent(`Can't connect — the terrain here is too steep (max ${MAX_ELEVATION_DELTA} level difference).`, 'warn');
       return;
@@ -215,11 +207,13 @@ function cmdBuildRailRamp(x,y){ buildVerticalRamp(x,y,'rail','groundElevated',RA
 //
 // Constraints: (a) the two cells must be orthogonally adjacent (b) one must
 // have the UPPER grade's track of this kind, the other the LOWER grade's —
-// which cell is which is auto-detected, order-independent (c) each cell's
-// existing same-grade `edges` (and any OTHER ramp edge) must be limited to
-// the straight-through axis the ramp itself sits on, so the upper-ramp-
-// lower line always reads as one continuous straight run, never a turn or
-// junction at the transition itself.
+// which cell is which is auto-detected, order-independent. Either side may
+// already have any number of other lateral connections (a T-junction, a
+// full 4-way crossing, whatever) — that used to be rejected outright (§
+// Rail crossings' generalization removed the "must be a clean straight
+// stretch" precondition, since it's pathfinding's job now to decide what
+// travel through a busy cell is physically sensible, not a build-time cap
+// on which edges may even exist).
 function buildUndergroundRamp(x1,y1,x2,y2,kind,label,level){
   const upperGrade = level===1 ? 'ground' : undergroundGradeName(level-1);
   const lowerGrade = undergroundGradeName(level);
@@ -238,13 +232,6 @@ function buildUndergroundRamp(x1,y1,x2,y2,kind,label,level){
   const upperTrack = trackAt(upperX, upperY, GRADE_KIND_LAYER[upperGrade][kind]);
   const lowerTrack = trackAt(lowerX, lowerY, GRADE_KIND_LAYER[lowerGrade][kind]);
   if(upperTrack.rampEdge[dir] || lowerTrack.rampEdge[opp]){ logEvent(`There is already a ${label} here.`, 'warn'); return; }
-  // Only ever ONE direction may carry a connection (edge or ramp edge) other
-  // than the ramp's own straight-through pair — checked on both sides.
-  const onlyStraightThrough = (track, allowedDir) => ROAD_DIRS.every(r => r.dir===allowedDir || (!track.edges[r.dir] && !track.rampEdge[r.dir]));
-  if(!onlyStraightThrough(upperTrack, opp) || !onlyStraightThrough(lowerTrack, dir)){
-    logEvent(`A ${label} can only run along a straight stretch of track — no turns or junctions at the ramp itself.`, 'warn');
-    return;
-  }
   const cost = rampCostForUndergroundLevel(level);
   if(!canAfford(cost)){ logEvent(`Insufficient funds for ${label.toLowerCase()}.`, 'warn'); return; }
   charge(cost, label.toLowerCase());

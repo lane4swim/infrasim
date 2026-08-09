@@ -302,6 +302,22 @@ without touching simulation code.
 > distinction — the grade/layer model, occupancy rules, and everything else
 > in this section are unaffected; a hidden level is still fully present in
 > the simulation, just not drawn.
+>
+> **Further amended in Phase 2 (Rail crossings — ramp cells may carry any
+> other connection).** The straight-through constraint described a few
+> amendments up ("no turn or junction may touch a ramp cell") is gone — a
+> Tunnel Ramp cell, or a same-cell vertical Ramp cell, can now carry any of
+> the 6 pairwise lateral direction combinations at once, including a full
+> 4-way crossing. This didn't reopen a hole: by the time this change landed,
+> pathfinding itself had gained a `straightOnly` restriction at any genuine
+> 4-way rail crossing (a cell can't be turned through — this game has no
+> switch equipment, so 4 connected directions can only mean two independent
+> straight lines sharing a tile), which is now the sole source of truth for
+> what's actually travelable, not a build-time cap on what edges may exist.
+> The Tunnel Ramp's lateral descent is folded into that same restriction —
+> reachable only from the line whose straight-through direction it sits on
+> — while a same-cell vertical Ramp (a different-layer step, not a lateral
+> one) was never subject to any restriction here and needed no change.
 
 ---
 
