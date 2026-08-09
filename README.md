@@ -2951,3 +2951,79 @@ sprite fills its diamond's bounding box as a flat rect, the truck's sprite
 rotates correctly with its direction of travel, and both toolbar buttons
 switched to `<img>` while the spriteless Mill's button kept its hand-drawn
 icon — zero console errors throughout.
+
+# Phase 2 — Rail crossings
+
+A rail cell with all 4 lateral directions connected (an N-S line and a W-E
+line sharing one tile) is now correctly treated as two independent straight
+lines crossing at grade, not a switch — a train can continue straight
+through on whichever line it entered on, but can never turn onto the other
+line. Building two rail lines through the same cell was already possible
+before this (nothing stopped it); only the travel restriction was missing —
+pathfinding treated any junction shape, crossings included, as fully
+any-to-any.
+
+## Design
+
+- **Only the full 4-way case is a "crossing"; anything else is a real
+  junction, unrestricted.** `isRailCrossing(track, kind)` (`pathfinding.js`)
+  is true only when `kind==='rail'` and all of N/S/E/W are connected. A T/
+  3-way junction (exactly 3 connected) keeps its ordinary any-to-any
+  behavior — this game has no switch/points equipment, but a 3-way junction
+  never had "another line" to turn onto in the first place (only one line
+  ever splits there), so there's nothing to restrict. Road is untouched
+  entirely: a real 4-way road intersection legitimately lets traffic turn in
+  any direction, unlike rail.
+- **Enforced during the BFS traversal itself, not at build time.**
+  `findLayerPath` already tracks `cameFrom` for every visited node; at a
+  crossing cell, the direction actually used to arrive (`dirBetween(prev,
+  cur)`, the SAME compass direction as the exit — not its opposite,
+  arriving while heading east means continuing east on the far side) is the
+  only direction still allowed to depart. The very first node of a path
+  (the vehicle's own current position, no `cameFrom` entry) is left
+  unrestricted — a narrow, deliberately-accepted gap, since a fresh path is
+  only ever computed while a vehicle is fully at rest
+  (`startMovingTo`/`startMovingToRail`, both only ever called right after
+  `advanceOrder` or when `!v.path`), and a bare crossing is never itself a
+  rest point (nothing docks at a crossing) in any built layout.
+- **No changes needed to block segmentation.** `railCellIsHub` (rail-blocks.js)
+  already treats any cell whose degree isn't exactly 2 as a hub/block
+  boundary — a 4-way crossing (degree 4) was already correctly segmented
+  into 4 independent block edges before this change; only the pathfinding
+  layer was missing the "no turning" rule.
+- **A matching visual, not just a behavioral fix.** `drawTrackCell`
+  (render.js) used to draw every non-2-way shape (T-junctions, 4-way
+  junctions) as a filled center hub with one spoke per connected side — for
+  a rail crossing specifically, that visually implies exactly the any-to-any
+  turning this shape now forbids. A rail cell with all 4 sides connected is
+  instead drawn as two straight through-lines (a clean "X", no center hub at
+  all) — `drawRoadLayer` now threads the layer's `kind` (from
+  `LAYER_GRADE_KIND`) through to `drawTrackCell` so this only ever applies to
+  rail, never road's own (correctly turnable) 4-way intersections.
+
+## What changed
+
+- **`pathfinding.js`**: `isRailCrossing(track, kind)`; `findLayerPath`
+  computes `straightOnly` from `cameFrom` at a crossing cell and filters the
+  lateral-edge loop to it.
+- **`render.js`**: `drawTrackCell` takes an optional `kind` param and draws
+  two straight crossing lines instead of a spoke-from-hub when
+  `kind==='rail'` and all 4 directions are connected; `drawRoadLayer` passes
+  its own layer's `kind` through.
+
+## Testing
+
+New `test/test-rail-crossing.js` (24 checks): a direct `findRailPath` sweep
+over every straight-through pair (allowed) and every turn pair (blocked) at
+a real 4-way crossing; the same sweep at a 3-way T-junction confirming
+turning stays fully allowed there; a one-way block on the straight-through
+exit still applies at a crossing (composes correctly with the existing
+one-way check); and an end-to-end real train scenario — assembled at a
+Train Yard, routed to a Depot reachable straight through a crossing
+(successfully loads real cargo) and a second Depot reachable only by
+turning at the same crossing (never delivers, ends `blocked`). All 13 test
+files pass. Verified in a real browser via Playwright: built a live "+"
+crossing through the real toolbar, confirmed straight-through pathfinding
+succeeds and turning fails from within the running page, and visually
+confirmed the crossing renders as a clean two-line "X" with no center hub,
+with zero console errors.

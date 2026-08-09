@@ -760,6 +760,17 @@ which is also the seam a modding UI could hook into later.
 - Run in the same Worker as the simulation, using pooled/reused typed arrays
   for open/closed sets to avoid per-call allocation.
 
+> **Amended in Phase 2 (Rail crossings).** The shared tile-based road/rail
+> BFS (`findLayerPath`) treats every junction shape as fully any-to-any by
+> default — correct for a real switch, but wrong for a rail cell with all 4
+> lateral directions connected, which is always two independent straight
+> lines crossing at grade (this game has no switch/points equipment to
+> model an actual turnout). Such a cell now restricts departure to whichever
+> direction continues the line the vehicle actually arrived on, computed
+> from the BFS's own `cameFrom` chain rather than any new vehicle-level
+> state. A T/3-way junction (only one line ever splits there) is unaffected,
+> and so is road, where real intersections legitimately allow turning.
+
 ---
 
 ## 11. Rendering Pipeline

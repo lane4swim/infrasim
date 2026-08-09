@@ -83,9 +83,30 @@ function trackPort(x, y, dir){
 // side, all meeting at the tile's center — unchanged from before this
 // scheme, since a junction genuinely has multiple lines converging here,
 // not one to straighten out.
-function drawTrackCell(x, y, dirs, color, margin){
+//
+// The one exception: a rail cell with all 4 directions connected (§ Rail
+// crossings — isRailCrossing, pathfinding.js) is never a real junction —
+// this game has no switch/points equipment, so it's always two independent
+// straight lines (N-S, E-W) crossing at grade, and travel through it is
+// restricted to whichever line was entered on. Drawing it with the ordinary
+// spoke-from-a-filled-center treatment would visually read as "any of
+// these 4 directions can reach any other," exactly the turning this shape
+// forbids — so it's drawn as two straight through-lines instead, with no
+// center hub at all. Road's own 4-way intersections (turning IS allowed
+// there) are untouched — `kind` is only ever 'rail' for this case.
+function drawTrackCell(x, y, dirs, color, margin, kind){
   const width = CELL - margin*2;
   const [cx, cy] = gridToScreen(x+0.5, y+0.5);
+  if(kind==='rail' && dirs.length===4){
+    const [n,s] = ['N','S'].map(d => trackPort(x,y,d));
+    const [e,w] = ['E','W'].map(d => trackPort(x,y,d));
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.lineCap = 'butt';
+    ctx.beginPath(); ctx.moveTo(n[0],n[1]); ctx.lineTo(s[0],s[1]); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(e[0],e[1]); ctx.lineTo(w[0],w[1]); ctx.stroke();
+    return;
+  }
   if(dirs.length === 2){
     const [a,b] = dirs.map(d => trackPort(x,y,d));
     ctx.strokeStyle = color;
@@ -491,6 +512,7 @@ function render(){
 
   function drawRoadLayer(layerName, color, margin, dashed, buries){
     if(dashed) ctx.setLineDash([5,4]); // underground/railUnderground only — see the call sites above
+    const [, kind] = LAYER_GRADE_KIND[layerName];
     for(const [k] of world.grid){
       const [x,y] = k.split(',').map(Number);
       const track = trackAt(x,y,layerName);
@@ -501,7 +523,7 @@ function render(){
       // layer the way every other grade does.
       const cellColor = buries ? burialColor(color, getCell(x,y).elevation) : color;
       const connectedDirs = ROAD_DIRS.filter(d => track.edges[d.dir]).map(d => d.dir);
-      drawTrackCell(x, y, connectedDirs, cellColor, margin);
+      drawTrackCell(x, y, connectedDirs, cellColor, margin, kind);
       for(const {dir,dx,dy,opp} of ROAD_DIRS){
         if(!track.edges[dir]) continue;
         // One-way arrow: drawn only from the side that's still allowed to

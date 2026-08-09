@@ -120,6 +120,21 @@ function buildingRailAccessCell(building){
   return null;
 }
 
+// A rail cell with all 4 lateral directions connected has no possible
+// interpretation other than two independent straight lines crossing at
+// grade — this game has no switch/points equipment, so a genuine junction
+// that lets a train CHANGE from one line onto the other needs a player to
+// leave one direction disconnected, exactly like a T/3-way junction already
+// works (and stays fully any-to-any, unrestricted — a real switch DOES let
+// a train divert). Only rail gets this: a real road intersection lets
+// traffic turn in any direction, so a 4-way road cell keeps its ordinary
+// any-to-any behavior. See findLayerPath below for where this is enforced,
+// and drawTrackCell (render.js) for the matching "two crossing lines, not a
+// hub" visual.
+function isRailCrossing(track, kind){
+  return kind==='rail' && track.edges.N && track.edges.S && track.edges.E && track.edges.W;
+}
+
 // BFS over {x,y,layer} nodes: lateral moves follow only established,
 // direction-allowed edges within a layer (respecting one-way blocks). A
 // grade change happens one of two ways, both restricted to the SAME kind
@@ -156,13 +171,33 @@ function findLayerPath(start, end){
   while(queue.length){
     const cur = queue.shift();
     const track = trackAt(cur.x, cur.y, cur.layer);
+    const [grade, kind] = LAYER_GRADE_KIND[cur.layer];
+    // At a rail crossing (isRailCrossing above), continuing is restricted to
+    // straight through on whichever line was actually arrived on —
+    // dirBetween(prev,cur) is the direction of TRAVEL that reached `cur`
+    // (the exit side `prev` used), and straight-through means departing
+    // `cur` the same compass direction, not its opposite (arriving while
+    // heading east means continuing east on the far side of the crossing,
+    // not reversing west). The very first node (no cameFrom entry — cur ===
+    // start) has no established direction to be consistent with, so it's
+    // left unrestricted; that's a narrow, harmless gap in practice, since a
+    // fresh path is only ever computed while a vehicle is fully at rest
+    // (startMovingTo/startMovingToRail, systems.js), and a bare crossing is
+    // never itself a rest point (nothing docks at a crossing) in any built
+    // layout.
+    let straightOnly = null;
+    if(isRailCrossing(track, kind)){
+      const prev = cameFrom.get(nodeKey(cur));
+      const entryDir = prev && dirBetween(prev, cur);
+      if(entryDir) straightOnly = entryDir.dir;
+    }
     for(const {dir,dx,dy} of ROAD_DIRS){
       if(!track.edges[dir]) continue;          // no connection this way
       if(track.oneWayBlocked[dir]) continue;   // one-way: can't depart via this side
+      if(straightOnly && dir !== straightOnly) continue; // rail crossing: no turning onto the other line
       const found = tryVisit({x:cur.x+dx, y:cur.y+dy, layer:cur.layer}, cur);
       if(found) return found;
     }
-    const [grade, kind] = LAYER_GRADE_KIND[cur.layer];
     // Same-cell vertical ramps (§ Terrain elevation) — any RAMP_PAIRS entry
     // touching this grade (world.js) — currently just ground<->elevated.
     // A cell can have more than one at once (independently, per kind), so
