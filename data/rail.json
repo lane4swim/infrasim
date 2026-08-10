@@ -1,0 +1,294 @@
+{
+  "resources": {},
+  "recipes": {},
+  "buildings": {
+    "depot": {
+      "buildCost": 300,
+      "tiers": {
+        "small": {
+          "cap": 30,
+          "add": 0
+        },
+        "large": {
+          "cap": 80,
+          "add": 150
+        }
+      },
+      "color": "#6b5b95",
+      "label": "Rail Depot",
+      "footprint": {
+        "w": 2,
+        "h": 4
+      },
+      "transferRate": 4,
+      "platformLengths": [
+        2,
+        4,
+        6,
+        8
+      ],
+      "sprites": {
+        "n": {
+          "sheet": "railSheet",
+          "symbol": "depot-n"
+        },
+        "s": {
+          "sheet": "railSheet",
+          "symbol": "depot-s"
+        },
+        "e": {
+          "sheet": "railSheet",
+          "symbol": "depot-e"
+        },
+        "w": {
+          "sheet": "railSheet",
+          "symbol": "depot-w"
+        },
+        "menu": {
+          "sheet": "railSheet",
+          "symbol": "depot-e"
+        }
+      }
+    },
+    "trainyard": {
+      "buildCost": 400,
+      "tiers": {
+        "small": {
+          "cap": 0,
+          "add": 0
+        },
+        "large": {
+          "cap": 0,
+          "add": 0
+        }
+      },
+      "color": "#4a4a6a",
+      "label": "Train Yard",
+      "footprint": {
+        "w": 3,
+        "h": 2
+      },
+      "sprites": {
+        "n": {
+          "sheet": "railSheet",
+          "symbol": "trainyard-n"
+        },
+        "s": {
+          "sheet": "railSheet",
+          "symbol": "trainyard-s"
+        },
+        "e": {
+          "sheet": "railSheet",
+          "symbol": "trainyard-e"
+        },
+        "w": {
+          "sheet": "railSheet",
+          "symbol": "trainyard-w"
+        },
+        "menu": {
+          "sheet": "railSheet",
+          "symbol": "trainyard-e"
+        }
+      }
+    }
+  },
+  "vehicles": {},
+  "rail": {
+    "track": {
+      "costPerTile": 25
+    }
+  },
+  "engines": {
+    "diesel": {
+      "purchaseCost": 600,
+      "runningCostPerTick": 2,
+      "sellFraction": 0.4,
+      "label": "Diesel Engine",
+      "color": "#9b6bd6",
+      "maxSpeedTilesPerTick": 1.6,
+      "massEmpty": 30,
+      "engineForce": 3,
+      "brakeForce": 6,
+      "lengthTiles": 3,
+      "sprites": {
+        "n": {
+          "sheet": "railSheet",
+          "symbol": "diesel-n"
+        },
+        "s": {
+          "sheet": "railSheet",
+          "symbol": "diesel-s"
+        },
+        "e": {
+          "sheet": "railSheet",
+          "symbol": "diesel-e"
+        },
+        "w": {
+          "sheet": "railSheet",
+          "symbol": "diesel-w"
+        },
+        "menu": {
+          "sheet": "railSheet",
+          "symbol": "diesel-e"
+        }
+      }
+    }
+  },
+  "wagons": {
+    "ore_wagon": {
+      "purchaseCost": 150,
+      "capacity": 20,
+      "resource": "ore",
+      "label": "Ore Wagon",
+      "color": "#7a5230",
+      "massEmpty": 6,
+      "lengthTiles": 2.5,
+      "transferRate": 4,
+      "sprites": {
+        "n": {
+          "sheet": "railSheet",
+          "symbol": "ore_wagon-n"
+        },
+        "s": {
+          "sheet": "railSheet",
+          "symbol": "ore_wagon-s"
+        },
+        "e": {
+          "sheet": "railSheet",
+          "symbol": "ore_wagon-e"
+        },
+        "w": {
+          "sheet": "railSheet",
+          "symbol": "ore_wagon-w"
+        },
+        "menu": {
+          "sheet": "railSheet",
+          "symbol": "ore_wagon-e"
+        }
+      }
+    },
+    "steel_wagon": {
+      "purchaseCost": 180,
+      "capacity": 16,
+      "resource": "steel",
+      "label": "Steel Wagon",
+      "color": "#8a4a3a",
+      "massEmpty": 7,
+      "lengthTiles": 2.5,
+      "transferRate": 4,
+      "sprites": {
+        "n": {
+          "sheet": "railSheet",
+          "symbol": "steel_wagon-n"
+        },
+        "s": {
+          "sheet": "railSheet",
+          "symbol": "steel_wagon-s"
+        },
+        "e": {
+          "sheet": "railSheet",
+          "symbol": "steel_wagon-e"
+        },
+        "w": {
+          "sheet": "railSheet",
+          "symbol": "steel_wagon-w"
+        },
+        "menu": {
+          "sheet": "railSheet",
+          "symbol": "steel_wagon-e"
+        }
+      }
+    },
+    "coal_hopper": {
+      "purchaseCost": 150,
+      "capacity": 17,
+      "resource": "coal",
+      "label": "Coal Hopper",
+      "color": "#3a3a3a",
+      "massEmpty": 6.2,
+      "lengthTiles": 2.5,
+      "transferRate": 4,
+      "sprites": {
+        "n": {
+          "sheet": "railSheet",
+          "symbol": "coal_hopper-n"
+        },
+        "s": {
+          "sheet": "railSheet",
+          "symbol": "coal_hopper-s"
+        },
+        "e": {
+          "sheet": "railSheet",
+          "symbol": "coal_hopper-e"
+        },
+        "w": {
+          "sheet": "railSheet",
+          "symbol": "coal_hopper-w"
+        },
+        "menu": {
+          "sheet": "railSheet",
+          "symbol": "coal_hopper-e"
+        }
+      }
+    }
+  },
+  "spriteSheets": {
+    "railSheet": {
+      "markup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><defs><symbol id=\"diesel-n\" viewBox=\"0 0 24 24\"><g transform=\"rotate(-90 12 12)\"><rect x=\"2\" y=\"9\" width=\"15\" height=\"7\" rx=\"1\" fill=\"#9b6bd6\"/><rect x=\"4\" y=\"4\" width=\"8\" height=\"5\" fill=\"#9b6bd6\"/><rect x=\"6\" y=\"5\" width=\"4\" height=\"2.5\" fill=\"#dff0ff\" opacity=\"0.85\"/><path d=\"M17,9 L22,9 L22,16 L17,16 Z\" fill=\"#9b6bd6\"/><circle cx=\"6\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/><circle cx=\"12\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/></g></symbol><symbol id=\"diesel-s\" viewBox=\"0 0 24 24\"><g transform=\"rotate(90 12 12)\"><rect x=\"2\" y=\"9\" width=\"15\" height=\"7\" rx=\"1\" fill=\"#9b6bd6\"/><rect x=\"4\" y=\"4\" width=\"8\" height=\"5\" fill=\"#9b6bd6\"/><rect x=\"6\" y=\"5\" width=\"4\" height=\"2.5\" fill=\"#dff0ff\" opacity=\"0.85\"/><path d=\"M17,9 L22,9 L22,16 L17,16 Z\" fill=\"#9b6bd6\"/><circle cx=\"6\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/><circle cx=\"12\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/></g></symbol><symbol id=\"diesel-e\" viewBox=\"0 0 24 24\"><rect x=\"2\" y=\"9\" width=\"15\" height=\"7\" rx=\"1\" fill=\"#9b6bd6\"/><rect x=\"4\" y=\"4\" width=\"8\" height=\"5\" fill=\"#9b6bd6\"/><rect x=\"6\" y=\"5\" width=\"4\" height=\"2.5\" fill=\"#dff0ff\" opacity=\"0.85\"/><path d=\"M17,9 L22,9 L22,16 L17,16 Z\" fill=\"#9b6bd6\"/><circle cx=\"6\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/><circle cx=\"12\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/></symbol><symbol id=\"diesel-w\" viewBox=\"0 0 24 24\"><g transform=\"scale(-1,1) translate(-24,0)\"><rect x=\"2\" y=\"9\" width=\"15\" height=\"7\" rx=\"1\" fill=\"#9b6bd6\"/><rect x=\"4\" y=\"4\" width=\"8\" height=\"5\" fill=\"#9b6bd6\"/><rect x=\"6\" y=\"5\" width=\"4\" height=\"2.5\" fill=\"#dff0ff\" opacity=\"0.85\"/><path d=\"M17,9 L22,9 L22,16 L17,16 Z\" fill=\"#9b6bd6\"/><circle cx=\"6\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/><circle cx=\"12\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/></g></symbol><symbol id=\"ore_wagon-n\" viewBox=\"0 0 24 24\"><g transform=\"rotate(-90 12 12)\"><rect x=\"3\" y=\"9\" width=\"18\" height=\"7\" rx=\"1\" fill=\"#7a5230\"/><line x1=\"3\" y1=\"9\" x2=\"21\" y2=\"9\" stroke=\"#1a1410\" stroke-width=\"0.6\"/><circle cx=\"7\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/><circle cx=\"17\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/></g></symbol><symbol id=\"ore_wagon-s\" viewBox=\"0 0 24 24\"><g transform=\"rotate(90 12 12)\"><rect x=\"3\" y=\"9\" width=\"18\" height=\"7\" rx=\"1\" fill=\"#7a5230\"/><line x1=\"3\" y1=\"9\" x2=\"21\" y2=\"9\" stroke=\"#1a1410\" stroke-width=\"0.6\"/><circle cx=\"7\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/><circle cx=\"17\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/></g></symbol><symbol id=\"ore_wagon-e\" viewBox=\"0 0 24 24\"><rect x=\"3\" y=\"9\" width=\"18\" height=\"7\" rx=\"1\" fill=\"#7a5230\"/><line x1=\"3\" y1=\"9\" x2=\"21\" y2=\"9\" stroke=\"#1a1410\" stroke-width=\"0.6\"/><circle cx=\"7\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/><circle cx=\"17\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/></symbol><symbol id=\"ore_wagon-w\" viewBox=\"0 0 24 24\"><g transform=\"scale(-1,1) translate(-24,0)\"><rect x=\"3\" y=\"9\" width=\"18\" height=\"7\" rx=\"1\" fill=\"#7a5230\"/><line x1=\"3\" y1=\"9\" x2=\"21\" y2=\"9\" stroke=\"#1a1410\" stroke-width=\"0.6\"/><circle cx=\"7\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/><circle cx=\"17\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/></g></symbol><symbol id=\"steel_wagon-n\" viewBox=\"0 0 24 24\"><g transform=\"rotate(-90 12 12)\"><rect x=\"3\" y=\"9\" width=\"18\" height=\"7\" rx=\"1\" fill=\"#8a4a3a\"/><line x1=\"3\" y1=\"9\" x2=\"21\" y2=\"9\" stroke=\"#1a1410\" stroke-width=\"0.6\"/><circle cx=\"7\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/><circle cx=\"17\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/></g></symbol><symbol id=\"steel_wagon-s\" viewBox=\"0 0 24 24\"><g transform=\"rotate(90 12 12)\"><rect x=\"3\" y=\"9\" width=\"18\" height=\"7\" rx=\"1\" fill=\"#8a4a3a\"/><line x1=\"3\" y1=\"9\" x2=\"21\" y2=\"9\" stroke=\"#1a1410\" stroke-width=\"0.6\"/><circle cx=\"7\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/><circle cx=\"17\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/></g></symbol><symbol id=\"steel_wagon-e\" viewBox=\"0 0 24 24\"><rect x=\"3\" y=\"9\" width=\"18\" height=\"7\" rx=\"1\" fill=\"#8a4a3a\"/><line x1=\"3\" y1=\"9\" x2=\"21\" y2=\"9\" stroke=\"#1a1410\" stroke-width=\"0.6\"/><circle cx=\"7\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/><circle cx=\"17\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/></symbol><symbol id=\"steel_wagon-w\" viewBox=\"0 0 24 24\"><g transform=\"scale(-1,1) translate(-24,0)\"><rect x=\"3\" y=\"9\" width=\"18\" height=\"7\" rx=\"1\" fill=\"#8a4a3a\"/><line x1=\"3\" y1=\"9\" x2=\"21\" y2=\"9\" stroke=\"#1a1410\" stroke-width=\"0.6\"/><circle cx=\"7\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/><circle cx=\"17\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/></g></symbol><symbol id=\"coal_hopper-n\" viewBox=\"0 0 24 24\"><g transform=\"rotate(-90 12 12)\"><rect x=\"3\" y=\"9\" width=\"18\" height=\"7\" rx=\"1\" fill=\"#3a3a3a\"/><line x1=\"3\" y1=\"9\" x2=\"21\" y2=\"9\" stroke=\"#1a1410\" stroke-width=\"0.6\"/><circle cx=\"7\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/><circle cx=\"17\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/></g></symbol><symbol id=\"coal_hopper-s\" viewBox=\"0 0 24 24\"><g transform=\"rotate(90 12 12)\"><rect x=\"3\" y=\"9\" width=\"18\" height=\"7\" rx=\"1\" fill=\"#3a3a3a\"/><line x1=\"3\" y1=\"9\" x2=\"21\" y2=\"9\" stroke=\"#1a1410\" stroke-width=\"0.6\"/><circle cx=\"7\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/><circle cx=\"17\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/></g></symbol><symbol id=\"coal_hopper-e\" viewBox=\"0 0 24 24\"><rect x=\"3\" y=\"9\" width=\"18\" height=\"7\" rx=\"1\" fill=\"#3a3a3a\"/><line x1=\"3\" y1=\"9\" x2=\"21\" y2=\"9\" stroke=\"#1a1410\" stroke-width=\"0.6\"/><circle cx=\"7\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/><circle cx=\"17\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/></symbol><symbol id=\"coal_hopper-w\" viewBox=\"0 0 24 24\"><g transform=\"scale(-1,1) translate(-24,0)\"><rect x=\"3\" y=\"9\" width=\"18\" height=\"7\" rx=\"1\" fill=\"#3a3a3a\"/><line x1=\"3\" y1=\"9\" x2=\"21\" y2=\"9\" stroke=\"#1a1410\" stroke-width=\"0.6\"/><circle cx=\"7\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/><circle cx=\"17\" cy=\"18\" r=\"2\" fill=\"#1a1410\"/></g></symbol><symbol id=\"depot-n\" viewBox=\"0 0 24 24\"><g transform=\"rotate(-90 12 12)\"><rect x=\"2\" y=\"10\" width=\"20\" height=\"7\" fill=\"#6b5b95\"/><rect x=\"5\" y=\"4\" width=\"2\" height=\"6\" fill=\"#1a1410\"/><rect x=\"17\" y=\"4\" width=\"2\" height=\"6\" fill=\"#1a1410\"/><rect x=\"5\" y=\"4\" width=\"14\" height=\"2\" fill=\"#1a1410\"/></g></symbol><symbol id=\"depot-s\" viewBox=\"0 0 24 24\"><g transform=\"rotate(90 12 12)\"><rect x=\"2\" y=\"10\" width=\"20\" height=\"7\" fill=\"#6b5b95\"/><rect x=\"5\" y=\"4\" width=\"2\" height=\"6\" fill=\"#1a1410\"/><rect x=\"17\" y=\"4\" width=\"2\" height=\"6\" fill=\"#1a1410\"/><rect x=\"5\" y=\"4\" width=\"14\" height=\"2\" fill=\"#1a1410\"/></g></symbol><symbol id=\"depot-e\" viewBox=\"0 0 24 24\"><rect x=\"2\" y=\"10\" width=\"20\" height=\"7\" fill=\"#6b5b95\"/><rect x=\"5\" y=\"4\" width=\"2\" height=\"6\" fill=\"#1a1410\"/><rect x=\"17\" y=\"4\" width=\"2\" height=\"6\" fill=\"#1a1410\"/><rect x=\"5\" y=\"4\" width=\"14\" height=\"2\" fill=\"#1a1410\"/></symbol><symbol id=\"depot-w\" viewBox=\"0 0 24 24\"><g transform=\"scale(-1,1) translate(-24,0)\"><rect x=\"2\" y=\"10\" width=\"20\" height=\"7\" fill=\"#6b5b95\"/><rect x=\"5\" y=\"4\" width=\"2\" height=\"6\" fill=\"#1a1410\"/><rect x=\"17\" y=\"4\" width=\"2\" height=\"6\" fill=\"#1a1410\"/><rect x=\"5\" y=\"4\" width=\"14\" height=\"2\" fill=\"#1a1410\"/></g></symbol><symbol id=\"trainyard-n\" viewBox=\"0 0 24 24\"><g transform=\"rotate(-90 12 12)\"><path d=\"M4,17 L4,10 Q4,7 8,7 L16,7 Q19,7 19,10 L19,17 Z\" fill=\"#4a4a6a\"/><rect x=\"9\" y=\"9\" width=\"4\" height=\"3\" fill=\"#dff0ff\" opacity=\"0.85\"/><circle cx=\"8\" cy=\"19\" r=\"2\" fill=\"#1a1410\"/><circle cx=\"15\" cy=\"19\" r=\"2\" fill=\"#1a1410\"/></g></symbol><symbol id=\"trainyard-s\" viewBox=\"0 0 24 24\"><g transform=\"rotate(90 12 12)\"><path d=\"M4,17 L4,10 Q4,7 8,7 L16,7 Q19,7 19,10 L19,17 Z\" fill=\"#4a4a6a\"/><rect x=\"9\" y=\"9\" width=\"4\" height=\"3\" fill=\"#dff0ff\" opacity=\"0.85\"/><circle cx=\"8\" cy=\"19\" r=\"2\" fill=\"#1a1410\"/><circle cx=\"15\" cy=\"19\" r=\"2\" fill=\"#1a1410\"/></g></symbol><symbol id=\"trainyard-e\" viewBox=\"0 0 24 24\"><path d=\"M4,17 L4,10 Q4,7 8,7 L16,7 Q19,7 19,10 L19,17 Z\" fill=\"#4a4a6a\"/><rect x=\"9\" y=\"9\" width=\"4\" height=\"3\" fill=\"#dff0ff\" opacity=\"0.85\"/><circle cx=\"8\" cy=\"19\" r=\"2\" fill=\"#1a1410\"/><circle cx=\"15\" cy=\"19\" r=\"2\" fill=\"#1a1410\"/></symbol><symbol id=\"trainyard-w\" viewBox=\"0 0 24 24\"><g transform=\"scale(-1,1) translate(-24,0)\"><path d=\"M4,17 L4,10 Q4,7 8,7 L16,7 Q19,7 19,10 L19,17 Z\" fill=\"#4a4a6a\"/><rect x=\"9\" y=\"9\" width=\"4\" height=\"3\" fill=\"#dff0ff\" opacity=\"0.85\"/><circle cx=\"8\" cy=\"19\" r=\"2\" fill=\"#1a1410\"/><circle cx=\"15\" cy=\"19\" r=\"2\" fill=\"#1a1410\"/></g></symbol></defs></svg>"
+    }
+  },
+  "infrastructureSprites": {
+    "rail": {
+      "ballast": {
+        "straight": {
+          "type": "svg",
+          "markup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 80 40\"><line x1=\"60\" y1=\"10\" x2=\"20\" y2=\"30\" stroke=\"#8b5e3c\" stroke-width=\"20\" stroke-linecap=\"butt\"/></svg>"
+        },
+        "corner": {
+          "type": "svg",
+          "markup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 80 40\"><line x1=\"60\" y1=\"10\" x2=\"60\" y2=\"30\" stroke=\"#8b5e3c\" stroke-width=\"20\" stroke-linecap=\"butt\"/></svg>"
+        },
+        "spoke": {
+          "type": "svg",
+          "markup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 80 40\"><line x1=\"60\" y1=\"10\" x2=\"40\" y2=\"20\" stroke=\"#8b5e3c\" stroke-width=\"20\" stroke-linecap=\"butt\"/></svg>"
+        }
+      },
+      "ties": {
+        "straight": {
+          "type": "svg",
+          "markup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 80 40\"><rect x=\"-13\" y=\"-1.2\" width=\"26\" height=\"2.4\" fill=\"rgb(76,52,33)\" transform=\"translate(60,10) rotate(153.43494882292202)\"/><rect x=\"-13\" y=\"-1.2\" width=\"26\" height=\"2.4\" fill=\"rgb(76,52,33)\" transform=\"translate(52,14) rotate(153.43494882292202)\"/><rect x=\"-13\" y=\"-1.2\" width=\"26\" height=\"2.4\" fill=\"rgb(76,52,33)\" transform=\"translate(44,18) rotate(153.43494882292202)\"/><rect x=\"-13\" y=\"-1.2\" width=\"26\" height=\"2.4\" fill=\"rgb(76,52,33)\" transform=\"translate(36,22) rotate(153.43494882292202)\"/><rect x=\"-13\" y=\"-1.2\" width=\"26\" height=\"2.4\" fill=\"rgb(76,52,33)\" transform=\"translate(28,26) rotate(153.43494882292202)\"/><rect x=\"-13\" y=\"-1.2\" width=\"26\" height=\"2.4\" fill=\"rgb(76,52,33)\" transform=\"translate(20,30) rotate(153.43494882292202)\"/></svg>"
+        },
+        "corner": {
+          "type": "svg",
+          "markup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 80 40\"><rect x=\"-13\" y=\"-1.2\" width=\"26\" height=\"2.4\" fill=\"rgb(76,52,33)\" transform=\"translate(60,10) rotate(90)\"/><rect x=\"-13\" y=\"-1.2\" width=\"26\" height=\"2.4\" fill=\"rgb(76,52,33)\" transform=\"translate(60,20) rotate(90)\"/><rect x=\"-13\" y=\"-1.2\" width=\"26\" height=\"2.4\" fill=\"rgb(76,52,33)\" transform=\"translate(60,30) rotate(90)\"/></svg>"
+        },
+        "spoke": {
+          "type": "svg",
+          "markup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 80 40\"><rect x=\"-13\" y=\"-1.2\" width=\"26\" height=\"2.4\" fill=\"rgb(76,52,33)\" transform=\"translate(60,10) rotate(153.43494882292202)\"/><rect x=\"-13\" y=\"-1.2\" width=\"26\" height=\"2.4\" fill=\"rgb(76,52,33)\" transform=\"translate(50,15) rotate(153.43494882292202)\"/><rect x=\"-13\" y=\"-1.2\" width=\"26\" height=\"2.4\" fill=\"rgb(76,52,33)\" transform=\"translate(40,20) rotate(153.43494882292202)\"/></svg>"
+        }
+      },
+      "rails": {
+        "straight": {
+          "type": "svg",
+          "markup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 80 40\"><line x1=\"62.50439613479976\" y1=\"15.00879226959953\" x2=\"22.504396134799762\" y2=\"35.00879226959953\" stroke=\"rgb(214,199,187)\" stroke-width=\"1.6\" stroke-linecap=\"butt\"/><line x1=\"57.49560386520024\" y1=\"4.99120773040047\" x2=\"17.495603865200238\" y2=\"24.99120773040047\" stroke=\"rgb(214,199,187)\" stroke-width=\"1.6\" stroke-linecap=\"butt\"/></svg>"
+        },
+        "corner": {
+          "type": "svg",
+          "markup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 80 40\"><line x1=\"65.6\" y1=\"10\" x2=\"65.6\" y2=\"30\" stroke=\"rgb(214,199,187)\" stroke-width=\"1.6\" stroke-linecap=\"butt\"/><line x1=\"54.4\" y1=\"10\" x2=\"54.4\" y2=\"30\" stroke=\"rgb(214,199,187)\" stroke-width=\"1.6\" stroke-linecap=\"butt\"/></svg>"
+        },
+        "spoke": {
+          "type": "svg",
+          "markup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 80 40\"><line x1=\"62.50439613479976\" y1=\"15.00879226959953\" x2=\"42.50439613479976\" y2=\"25.00879226959953\" stroke=\"rgb(214,199,187)\" stroke-width=\"1.6\" stroke-linecap=\"butt\"/><line x1=\"57.49560386520024\" y1=\"4.99120773040047\" x2=\"37.49560386520024\" y2=\"14.99120773040047\" stroke=\"rgb(214,199,187)\" stroke-width=\"1.6\" stroke-linecap=\"butt\"/></svg>"
+        }
+      },
+      "nub": {
+        "type": "svg",
+        "markup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 80 40\"><circle cx=\"40\" cy=\"20\" r=\"7\" fill=\"#8b5e3c\"/></svg>"
+      }
+    },
+    "crossingMarker": {
+      "type": "svg",
+      "markup": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><rect x=\"1\" y=\"1\" width=\"22\" height=\"22\" rx=\"4\" fill=\"#1a1410\" stroke=\"#f2d24a\" stroke-width=\"2\"/><line x1=\"6\" y1=\"6\" x2=\"18\" y2=\"18\" stroke=\"#fff\" stroke-width=\"2.5\" stroke-linecap=\"round\"/><line x1=\"18\" y1=\"6\" x2=\"6\" y2=\"18\" stroke=\"#fff\" stroke-width=\"2.5\" stroke-linecap=\"round\"/></svg>"
+    }
+  }
+}

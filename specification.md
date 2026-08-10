@@ -768,6 +768,22 @@ which is also the seam a modding UI could hook into later.
 > required. **`file://` support is dropped as a project requirement**: §1's
 > "fully client-side" constraint still holds (no backend, no server-side
 > logic), but the game now requires a static file server to load at all.
+>
+> **Further amended in Phase 2 (Content packs reorganized by domain, with
+> real sprite art).** `data/base.json`/`data/coal.json` (grouped by "which
+> pack added it") became `data/rail.json`/`data/road.json`/
+> `data/base-industries.json` (grouped by what the content actually is —
+> resources/recipes/industry buildings; road vehicles + Station;
+> rail engines/wagons/track + Depot/Yard), with no change to the merge
+> mechanism itself. More substantively: every entity in all three packs now
+> ships real `sprites`/`spriteSheets`/`infrastructureSprites` art — the
+> Phase 2 (Content-pack sprite sheets) and (SVG track sprites) amendments
+> below built that whole mechanism, but no shipped pack had ever actually
+> used it until now, so every building/vehicle/track segment had been
+> silently falling back to the procedural renderer the entire time these
+> two mechanisms existed. See README's "Content packs reorganized by
+> domain, with real SVG sprite art" addendum for the art itself and how it
+> was authored to line up with the renderer's exact port/viewBox geometry.
 
 ---
 

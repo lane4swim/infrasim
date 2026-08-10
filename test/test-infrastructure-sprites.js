@@ -50,7 +50,11 @@ const SAMPLE_SHEET_MARKUP = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 
 section('Test 1 — a pack with a valid spriteSheets + infrastructureSprites section validates cleanly', () => {
   const ctx = newGameContext();
   const pack = JSON.parse(JSON.stringify(realPack));
-  pack.spriteSheets = { mySheet: { markup: SAMPLE_SHEET_MARKUP } };
+  // Merged into the real pack's own spriteSheets, not replacing it outright
+  // — the shipped buildings (mine/mill/town/... ) already reference their
+  // own real sheets (baseIndustriesSheet/roadSheet/railSheet), so wholesale
+  // replacing spriteSheets here would leave THOSE references dangling.
+  pack.spriteSheets = { ...pack.spriteSheets, mySheet: { markup: SAMPLE_SHEET_MARKUP } };
   pack.infrastructureSprites = {
     rail: {
       ballast: { straight: { sheet:'mySheet', symbol:'rail-ballast-straight' } },
@@ -68,7 +72,7 @@ section('Test 1 — a pack with a valid spriteSheets + infrastructureSprites sec
 section('Test 2 — a building sprite can reference a sprite sheet symbol too, not just inline markup', () => {
   const ctx = newGameContext();
   const pack = JSON.parse(JSON.stringify(realPack));
-  pack.spriteSheets = { mySheet: { markup: SAMPLE_SHEET_MARKUP } };
+  pack.spriteSheets = { ...pack.spriteSheets, mySheet: { markup: SAMPLE_SHEET_MARKUP } };
   const someBuildingId = Object.keys(pack.buildings)[0];
   pack.buildings[someBuildingId].sprites = {
     n: { sheet:'mySheet', symbol:'yard-n' },
@@ -91,7 +95,7 @@ section('Test 3 — validateContentPack rejects deliberately-broken sprite-sheet
   expectResult(ctx, 'a sprite sheet whose markup is not an <svg> document is rejected', pack, '<svg>');
 
   pack = JSON.parse(JSON.stringify(realPack));
-  pack.spriteSheets = withSheet();
+  pack.spriteSheets = { ...pack.spriteSheets, ...withSheet() };
   pack.infrastructureSprites = { rail: { ballast: { straight: { sheet:'doesNotExist', symbol:'x' } } } };
   expectResult(ctx, 'infrastructureSprites referencing an undefined sprite sheet is rejected', pack, 'doesNotExist');
 
@@ -123,6 +127,7 @@ section('Test 3 — validateContentPack rejects deliberately-broken sprite-sheet
 
 section('Test 4 — multi-pack merge: an addon pack can override just infrastructureSprites.rail, leaving other sections/kinds from the base pack untouched', () => {
   const basePackJson = extractContentPackJson(htmlPath);
+  const realInfra = JSON.parse(basePackJson).infrastructureSprites;
   const addonPack = {
     infrastructureSprites: {
       rail: { nub: { type:'svg', markup: '<circle cx="40" cy="20" r="9" fill="#0f0"/>' } },
@@ -133,12 +138,18 @@ section('Test 4 — multi-pack merge: an addon pack can override just infrastruc
     return {
       hasRailOverride: !!(INFRASTRUCTURE_SPRITES.rail && INFRASTRUCTURE_SPRITES.rail.nub),
       railNubMarkup: INFRASTRUCTURE_SPRITES.rail.nub.markup,
-      hasNoRoadOverride: INFRASTRUCTURE_SPRITES.road === undefined,
+      railBallastGone: INFRASTRUCTURE_SPRITES.rail.ballast === undefined,
+      roadUntouched: JSON.stringify(INFRASTRUCTURE_SPRITES.road),
     };
   `);
   check('the addon pack\'s infrastructureSprites.rail.nub override is present', result.hasRailOverride);
-  check('it is exactly the addon\'s markup, not the base pack\'s (base pack ships none)', result.railNubMarkup.includes('#0f0'), result.railNubMarkup);
-  check('infrastructureSprites.road is untouched (base pack ships none either, addon never mentioned it)', result.hasNoRoadOverride);
+  check('it is exactly the addon\'s markup, not the base pack\'s', result.railNubMarkup.includes('#0f0'), result.railNubMarkup);
+  // A pack section merge REPLACES a whole subtree on override, it doesn't
+  // deep-merge field by field (same contract a `buildings` id override has)
+  // — so the addon's infrastructureSprites.rail entirely replaces the real
+  // pack's own {ballast,ties,rails,nub}, not just adding/overwriting nub.
+  check('overriding infrastructureSprites.rail replaces the WHOLE rail subtree — the base pack\'s ballast/ties/rails are gone, not merged alongside the addon\'s nub', result.railBallastGone);
+  check('infrastructureSprites.road is untouched — the base pack\'s own real road art survives unchanged, since the addon never mentioned road', result.roadUntouched === JSON.stringify(realInfra.road));
 });
 
 console.log(failures===0 ? '\nAll checks passed.' : `\n${failures} check(s) FAILED.`);

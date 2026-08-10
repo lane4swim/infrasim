@@ -3624,3 +3624,108 @@ option are all present and buildable), and there are zero console errors
 (the only console message a fresh page load ever produces there is the
 browser's own unrelated `favicon.ico` 404, present on any static host and
 unaffected by this change).
+
+# Addendum — Content packs reorganized by domain, with real SVG sprite art
+
+The two-pack `data/base.json` + `data/coal.json` split from the addendum
+above worked, but grouped content by "which pack added it" (base game vs.
+the Coal addon) rather than by what it actually is. This addendum
+reorganizes the same content into three domain-shaped packs — **rail**,
+**road**, **base-industries** — and, since none of the three former packs
+actually shipped any `spriteSheets`/`infrastructureSprites`/`sprites`
+content despite that whole mechanism existing since the Content-pack
+sprite sheets / SVG track sprites addenda, takes the opportunity to
+author real art into all three, so the game finally renders with authored
+sprites end to end instead of every entity silently falling back to the
+procedural diamond/track generator.
+
+## Design
+
+- **`data/base-industries.json`**: `resources` (ore/steel/coal),
+  `recipes` (extract_ore/smelt_steel/mine_coal), and the four production/
+  demand buildings that consume them — Mine, Steel Mill, Town, Colliery.
+  Carries the pack's `version` field (only one pack needs to — see
+  `mergeContentPacks`'s "last pack to set `version` wins" rule; the other
+  two omit it entirely).
+- **`data/road.json`**: everything road-mode — the three trucks (Bulk,
+  Flatbed, Coal Hauler) and the Station building (a generic access point
+  that trucks dock at; not rail-specific despite living next to Depot/
+  Yard in the old grouping). Also `infrastructureSprites.road` (asphalt/
+  markings art) and `infrastructureSprites.oneWayArrow`.
+- **`data/rail.json`**: everything rail-mode — `rail.track`, the Diesel
+  Engine, all three wagons (Ore/Steel/Coal — yes, even though a wagon's
+  own `sprites` are schema-validated but never actually drawn today, see
+  § Isometric sprites' wagon callout; kept anyway for schema completeness
+  and so a future segmented-train renderer has real art to pick up), and
+  the two rail-only buildings, Rail Depot and Train Yard. Also
+  `infrastructureSprites.rail` (ballast/ties/rails art) and
+  `infrastructureSprites.crossingMarker`.
+- **No id collisions across the three files** (each section's ids are
+  unique to exactly one pack), so `data/manifest.json`'s load order
+  (`base-industries.json`, `road.json`, `rail.json`) doesn't actually
+  matter for correctness today — it's ordered "industries, then the two
+  transport modes that move their output" for readability, not because
+  anything depends on it.
+- **Real sprite art, not empty sections.** Each pack ships one shared
+  `spriteSheets` sheet (`baseIndustriesSheet`/`roadSheet`/`railSheet`)
+  holding a `<symbol>` per (entity, direction) — every building/vehicle/
+  engine references its symbols via `{sheet,symbol}`, the indirection form
+  § Content-pack sprite sheets added specifically so one file can cover a
+  whole pack's art. Every symbol is derived from ONE hand-drawn "facing
+  east" shape per entity (reusing the same 24x24 viewBox the toolbar's own
+  hardcoded `<symbol>` icons already use) — `n`/`w`/`s` aren't separate
+  drawings, they're that same shape rotated/mirrored about the box center
+  at generation time, so 4 genuinely distinct directions come from one
+  piece of art, not four. `infrastructureSprites.rail`/`.road` are authored
+  directly in `LOCAL_PORT`'s own coordinate space (render.js) — the exact
+  port positions the procedural generator itself uses for straight/corner/
+  spoke segments — so the override art lines up pixel-exact with the game's
+  connection geometry, recolored (rust-brown ballast, charcoal asphalt) to
+  visibly prove it's a real override and not a re-skin of the engine
+  default.
+- **`test/test-infrastructure-sprites.js` needed real fixes, not just
+  updated fixtures.** Three of its tests built a pack by cloning the real
+  shipped pack and then REPLACING `pack.spriteSheets` wholesale with a
+  test-only sheet — harmless before this addendum (nothing referenced
+  `pack.spriteSheets`), but now that real buildings genuinely reference
+  their own sheets, wholesale replacement left those references dangling
+  and the pack failed to validate for the wrong reason. Fixed by merging
+  into the real `pack.spriteSheets` (`{...pack.spriteSheets, mySheet:...}`)
+  instead of replacing it — the general lesson for any future test that
+  clones the real pack: extending a section is safe, replacing one a real
+  def references is not. Test 4 (multi-pack override merge semantics) also
+  needed a real rewrite: its comments assumed "the base pack ships no
+  infrastructureSprites.road/rail either," which stopped being true here —
+  updated to assert the actually-meaningful version of the same contract
+  (an addon overriding `infrastructureSprites.rail` replaces the WHOLE
+  subtree, so the base pack's real ballast/ties/rails are gone, not merged
+  alongside the addon's `nub`; `infrastructureSprites.road` survives
+  byte-for-byte since the addon never mentioned it).
+
+## What changed
+
+- **`data/base.json`, `data/coal.json`**: removed.
+- **`data/base-industries.json`, `data/road.json`, `data/rail.json`**:
+  new — the same content, reorganized by domain, each with real
+  `spriteSheets`/`sprites`/`infrastructureSprites` content (previously all
+  empty/absent in every shipped pack).
+- **`data/manifest.json`**: now lists the three new filenames.
+- **`test/test-infrastructure-sprites.js`**: three `pack.spriteSheets =`
+  wholesale replacements changed to spread-merges; Test 4 rewritten to
+  assert whole-subtree-replacement and untouched-section behavior against
+  the real (now non-empty) infrastructure sprite data instead of asserting
+  "ships none."
+
+## Testing
+
+All 14 test files pass. Verified in a real browser via Playwright against
+a local static server: `SPRITE_SHEETS`/`INFRASTRUCTURE_SPRITES` merge to
+the expected 3 sheets and `{rail, road, oneWayArrow, crossingMarker}`
+keys; every building/vehicle/engine's `sprites.n/s/e/w` decode to a real,
+non-blank image (checked programmatically via `spriteImageFor`, not just
+schema-valid JSON); a built scene (Mine/Steel Mill/Town/Colliery/Station,
+a Bulk Truck on a road, a rail line) renders each building with its real
+silhouette instead of a flat diamond, and sampling actual canvas pixels
+confirmed the road and rail lines render in their distinct authored colors
+(dark charcoal asphalt vs. rust-brown ballast) rather than the engine's
+default palette; zero console errors throughout.
