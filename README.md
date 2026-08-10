@@ -3414,3 +3414,126 @@ segment's rails/lane-markings clearly crossing THROUGH the junction point
 (previously the later-drawn segment's ballast/asphalt would have covered
 the earlier one's fine detail there), and the underground-vs-ground nub
 distinction (dashed ring vs. solid dot) still holds — zero console errors.
+
+# Addendum — Content-pack sprite sheets
+
+Rail/road track art (§ SVG track sprites) was deliberately engine-only when
+first built — "no content-pack-authorable field... every possible track
+shape is covered unconditionally." A content pack can now override it after
+all, using a new sprite-SHEET mechanism that also generalizes to every
+OTHER sprite slot in the game (buildings — Train Yards, Stations, any
+production building — vehicles, engines, wagons): a pack ships one or more
+named SVG documents, each holding any number of `<symbol id="...">` pieces,
+and any sprite slot anywhere references one symbol from one sheet instead
+of needing its own separate inline markup. One file's worth of art can
+cover a Train Yard's 4 directions, a Station's 4, and rail's ballast/ties/
+rails and road's asphalt/markings, all at once — the "may include more than
+one type of infrastructure" a hand-authored art pack actually wants.
+
+## Design
+
+- **A sprite slot's value gains a third form.** Every place a sprite was
+  already `{type:'svg', markup}` or `{type:'png', dataUri}` (building/
+  vehicle/engine/wagon `sprites`, and the new `infrastructureSprites`
+  below) can now instead be `{sheet:'sheetId', symbol:'symbolId'}` — a
+  reference into a new top-level `spriteSheets` content-pack section
+  (`{sheetId: {markup: "<svg>...multiple <symbol id> pieces...</svg>"}}`).
+  `spriteDataUri` (loader.js), the one function that already turned every
+  sprite form into a drawable data URI, is the one place that resolves it:
+  a real `DOMParser` (main-thread/Playwright only — sim-layer tests never
+  touch this) parses the sheet's markup once, `getElementById` finds the
+  named symbol, and its inner markup is re-wrapped as its own standalone
+  `<svg>` (inheriting the symbol's own `viewBox` if it declares one, else
+  the sheet's outer one) — cached forever per (sheet,symbol) pair after
+  that, same contract every sprite cache in this codebase follows.
+- **New `infrastructureSprites` section** — optional, engine-default-if-
+  absent art for rail/road track and its connecting overlays: `rail.
+  {ballast,ties,rails,nub}`, `road.{asphalt,markings,nub}`,
+  `oneWayArrow`, `crossingMarker`. A track MATERIAL layer (unlike a
+  building's one-whole-image-per-direction sprite) is authored once per
+  SHAPE CATEGORY — `straight`, `corner`, or `spoke` — at a fixed canonical
+  orientation (straight always drawn N-S, corner always N-E, spoke always
+  pointing N), not once per exact direction: an author draws 3 shapes per
+  layer, not up to 10 (2 straight + 4 corner + 4 spoke) separate
+  directional variants. `nub` (the isolated/dead-end/hub core) is
+  symmetric, so it's a single spec with no shape variants.
+- **Every other orientation is reached by a transform at DRAW time, not a
+  second cached raster.** `SEGMENT_SHAPE_TRANSFORM` (render.js) maps each
+  of the 10 real segKeys to `{shape, rotate, flip}` relative to its
+  canonical asset — a 90°-turn count for corner/spoke (verified directly
+  against LOCAL_PORT's own coordinates: rotating the canonical N-E corner
+  by 90°/180°/270° visits S-E/S-W/N-W in that order; the canonical spoke
+  the same way visits E/S/W), or a vertical mirror for E-W (the other half
+  of the straight pair). Because every cell's diamond bounding box is
+  EXACTLY `ISO_W x ISO_H` regardless of position (the same fact the
+  original SVG track sprites work already leaned on for its distortion-
+  free bbox-stretch), rotating/mirroring the WHOLE `drawImage` call around
+  the cell's own screen-space center reproduces the exact same port
+  permutation the local-space math predicts — verified by placing
+  distinctly-colored markers at each canonical asset's two named ends and
+  confirming, via a real Playwright screenshot, that a marker consistently
+  lands at the SAME screen position regardless of whether it got there via
+  the canonical (unrotated) draw or a transformed one.
+- **The dashed "X-ray hint" underground/airspace look stays engine-only,
+  by design** — there's nothing to texture through solid ground, and it's
+  deliberately a muted schematic, not real track; a content-pack override
+  never applies there, the same way it never applied to the procedural
+  dashed line before this addendum.
+- **Merge semantics match every other content-pack section**: an addon
+  pack overriding just `infrastructureSprites.rail` replaces that WHOLE
+  subtree (road's own entry, if any, stays from the base pack) — the same
+  "whole entry replaced, not deep-merged field by field" contract a
+  `buildings` id override already has.
+- **Yards, Stations, and every other building/vehicle already had sprite
+  support** (§ Isometric sprites) — this addendum doesn't add a new
+  mechanism for them, it lets their EXISTING `sprites` field reference a
+  shared sheet symbol instead of needing separate inline markup, so one
+  file can genuinely cover "yards, stations, [and] connecting
+  infrastructure" together.
+
+## What changed
+
+- **`loader.js`**: new `validateSpriteSheets`, `validateSpriteSpec` (the
+  inline-or-sheet-reference check `validateSprites` now delegates to for
+  every existing sprite slot), `validateInfrastructureSprites`; new
+  `extractSpriteSheetSymbol` (the DOMParser-based resolver); `spriteDataUri`
+  resolves a `{sheet,symbol}` form through it; `spriteSheets` and
+  `infrastructureSprites` added to `CONTENT_PACK_SECTIONS` (merged the same
+  shallow, per-top-key way every other section is); new `SPRITE_SHEETS`/
+  `INFRASTRUCTURE_SPRITES` globals, populated in `initContentPack`.
+- **`render.js`**: new `SEGMENT_SHAPE_TRANSFORM`, `infraShapeImage`
+  (cached per kind/layer/shape lookup), `trackLayerEntry` (picks a
+  content-pack image + transform over the procedural generator when one's
+  configured); `trackSegmentLayers` now returns image-with-transform
+  entries alongside plain markup ones; `drawTrackCell`'s draw loop branches
+  on which kind each layer entry is; `oneWayArrowImage`/
+  `crossingMarkerImage` check `INFRASTRUCTURE_SPRITES` first.
+- **`test/harness.js`**: its own mirrored `CONTENT_PACK_SECTIONS` constant
+  updated to match loader.js's.
+
+## Testing
+
+New `test/test-infrastructure-sprites.js` (12 checks): a pack with a valid
+`spriteSheets` + `infrastructureSprites` section (rail layers with shape
+variants, road layers, both markers) validates cleanly; an existing
+building `sprites` slot accepts a `{sheet,symbol}` reference too, not just
+inline markup; deliberately-broken fixtures (non-SVG sheet markup, a
+dangling sheet reference from either `infrastructureSprites` or a building
+sprite, an unknown layer/shape/top-level key, a malformed marker spec) are
+each rejected with a clear, specific message; and a multi-pack merge test
+confirms an addon pack can override just `infrastructureSprites.rail`,
+leaving `road` (and every other section) untouched from the base pack. All
+14 test files pass. Verified in a real browser via Playwright: installed a
+test sprite sheet + full `infrastructureSprites` override (distinctly
+colored markers per canonical shape) before building any track, confirmed
+zero console errors, and confirmed via screenshots that every straight/
+corner segment along real multi-tile chains shows the markers landing in
+visually consistent, correctly-oriented positions end to end (the flip
+correctly reorients the straight pair, the rotation correctly walks the
+corner through all 4 turns) — including re-deriving, mid-verification, why
+a shared boundary between two differently-colored adjacent segments always
+shows whichever segment drew SECOND (pre-existing behavior of the
+draw-order pipeline, not a bug in the transform math). Also confirmed the
+base game — no content pack ships any override — renders pixel-identical
+to before this addendum, with `INFRASTRUCTURE_SPRITES`/`SPRITE_SHEETS`
+both defaulting to empty objects.

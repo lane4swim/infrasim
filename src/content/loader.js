@@ -78,6 +78,11 @@ function validateContentPack(pack){
   for(const section of ['resources','recipes','buildings','vehicles','rail','engines','wagons']){
     need(pack && typeof pack[section]==='object' && pack[section]!==null, `missing "${section}" section`);
   }
+  // spriteSheets validated up front — every other sprite-slot validation
+  // below (building/vehicle/engine/wagon `sprites`, and infrastructureSprites
+  // further down) needs pack.spriteSheets already checked to confirm a
+  // {sheet,symbol} reference actually points at something real.
+  validateSpriteSheets(pack.spriteSheets);
   // Isometric per-direction sprites (§ Isometric sprites) — optional on any
   // renderable entity def (building/vehicle/engine/wagon). Only n/s/e/w are
   // ever actually selectable today: the sim grid is strictly 4-connected
@@ -91,6 +96,42 @@ function validateContentPack(pack){
   // also optional, also independent of the direction keys.
   const SPRITE_DIRECTION_KEYS = ['n','s','e','w','ne','nw','se','sw'];
   const REQUIRED_SPRITE_DIRECTION_KEYS = ['n','s','e','w'];
+  // Sprite sheets (§ Content-pack sprite sheets) — a named `spriteSheets`
+  // entry is one SVG document a pack ships once, holding any number of
+  // named `<symbol id="...">` pieces; a real art pack ships one (or a
+  // handful of) cohesive sheet(s) covering everything it draws — a Train
+  // Yard's 4 directions, a Station's 4, rail's ballast/ties/rails, road's
+  // asphalt/markings — rather than one wholly separate file per sprite
+  // slot. Only validated for shape here (real, non-empty SVG markup); the
+  // actual `<symbol id>` lookup happens at render time (render.js), where
+  // a browser's DOMParser is available to parse it for real.
+  function validateSpriteSheets(sheets){
+    if(sheets===undefined) return;
+    need(typeof sheets==='object' && sheets!==null && !Array.isArray(sheets), `spriteSheets must be an object`);
+    for(const [id, sheet] of Object.entries(sheets)){
+      need(sheet && typeof sheet==='object', `sprite sheet "${id}" must be an object`);
+      need(typeof sheet.markup==='string' && sheet.markup.includes('<svg'), `sprite sheet "${id}" is missing "markup" (must be a full <svg>...</svg> document)`);
+    }
+  }
+  // One sprite slot's value, shared by the per-direction `sprites` object
+  // below and § SVG track sprites' `infrastructureSprites` (further down):
+  // either art inline (the original {type,markup|dataUri} shape) or a
+  // {sheet,symbol} reference into a spriteSheets entry validated above —
+  // the two forms are interchangeable everywhere a sprite slot is accepted,
+  // so an author can mix "most sprites come from one shared sheet, but this
+  // one-off slot gets its own inline markup" freely.
+  function validateSpriteSpec(ownerLabel, spec){
+    need(spec && typeof spec==='object', `${ownerLabel} must be an object`);
+    if(spec.sheet!==undefined || spec.symbol!==undefined){
+      need(typeof spec.sheet==='string' && spec.sheet.length>0, `${ownerLabel} "sheet" must be a non-empty string`);
+      need(typeof spec.symbol==='string' && spec.symbol.length>0, `${ownerLabel} "symbol" must be a non-empty string`);
+      need(pack.spriteSheets && pack.spriteSheets[spec.sheet], `${ownerLabel} references undefined sprite sheet "${spec.sheet}"`);
+      return;
+    }
+    need(spec.type==='svg' || spec.type==='png', `${ownerLabel} has an invalid "type" (must be "svg", "png", or a {sheet,symbol} reference)`);
+    if(spec.type==='svg') need(typeof spec.markup==='string' && spec.markup.length>0, `${ownerLabel} is missing "markup"`);
+    else need(typeof spec.dataUri==='string' && spec.dataUri.startsWith('data:image/png'), `${ownerLabel} is missing a valid "dataUri" (must start with "data:image/png")`);
+  }
   function validateSprites(ownerLabel, sprites){
     if(sprites===undefined) return;
     need(typeof sprites==='object' && sprites!==null && !Array.isArray(sprites), `${ownerLabel} has an invalid "sprites" — must be an object`);
@@ -100,11 +141,54 @@ function validateContentPack(pack){
     for(const key of REQUIRED_SPRITE_DIRECTION_KEYS){
       need(sprites[key]!==undefined, `${ownerLabel} sprites is missing required direction "${key}" (n/s/e/w are mandatory once "sprites" is present at all — ne/nw/se/sw and menu stay optional)`);
     }
-    for(const [key, sprite] of Object.entries(sprites)){
-      need(sprite && typeof sprite==='object', `${ownerLabel} sprite "${key}" must be an object`);
-      need(sprite.type==='svg' || sprite.type==='png', `${ownerLabel} sprite "${key}" has an invalid "type" (must be "svg" or "png")`);
-      if(sprite.type==='svg') need(typeof sprite.markup==='string' && sprite.markup.length>0, `${ownerLabel} sprite "${key}" is missing "markup"`);
-      else need(typeof sprite.dataUri==='string' && sprite.dataUri.startsWith('data:image/png'), `${ownerLabel} sprite "${key}" is missing a valid "dataUri" (must start with "data:image/png")`);
+    for(const [key, sprite] of Object.entries(sprites)) validateSpriteSpec(`${ownerLabel} sprite "${key}"`, sprite);
+  }
+  // Infrastructure sprites (§ SVG track sprites' content-pack addendum) —
+  // optional, engine-default-if-absent art for rail/road track and its
+  // connecting overlays. Unlike building/vehicle sprites (one whole image
+  // per direction, stretched into a footprint bbox), a rail/road MATERIAL
+  // layer (ballast, ties, rails; asphalt, markings) is authored once per
+  // SHAPE CATEGORY — straight, corner, or spoke — at a fixed canonical
+  // orientation (straight=N-S, corner=N-E, spoke=pointing N), and reused
+  // for every actual direction via a rotation/mirror the renderer applies
+  // (see SEGMENT_SHAPE_TRANSFORM, render.js) — an author draws 3 shapes per
+  // layer, not up to 10 (2 straight + 4 corner + 4 spoke) separate
+  // directional variants. `nub` (the isolated/dead-end/hub core) has no
+  // shape variants — it's symmetric — so it's a single spec, not nested
+  // under a layer. The dashed "X-ray hint" underground/airspace look is
+  // deliberately NOT overridable (see render.js) — there's nothing to
+  // texture through solid ground.
+  const INFRA_SHAPE_KEYS = ['straight','corner','spoke'];
+  const INFRA_RAIL_LAYER_KEYS = ['ballast','ties','rails'];
+  const INFRA_ROAD_LAYER_KEYS = ['asphalt','markings'];
+  const INFRA_MARKER_KEYS = ['oneWayArrow','crossingMarker'];
+  function validateInfrastructureSprites(infra){
+    if(infra===undefined) return;
+    need(typeof infra==='object' && infra!==null && !Array.isArray(infra), `infrastructureSprites must be an object`);
+    for(const key of Object.keys(infra)){
+      need(key==='rail' || key==='road' || INFRA_MARKER_KEYS.includes(key), `infrastructureSprites has an unknown key "${key}" (expected "rail", "road", or one of ${INFRA_MARKER_KEYS.join('/')})`);
+    }
+    for(const kind of ['rail','road']){
+      if(infra[kind]===undefined) continue;
+      need(typeof infra[kind]==='object' && infra[kind]!==null, `infrastructureSprites.${kind} must be an object`);
+      const layerKeys = kind==='rail' ? INFRA_RAIL_LAYER_KEYS : INFRA_ROAD_LAYER_KEYS;
+      for(const key of Object.keys(infra[kind])){
+        need(layerKeys.includes(key) || key==='nub', `infrastructureSprites.${kind} has an unknown key "${key}" (expected one of ${layerKeys.join('/')}, or "nub")`);
+      }
+      for(const layer of layerKeys){
+        if(infra[kind][layer]===undefined) continue;
+        const shapes = infra[kind][layer];
+        need(typeof shapes==='object' && shapes!==null && !Array.isArray(shapes), `infrastructureSprites.${kind}.${layer} must be an object of {straight,corner,spoke}`);
+        for(const shapeKey of Object.keys(shapes)){
+          need(INFRA_SHAPE_KEYS.includes(shapeKey), `infrastructureSprites.${kind}.${layer} has an unknown shape "${shapeKey}" (expected one of ${INFRA_SHAPE_KEYS.join('/')})`);
+        }
+        for(const [shapeKey, spec] of Object.entries(shapes)) validateSpriteSpec(`infrastructureSprites.${kind}.${layer}.${shapeKey}`, spec);
+      }
+      if(infra[kind].nub!==undefined) validateSpriteSpec(`infrastructureSprites.${kind}.nub`, infra[kind].nub);
+    }
+    for(const key of INFRA_MARKER_KEYS){
+      if(infra[key]===undefined) continue;
+      validateSpriteSpec(`infrastructureSprites.${key}`, infra[key]);
     }
   }
   for(const [id, r] of Object.entries(pack.resources)){
@@ -185,20 +269,60 @@ function validateContentPack(pack){
     // sprites are reserved for a possible future segmented-train renderer.
     validateSprites(`wagon "${id}"`, w.sprites);
   }
+  validateInfrastructureSprites(pack.infrastructureSprites);
 }
 
+// Extracts one <symbol id="..."> piece out of a sprite sheet's SVG markup
+// (§ Content-pack sprite sheets) as its own standalone, drawable <svg>
+// document — the one place that knows how to turn a {sheet,symbol}
+// reference into real markup, shared by render.js and ui.js the same way
+// spriteDataUri below is. Needs a real DOMParser (a standard browser API,
+// available on the main thread in both the real page and Playwright — but
+// NOT in the headless sim-test harness's vm sandbox, which is fine: nothing
+// in sim/*.js ever resolves a sprite, only render.js/ui.js do, and neither
+// loads into that harness). The symbol's OWN viewBox wins if it declares
+// one (letting each symbol in a sheet use whatever local coordinate space
+// its art was drawn in); falling back to the sheet's outer viewBox keeps a
+// symbol that omits its own from silently becoming unbounded. Cached
+// forever per (sheet,symbol) pair — sheets don't change at runtime, so
+// there's nothing to invalidate, same contract every sprite cache in this
+// codebase already follows.
+const spriteSheetSymbolCache = new Map();
+function extractSpriteSheetSymbol(sheetId, symbolId){
+  const cacheKey = sheetId + '::' + symbolId;
+  if(spriteSheetSymbolCache.has(cacheKey)) return spriteSheetSymbolCache.get(cacheKey);
+  let result = null;
+  const sheet = SPRITE_SHEETS && SPRITE_SHEETS[sheetId];
+  if(sheet){
+    const doc = new DOMParser().parseFromString(sheet.markup, 'image/svg+xml');
+    const symbolEl = doc.getElementById(symbolId);
+    if(symbolEl){
+      const viewBox = symbolEl.getAttribute('viewBox') || doc.documentElement.getAttribute('viewBox') || '0 0 100 100';
+      result = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}">${symbolEl.innerHTML}</svg>`;
+    }
+  }
+  spriteSheetSymbolCache.set(cacheKey, result);
+  return result;
+}
 // Decodes one validated sprite entry (§ Isometric sprites) into a `src`
 // string an <img> element or a canvas Image can load directly — the one
-// place that knows how to turn either sprite `type` into a data URI, shared
-// by render.js (canvas Image objects, drawn per building/vehicle) and
-// ui.js (toolbar <img> tags, the "menu" sprite). SVG markup is percent-
-// encoded rather than base64'd (`btoa` throws on any non-Latin1 character,
-// which arbitrary hand-authored SVG text — a stray em dash in a <title>,
-// non-ASCII content — would easily contain); PNG sprites already arrive as
-// a full data URI (validateSprites requires the "data:image/png" prefix),
-// so there's nothing to do but pass it through.
+// place that knows how to turn any sprite form into a data URI, shared
+// by render.js (canvas Image objects, drawn per building/vehicle/track
+// segment) and ui.js (toolbar <img> tags, the "menu" sprite). SVG markup is
+// percent-encoded rather than base64'd (`btoa` throws on any non-Latin1
+// character, which arbitrary hand-authored SVG text — a stray em dash in a
+// <title>, non-ASCII content — would easily contain); PNG sprites already
+// arrive as a full data URI (validateSprites requires the "data:image/png"
+// prefix), so there's nothing to do but pass it through. A {sheet,symbol}
+// reference (§ Content-pack sprite sheets) resolves through
+// extractSpriteSheetSymbol first — same encoding after that, since the
+// extracted result is just more SVG markup.
 function spriteDataUri(sprite){
   if(!sprite) return null;
+  if(sprite.sheet){
+    const markup = extractSpriteSheetSymbol(sprite.sheet, sprite.symbol);
+    return markup ? 'data:image/svg+xml,' + encodeURIComponent(markup) : null;
+  }
   return sprite.type==='svg' ? 'data:image/svg+xml,' + encodeURIComponent(sprite.markup) : sprite.dataUri;
 }
 
@@ -214,7 +338,13 @@ function spriteDataUri(sprite){
 // section entirely replaces that entry — the seam an override-style mod
 // uses, exactly like a later JS property assignment winning over an
 // earlier one. Load order is document order (see the DOM bootstrap below).
-const CONTENT_PACK_SECTIONS = ['resources','recipes','buildings','vehicles','rail','engines','wagons'];
+// spriteSheets and infrastructureSprites (§ Content-pack sprite sheets, §
+// SVG track sprites) merge the exact same shallow, per-top-level-key way
+// every other section does — an addon pack overriding just
+// infrastructureSprites.road replaces that WHOLE subtree (rail's stays
+// from the base pack), the same "whole entry replaced, not deep-merged
+// field by field" contract a `buildings` id override already has.
+const CONTENT_PACK_SECTIONS = ['resources','recipes','buildings','vehicles','rail','engines','wagons','spriteSheets','infrastructureSprites'];
 function mergeContentPacks(packs){
   const merged = {};
   for(const section of CONTENT_PACK_SECTIONS) merged[section] = {};
@@ -236,7 +366,7 @@ function mergeContentPacks(packs){
 // on the main thread that happens synchronously below; in the Worker it
 // happens on the first 'init' message (see worker-client.js's protocol
 // comment for why that has to be a separate later step).
-let CONTENT_PACK, RESOURCES, RESOURCE, RECIPES, BUILDING_DEFS, VEHICLE_DEFS, RAIL_DEFS, ENGINE_DEFS, WAGON_DEFS;
+let CONTENT_PACK, RESOURCES, RESOURCE, RECIPES, BUILDING_DEFS, VEHICLE_DEFS, RAIL_DEFS, ENGINE_DEFS, WAGON_DEFS, SPRITE_SHEETS, INFRASTRUCTURE_SPRITES;
 let INITIAL_TREASURY, ROAD_COST_PER_TILE, ELEVATED_COST_MULTIPLIER, RAMP_COST, UNDERGROUND_COST_MULTIPLIER, UNDERGROUND_RAMP_COST, UNDERGROUND_LEVELS, UNDERGROUND_LEVEL_COST_STEP, UNDERGROUND_RAMP_LEVEL_STEP, DEEP_UNDERGROUND_COST_MULTIPLIER, AIRSPACE_COST_MULTIPLIER, TERRAFORM_COST, DEFAULT_TRANSFER_RATE, TICK_MS, CONSUMPTION_PER_CAPITA;
 
 function initContentPack(pack){
@@ -250,6 +380,8 @@ function initContentPack(pack){
   RAIL_DEFS = pack.rail;
   ENGINE_DEFS = pack.engines;
   WAGON_DEFS = pack.wagons;
+  SPRITE_SHEETS = pack.spriteSheets;
+  INFRASTRUCTURE_SPRITES = pack.infrastructureSprites;
 
   INITIAL_TREASURY = 5000; // starting cash — bumped up from 1000 now that a Mine->Mill->Town chain needs multiple buildings, stations, and trucks before any income comes in
   ROAD_COST_PER_TILE = 10;

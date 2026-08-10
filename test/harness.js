@@ -75,7 +75,7 @@ function extractContentPackBlocks(htmlPath){
 // shipped pack" for tests that clone-and-mutate it (test-content-pack.js,
 // test-building-foundation.js) — the actual merge CODE PATH under test
 // always runs for real, inside the vm context via newGameContext below.
-const CONTENT_PACK_SECTIONS = ['resources','recipes','buildings','vehicles','rail','engines','wagons'];
+const CONTENT_PACK_SECTIONS = ['resources','recipes','buildings','vehicles','rail','engines','wagons','spriteSheets','infrastructureSprites'];
 function mergeContentPackBlocks(blocks){
   const merged = {};
   for(const section of CONTENT_PACK_SECTIONS) merged[section] = {};

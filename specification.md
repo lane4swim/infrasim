@@ -738,6 +738,20 @@ which is also the seam a modding UI could hook into later.
 > selectable, since the sim grid is strictly 4-connected (§10) — the
 > diagonal keys are reserved so a future diagonal-movement mode costs no
 > schema migration, not because 8-directional movement exists today.
+>
+> **Further amended in Phase 2 (Content-pack sprite sheets).** A sprite
+> slot's value — anywhere one is accepted, including the new
+> `infrastructureSprites` section §11's own further amendment covers — can
+> now be `{sheet, symbol}` instead of inline `{type,markup|dataUri}`: a
+> reference into a new top-level `spriteSheets` section, each entry one SVG
+> document holding any number of named `<symbol id>` pieces. A pack ships
+> one file's worth of art covering a Train Yard's 4 directions, a
+> Station's 4, and rail/road track's own material layers together, rather
+> than needing separate inline markup per slot — the "may include more
+> than one type of infrastructure" a real hand-authored art pack wants.
+> Resolved at draw time (not content-pack-validation time) by a real
+> `DOMParser`, so this only ever works on the main thread/in a real
+> browser — exactly where every sprite was already only ever drawn from.
 
 ---
 
@@ -865,6 +879,26 @@ which is also the seam a modding UI could hook into later.
 > content-pack-authorable field, unlike the building/vehicle sprites
 > above) — every possible track shape is covered unconditionally, with no
 > "falls back to the procedural look" case to maintain.
+>
+> **Further amended in Phase 2 (Content-pack sprite sheets).** "Not a
+> content-pack-authorable field" above no longer holds: a pack can now
+> supply `infrastructureSprites` (§9's own further amendment covers the
+> `{sheet,symbol}` reference form every slot here uses), one static asset
+> per material layer (`rail.{ballast,ties,rails}`, `road.{asphalt,
+> markings}`) per SHAPE CATEGORY (`straight`/`corner`/`spoke`, at a fixed
+> canonical orientation) plus a `nub` (symmetric, one asset), and the two
+> overlay markers (`oneWayArrow`, `crossingMarker`). Every OTHER
+> orientation of a shape is reached from its canonical asset by a
+> rotation/mirror transform applied at draw time, not a second authored
+> asset (the exact 90°-turn/mirror mapping and its derivation live in
+> render.js's `SEGMENT_SHAPE_TRANSFORM` and the README's own addendum, not
+> repeated here) — so a pack authors 3 shapes per layer, not up to 10
+> separate directional variants. The engine-procedural
+> fallback (still the default whenever a pack ships no override) and the
+> dashed underground/airspace hint (never overridable, for the same "there's
+> nothing to texture through solid ground" reason as before) are both
+> unchanged by this amendment — this only ever ADDS a third rendering
+> source ahead of the procedural one in the lookup order, never removes it.
 
 ---
 

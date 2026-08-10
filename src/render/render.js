@@ -196,26 +196,93 @@ function nubSVG(color, width, dashed){
   if(dashed) return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="3,3"/>`;
   return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}"/>`;
 }
-// Returns [{z, svg}] — the sub-layer(s) one segment (or 'NUB') breaks into,
-// each tagged with its TRACK_LAYER_Z above. `dashed` (underground/airspace
-// grades — always a muted "X-ray hint," never real visible track) and NUB
-// both collapse to a single layer at their kind's base tier: there's
-// nothing to texture through solid ground, and a dashed FILL doesn't have
-// a clean meaning the way a dashed stroke does, so neither ever produces
-// more than one z-level.
+// § Content-pack sprite sheets' infrastructure-sprite override — a content
+// pack authors ONE static asset per (kind, layer, SHAPE CATEGORY), at a
+// fixed canonical orientation, rather than one per exact direction: straight
+// is always drawn N-S, corner is always drawn N-E, spoke is always drawn
+// pointing N. Every other segKey of that shape category is reached from the
+// canonical asset by a transform applied at DRAW time (drawTrackCell below)
+// rather than baked into a second cached raster — `rotate` is a count of
+// 90° turns, `flip` a vertical mirror (only ever needed for E-W, the other
+// half of the straight pair). These exact numbers were verified directly
+// against LOCAL_PORT's coordinates (see the README's SVG track sprites
+// addendum for the worked-out derivation of N/S/E/W/C): rotating the
+// canonical N-E corner by 90°/180°/270° visits S-E/S-W/N-W in that order;
+// rotating the canonical spoke (C-N) the same way visits E/S/W; mirroring
+// the canonical N-S straight vertically about its center produces E-W.
+const SEGMENT_SHAPE_TRANSFORM = {
+  'N-S': {shape:'straight', rotate:0, flip:false},
+  'E-W': {shape:'straight', rotate:0, flip:true},
+  'N-E': {shape:'corner', rotate:0, flip:false},
+  'S-E': {shape:'corner', rotate:1, flip:false},
+  'S-W': {shape:'corner', rotate:2, flip:false},
+  'N-W': {shape:'corner', rotate:3, flip:false},
+  'N-C': {shape:'spoke', rotate:0, flip:false},
+  'E-C': {shape:'spoke', rotate:1, flip:false},
+  'S-C': {shape:'spoke', rotate:2, flip:false},
+  'W-C': {shape:'spoke', rotate:3, flip:false},
+};
+// One Image per (kind, layer, shape) content-pack override, resolved from
+// INFRASTRUCTURE_SPRITES (loader.js) and cached forever — null (not just
+// absent from the cache) is itself cached, so an unset slot is only ever
+// looked up once, not on every draw. `shape` is null for 'nub', which has
+// no shape variants (see INFRASTRUCTURE_SPRITES' own schema comment,
+// loader.js) — its spec sits directly on the kind object, not nested under
+// a layer+shape pair.
+const infraSpriteImageCache = new Map();
+function infraShapeImage(kind, layer, shape){
+  const key = `${kind}|${layer}|${shape}`;
+  if(infraSpriteImageCache.has(key)) return infraSpriteImageCache.get(key);
+  const layerSpecs = INFRASTRUCTURE_SPRITES && INFRASTRUCTURE_SPRITES[kind] && INFRASTRUCTURE_SPRITES[kind][layer];
+  const spec = shape===null ? layerSpecs : (layerSpecs && layerSpecs[shape]);
+  let img = null;
+  if(spec){
+    const uri = spriteDataUri(spec);
+    if(uri){ img = new Image(); img.src = uri; }
+  }
+  infraSpriteImageCache.set(key, img);
+  return img;
+}
+// One layer entry for trackSegmentLayers below — a content-pack override
+// (if INFRASTRUCTURE_SPRITES has one for this kind/layer/shape) takes an
+// `img` + the transform needed to reach this exact segKey from its
+// canonical orientation; otherwise the engine's own procedural generator
+// (`proceduralFn`) fills the same z-level the same as always.
+function trackLayerEntry(kind, layer, z, transform, proceduralFn){
+  const img = infraShapeImage(kind, layer, transform.shape);
+  if(img) return {z, img, rotate: transform.rotate, flip: transform.flip};
+  return {z, svg: proceduralFn()};
+}
+// Returns [{z, svg}] or [{z, img, rotate, flip}] — the sub-layer(s) one
+// segment (or 'NUB') breaks into, each tagged with its TRACK_LAYER_Z above,
+// each EITHER engine-procedural markup or a content-pack override image (see
+// trackLayerEntry above). `dashed` (underground/airspace grades — always a
+// muted "X-ray hint," never real visible track) and NUB's dashed case both
+// collapse to a single procedural layer at their kind's base tier and are
+// deliberately NEVER content-pack-overridable — there's nothing to texture
+// through solid ground, and a dashed FILL doesn't have a clean meaning the
+// way a dashed stroke does — so dashed always short-circuits before any
+// override lookup.
 function trackSegmentLayers(kind, segKey, color, width, dashed){
   const baseZ = kind==='rail' ? TRACK_LAYER_Z.ballast : TRACK_LAYER_Z.asphalt;
-  if(segKey==='NUB') return [{z: baseZ, svg: nubSVG(color, width, dashed)}];
+  if(segKey==='NUB'){
+    if(!dashed){
+      const img = infraShapeImage(kind, 'nub', null);
+      if(img) return [{z: baseZ, img, rotate:0, flip:false}];
+    }
+    return [{z: baseZ, svg: nubSVG(color, width, dashed)}];
+  }
   const p1 = LOCAL_PORT[segKey[0]], p2 = LOCAL_PORT[segKey[2]];
   if(dashed) return [{z: baseZ, svg: `<line x1="${p1[0]}" y1="${p1[1]}" x2="${p2[0]}" y2="${p2[1]}" stroke="${color}" stroke-width="${width}" stroke-dasharray="6,5" stroke-linecap="butt"/>`}];
+  const transform = SEGMENT_SHAPE_TRANSFORM[segKey];
   if(kind==='rail') return [
-    {z: TRACK_LAYER_Z.ballast, svg: railBallastSVG(p1,p2,color,width)},
-    {z: TRACK_LAYER_Z.ties,    svg: railTiesSVG(p1,p2,color,width)},
-    {z: TRACK_LAYER_Z.rails,   svg: railRailsSVG(p1,p2,color,width)},
+    trackLayerEntry('rail','ballast', TRACK_LAYER_Z.ballast, transform, () => railBallastSVG(p1,p2,color,width)),
+    trackLayerEntry('rail','ties',    TRACK_LAYER_Z.ties,    transform, () => railTiesSVG(p1,p2,color,width)),
+    trackLayerEntry('rail','rails',   TRACK_LAYER_Z.rails,   transform, () => railRailsSVG(p1,p2,color,width)),
   ];
   return [
-    {z: TRACK_LAYER_Z.asphalt,  svg: roadAsphaltSVG(p1,p2,color,width)},
-    {z: TRACK_LAYER_Z.markings, svg: roadMarkingsSVG(p1,p2,color,width, segKey==='N-S'||segKey==='E-W')},
+    trackLayerEntry('road','asphalt',  TRACK_LAYER_Z.asphalt,  transform, () => roadAsphaltSVG(p1,p2,color,width)),
+    trackLayerEntry('road','markings', TRACK_LAYER_Z.markings, transform, () => roadMarkingsSVG(p1,p2,color,width, segKey==='N-S'||segKey==='E-W')),
   ];
 }
 // One Image per (kind, segment, z-level, color, width, dashed) combination
@@ -238,24 +305,31 @@ function trackLayerImage(kind, segKey, z, svgInner, color, width, dashed){
 // way. Both are a single fixed asset (color/style never varies per grade
 // or kind the way a track segment's does), so each is built once ever, on
 // first use, and cached in a plain module-level variable rather than a Map.
+// Both check INFRASTRUCTURE_SPRITES.oneWayArrow/.crossingMarker (§
+// Content-pack sprite sheets) first — a whole-image override, no
+// shape/rotation transform needed the way a track segment's does, since
+// each of these is already exactly one fixed shape (drawTrackCell's caller
+// rotates a one-way arrow continuously by real angle regardless of source).
 let oneWayArrowImg = null;
 function oneWayArrowImage(){
   if(oneWayArrowImg) return oneWayArrowImg;
+  const override = INFRASTRUCTURE_SPRITES && INFRASTRUCTURE_SPRITES.oneWayArrow;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 10"><polygon points="12,5 0,0 0,10" fill="${getCss('--amber')}"/></svg>`;
   oneWayArrowImg = new Image();
-  oneWayArrowImg.src = spriteDataUri({type:'svg', markup: svg});
+  oneWayArrowImg.src = override ? spriteDataUri(override) : spriteDataUri({type:'svg', markup: svg});
   return oneWayArrowImg;
 }
 let crossingMarkerImg = null;
 function crossingMarkerImage(){
   if(crossingMarkerImg) return crossingMarkerImg;
+  const override = INFRASTRUCTURE_SPRITES && INFRASTRUCTURE_SPRITES.crossingMarker;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
     <rect x="1" y="1" width="22" height="22" rx="4" fill="#1a1410" stroke="#f2d24a" stroke-width="2"/>
     <line x1="6" y1="6" x2="18" y2="18" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
     <line x1="18" y1="6" x2="6" y2="18" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
   </svg>`;
   crossingMarkerImg = new Image();
-  crossingMarkerImg.src = spriteDataUri({type:'svg', markup: svg});
+  crossingMarkerImg.src = override ? spriteDataUri(override) : spriteDataUri({type:'svg', markup: svg});
   return crossingMarkerImg;
 }
 // Exactly 2 connected sides is the only case with one obvious, unambiguous
@@ -343,8 +417,25 @@ function drawTrackCell(x, y, dirs, color, margin, kind, diagonalPairs, dashed){
   const xs = corners.map(c=>c[0]), ys = corners.map(c=>c[1]);
   const minX = Math.min(...xs), minY = Math.min(...ys);
   const bw = Math.max(...xs)-minX, bh = Math.max(...ys)-minY;
-  for(const {segKey, z, svg} of layers){
-    ctx.drawImage(trackLayerImage(kind, segKey, z, svg, color, width, dashed), minX, minY, bw, bh);
+  const [cx, cy] = gridToScreen(x+0.5, y+0.5);
+  for(const entry of layers){
+    if(entry.img){
+      // A content-pack override (trackLayerEntry above) — the cached image
+      // is always the SHAPE's canonical orientation, reached from there by
+      // rotating/mirroring around the cell's own center. bw/bh are always
+      // exactly ISO_W/ISO_H (every cell's diamond bbox is the same size —
+      // see LOCAL_PORT's derivation comment), so this rotation is the exact
+      // same one the SEGMENT_SHAPE_TRANSFORM comment above verified against
+      // LOCAL_PORT's actual port coordinates, not an approximation.
+      ctx.save();
+      ctx.translate(cx, cy);
+      if(entry.flip) ctx.scale(1, -1);
+      if(entry.rotate) ctx.rotate(entry.rotate * Math.PI/2);
+      ctx.drawImage(entry.img, -bw/2, -bh/2, bw, bh);
+      ctx.restore();
+    } else {
+      ctx.drawImage(trackLayerImage(kind, entry.segKey, entry.z, entry.svg, color, width, dashed), minX, minY, bw, bh);
+    }
   }
 }
 
