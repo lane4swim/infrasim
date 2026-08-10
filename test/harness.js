@@ -54,18 +54,18 @@ function extractScript(htmlPath){
   return SIM_SCRIPT_FILES.map(src => fs.readFileSync(path.join(baseDir, src), 'utf8')).join('\n');
 }
 
-// The content-pack <script> tags (class="content-pack", any number of them)
-// have a type/class attribute, so they never match extractScript's bare
-// `<script>` pattern above — this pulls them separately, the same way a
-// real browser's document.querySelectorAll('script.content-pack') would.
+// Content packs now live as real data/*.json files (see loader.js's
+// bootstrap and data/manifest.json), not inline <script> blocks in
+// index.html — this reads them the same way loader.js's synchronous XHR
+// does: manifest.json lists the pack filenames in load order, and each is
+// read from the same data/ directory. `htmlPath` is kept as the parameter
+// (rather than a dataDir) since every existing caller already has it —
+// data/ is always index.html's sibling.
 function extractContentPackBlocks(htmlPath){
-  const html = fs.readFileSync(htmlPath, 'utf8');
-  const re = /<script type="application\/json" class="content-pack"[^>]*>([\s\S]*?)<\/script>/g;
-  const blocks = [];
-  let m;
-  while((m = re.exec(html))) blocks.push(m[1]);
-  if(blocks.length===0) throw new Error(`No content-pack <script> blocks found in ${htmlPath}`);
-  return blocks;
+  const dataDir = path.join(path.dirname(htmlPath), 'data');
+  const manifest = JSON.parse(fs.readFileSync(path.join(dataDir, 'manifest.json'), 'utf8'));
+  if(manifest.length===0) throw new Error(`data/manifest.json at ${dataDir} lists no packs`);
+  return manifest.map(name => fs.readFileSync(path.join(dataDir, name), 'utf8'));
 }
 
 // Mirrors loader.js's own mergeContentPacks — duplicated rather than
@@ -121,30 +121,48 @@ function makeFakeElement(){
 // in the same test so they share world state; create a new context per
 // test for a clean world.
 //
-// `contentPacks`, if given, is an array of JSON strings — each becomes its
-// own fake <script class="content-pack"> block, merged by the real
-// mergeContentPacks in loader.js exactly as document.querySelectorAll would
-// find them on the page — this is what lets a test exercise the multi-pack
-// merge/override behavior directly (not a harness reimplementation of it).
-// `contentPackJson`, if given (and `contentPacks` isn't), is shorthand for
-// a single pack — replaces the content index.html itself ships with just
-// that one block; kept for tests written before multi-pack support that
-// prove the extensibility claim by swapping in one whole replacement pack.
-// Neither given: loads the real shipped blocks from index.html, in order.
+// `contentPacks`, if given, is an array of JSON strings — each becomes a
+// fake data/*.json file, listed in a fake manifest.json and served through
+// the FakeXHR stub below to the real mergeContentPacks/loader.js bootstrap
+// exactly as a browser's XMLHttpRequest would find them — this is what lets
+// a test exercise the multi-pack merge/override behavior directly (not a
+// harness reimplementation of it). `contentPackJson`, if given (and
+// `contentPacks` isn't), is shorthand for a single pack — replaces the
+// content data/ itself ships with just that one file; kept for tests
+// written before multi-pack support that prove the extensibility claim by
+// swapping in one whole replacement pack. Neither given: loads the real
+// shipped data/*.json files, in manifest order.
+//
+// loader.js's bootstrap loads packs via a synchronous XMLHttpRequest (see
+// its own header comment for why) — there's no real network/filesystem
+// access inside a vm sandbox, so FakeXHR below serves canned responses for
+// exactly the two URL shapes loader.js requests: 'data/manifest.json' and
+// 'data/<name>' for each name the fake manifest lists.
 function newGameContext({contentPackJson, contentPacks} = {}){
   const htmlPath = path.join(__dirname, '..', 'index.html');
   const packTexts = contentPacks !== undefined ? contentPacks
     : contentPackJson !== undefined ? [contentPackJson]
     : extractContentPackBlocks(htmlPath);
-  const packElements = packTexts.map(text => ({textContent: text}));
+  const packNames = packTexts.map((_, i) => `pack${i}.json`);
+  const responsesByUrl = {'data/manifest.json': JSON.stringify(packNames)};
+  packTexts.forEach((text, i) => { responsesByUrl[`data/${packNames[i]}`] = text; });
+  class FakeXHR {
+    open(method, url){ this._url = url; }
+    send(){
+      const body = responsesByUrl[this._url];
+      if(body === undefined){ this.status = 404; this.responseText = ''; }
+      else { this.status = 200; this.responseText = body; }
+    }
+  }
   const sandbox = {
     console,
     document: {
       getElementById: () => makeFakeElement(),
-      querySelectorAll: (sel) => sel==='script.content-pack' ? packElements : [],
+      querySelectorAll: () => [],
       documentElement: makeFakeElement(),
       createElement: () => makeFakeElement(),
     },
+    XMLHttpRequest: FakeXHR,
     window: {addEventListener(){}},
     performance: {now: () => Date.now()},
     requestAnimationFrame(){}, // deliberately never invokes its callback — render() never runs

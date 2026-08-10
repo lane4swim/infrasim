@@ -1,0 +1,17 @@
+{
+  "resources": {
+    "coal": { "id": "coal", "name": "Coal", "baseValue": 8, "unitWeight": 0.45 }
+  },
+  "recipes": {
+    "mine_coal": { "inputs": [], "outputs": [{ "resource": "coal", "amount": 1 }], "durationTicks": 5 }
+  },
+  "buildings": {
+    "colliery": { "buildCost": 170, "tiers": { "small": { "cap": 20, "add": 0 }, "large": { "cap": 50, "add": 90 } }, "color": "#3a3a3a", "label": "Colliery", "footprint": { "w": 2, "h": 2 }, "recipe": "mine_coal" }
+  },
+  "vehicles": {
+    "coalhauler": { "purchaseCost": 230, "runningCostPerTick": 1.1, "capacity": 9, "sellFraction": 0.4, "label": "Coal Hauler", "resource": "coal", "color": "#555555", "maxSpeedTilesPerTick": 1.15, "massEmpty": 5.5, "engineForce": 0.58, "brakeForce": 1.75, "lengthTiles": 1.25, "transferRate": 4 }
+  },
+  "wagons": {
+    "coal_hopper": { "purchaseCost": 150, "capacity": 17, "resource": "coal", "label": "Coal Hopper", "color": "#3a3a3a", "massEmpty": 6.2, "lengthTiles": 2.5, "transferRate": 4 }
+  }
+}

@@ -296,37 +296,42 @@
 
 <!--
   CONTENT PACKS — the game's resources/recipes/buildings/vehicles/rail/
-  engines/wagons, as JSON blocks instead of inline JS objects (§9/§13's
-  "new resource = new JSON file, no code change" claim). This is a
-  deliberate middle ground, not real data/*.json files: those need either
-  a bundler or fetch() calls, and fetch() fails under file:// without a
-  local server — the exact reason this project stays one self-contained
-  HTML file. This gets almost all of the practical benefit (a modder edits
-  one clearly-delineated JSON block, not JS source) without the
-  CORS/bundler problem. A real data/ directory becomes a later, purely
-  additive step if/when a bundler is adopted for other reasons.
-
-  There can be any number of these — every <script type="application/json"
-  class="content-pack"> block on the page is parsed and merged, in document
-  order, into the one pack object validateContentPack/initContentPack
-  actually consume (see mergeContentPacks in loader.js). This is the real
-  version of §9's "A ContentPack loader merges base-game data with any
+  engines/wagons, as real JSON files under data/ instead of inline JS
+  objects (§9/§13's "new resource = new JSON file, no code change" claim).
+  The game is hosted on a static web server, so loader.js's bootstrap
+  fetches data/manifest.json — a plain ordered array of pack filenames —
+  then loads each listed file from data/ in turn, merging them in that
+  order into the one pack object validateContentPack/initContentPack
+  actually consume (see mergeContentPacks / the bootstrap in loader.js). A
+  modder adds a pack by dropping a new data/*.json file and adding its
+  name to manifest.json — no index.html or JS changes needed. This is the
+  real version of §9's "A ContentPack loader merges base-game data with any
   additional packs" — a pack after the base one only has to include the
   section(s)/id(s) it actually adds; reusing an id already used by an
   earlier pack replaces that entry entirely (an override), the seam a mod
   seeking to reskin or rebalance one specific building/vehicle would use.
-  The two shipped here demonstrate the "add" side of that: the base pack is
-  the original single-pack game unchanged, and content-pack-coal is a small
-  second pack adding a wholly new resource/recipe/building/vehicle/wagon
-  with no edits to the base pack at all (see test/test-content-pack.js for
-  both "add" and "override" merge behavior exercised directly, including
-  cross-pack references like an addon recipe naming a base-pack resource).
+  data/base.json and data/coal.json demonstrate the "add" side of that: the
+  base pack is the original single-pack game unchanged, and coal.json is a
+  small second pack adding a wholly new resource/recipe/building/vehicle/
+  wagon with no edits to the base pack at all (see test/test-content-pack.js
+  for both "add" and "override" merge behavior exercised directly,
+  including cross-pack references like an addon recipe naming a base-pack
+  resource).
+
+  Because the game is served over http(s) now, not opened via file://,
+  loader.js can load these synchronously (blocking XHR) before the next
+  <script src> tag runs — see loader.js's bootstrap comment for why that
+  synchronous load is required (world.js's first statement reads a global
+  that only exists after the packs are parsed). file:// is no longer
+  supported: browsers block XHR/fetch to local files without a server, so
+  testing/deploying this game now requires a static file server (e.g.
+  `python3 -m http.server` locally).
 
   Parsed once at startup into the RESOURCES/RECIPES/BUILDING_DEFS/
   VEHICLE_DEFS/RAIL_DEFS/ENGINE_DEFS/WAGON_DEFS bindings the rest of the
-  script already uses (see validateContentPack / the parsing block right
-  after this) — zero changes to any system, command, or render code, since
-  they only ever reference the parsed result, never these blocks directly.
+  script already uses (see validateContentPack / the parsing block in
+  loader.js) — zero changes to any system, command, or render code, since
+  they only ever reference the parsed result, never these files directly.
 
   Trains are not a single vehicle def the way trucks are: a train is
   assembled at a Train Yard from one engine (defines physics — speed,
@@ -342,60 +347,6 @@
   a recipe / per VEHICLE_DEFS entry, so any production building or vehicle
   a content pack adds shows up with zero index.html changes.
 -->
-<script type="application/json" class="content-pack" id="content-pack-base">
-{
-  "version": "1",
-  "resources": {
-    "ore":   { "id": "ore",   "name": "Ore",   "baseValue": 6,  "unitWeight": 0.4 },
-    "steel": { "id": "steel", "name": "Steel", "baseValue": 14, "unitWeight": 0.6 }
-  },
-  "recipes": {
-    "extract_ore": { "inputs": [], "outputs": [{ "resource": "ore", "amount": 1 }], "durationTicks": 4 },
-    "smelt_steel": { "inputs": [{ "resource": "ore", "amount": 2 }], "outputs": [{ "resource": "steel", "amount": 1 }], "durationTicks": 6 }
-  },
-  "buildings": {
-    "mine":    { "buildCost": 150, "tiers": { "small": { "cap": 20, "add": 0 }, "large": { "cap": 50, "add": 100 } }, "color": "#7a5230", "label": "Mine", "footprint": { "w": 2, "h": 2 }, "recipe": "extract_ore", "blockedUndergroundLevels": 2 },
-    "mill":    { "buildCost": 220, "tiers": { "small": { "cap": 20, "add": 0 }, "large": { "cap": 50, "add": 120 } }, "color": "#8a4a3a", "label": "Steel Mill", "footprint": { "w": 3, "h": 2 }, "recipe": "smelt_steel", "blockedUndergroundLevels": 1 },
-    "town":    { "buildCost": 100, "tiers": { "small": { "cap": 20, "add": 0, "population": 50 }, "large": { "cap": 50, "add": 80, "population": 150 } }, "color": "#3a6ea5", "label": "Town", "footprint": { "w": 3, "h": 2 } },
-    "station": { "buildCost": 60,  "tiers": { "small": { "cap": 0, "add": 0 }, "large": { "cap": 0, "add": 0 } }, "color": "#c9a227", "label": "Station", "footprint": { "w": 1, "h": 1 }, "transferRate": 4 },
-    "depot":   { "buildCost": 300, "tiers": { "small": { "cap": 30, "add": 0 }, "large": { "cap": 80, "add": 150 } }, "color": "#6b5b95", "label": "Rail Depot", "footprint": { "w": 2, "h": 4 }, "transferRate": 4, "platformLengths": [2, 4, 6, 8] },
-    "trainyard": { "buildCost": 400, "tiers": { "small": { "cap": 0, "add": 0 }, "large": { "cap": 0, "add": 0 } }, "color": "#4a4a6a", "label": "Train Yard", "footprint": { "w": 3, "h": 2 } }
-  },
-  "vehicles": {
-    "bulk":    { "purchaseCost": 200, "runningCostPerTick": 1,   "capacity": 10, "sellFraction": 0.4, "label": "Bulk Truck",    "resource": "ore",   "color": "#e0a840", "maxSpeedTilesPerTick": 1.2, "massEmpty": 5, "engineForce": 0.6,  "brakeForce": 1.8, "lengthTiles": 1.25, "transferRate": 4 },
-    "flatbed": { "purchaseCost": 260, "runningCostPerTick": 1.2, "capacity": 8,  "sellFraction": 0.4, "label": "Flatbed Truck", "resource": "steel", "color": "#c96f3a", "maxSpeedTilesPerTick": 1.1, "massEmpty": 6, "engineForce": 0.55, "brakeForce": 1.7, "lengthTiles": 1.5, "transferRate": 4 }
-  },
-  "rail": {
-    "track": { "costPerTile": 25 }
-  },
-  "engines": {
-    "diesel": { "purchaseCost": 600, "runningCostPerTick": 2, "sellFraction": 0.4, "label": "Diesel Engine", "color": "#9b6bd6", "maxSpeedTilesPerTick": 1.6, "massEmpty": 30, "engineForce": 3.0, "brakeForce": 6.0, "lengthTiles": 3 }
-  },
-  "wagons": {
-    "ore_wagon":   { "purchaseCost": 150, "capacity": 20, "resource": "ore",   "label": "Ore Wagon",   "color": "#7a5230", "massEmpty": 6, "lengthTiles": 2.5, "transferRate": 4 },
-    "steel_wagon": { "purchaseCost": 180, "capacity": 16, "resource": "steel", "label": "Steel Wagon", "color": "#8a4a3a", "massEmpty": 7, "lengthTiles": 2.5, "transferRate": 4 }
-  }
-}
-</script>
-<script type="application/json" class="content-pack" id="content-pack-coal">
-{
-  "resources": {
-    "coal": { "id": "coal", "name": "Coal", "baseValue": 8, "unitWeight": 0.45 }
-  },
-  "recipes": {
-    "mine_coal": { "inputs": [], "outputs": [{ "resource": "coal", "amount": 1 }], "durationTicks": 5 }
-  },
-  "buildings": {
-    "colliery": { "buildCost": 170, "tiers": { "small": { "cap": 20, "add": 0 }, "large": { "cap": 50, "add": 90 } }, "color": "#3a3a3a", "label": "Colliery", "footprint": { "w": 2, "h": 2 }, "recipe": "mine_coal" }
-  },
-  "vehicles": {
-    "coalhauler": { "purchaseCost": 230, "runningCostPerTick": 1.1, "capacity": 9, "sellFraction": 0.4, "label": "Coal Hauler", "resource": "coal", "color": "#555555", "maxSpeedTilesPerTick": 1.15, "massEmpty": 5.5, "engineForce": 0.58, "brakeForce": 1.75, "lengthTiles": 1.25, "transferRate": 4 }
-  },
-  "wagons": {
-    "coal_hopper": { "purchaseCost": 150, "capacity": 17, "resource": "coal", "label": "Coal Hopper", "color": "#3a3a3a", "massEmpty": 6.2, "lengthTiles": 2.5, "transferRate": 4 }
-  }
-}
-</script>
 
 <script src="src/content/loader.js"></script>
 <script src="src/sim/world.js"></script>

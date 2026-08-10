@@ -427,12 +427,32 @@ function initContentPack(pack){
   CONSUMPTION_PER_CAPITA = 0.02; // resource drained per tick, per resident (§16-style: data-defined rate)
 }
 
-// Main-thread bootstrap: parse the page's own content-pack block immediately,
-// same as before this function existed. Guarded on `document` so this file
-// no-ops when loaded into the Worker via importScripts (no DOM there) —
-// the Worker calls initContentPack(pack) itself after receiving the pack
-// over postMessage instead.
+// Main-thread bootstrap: load content packs from data/*.json immediately.
+// Guarded on `document` so this file no-ops when loaded into the Worker via
+// importScripts (no DOM there) — the Worker calls initContentPack(pack)
+// itself after receiving the pack over postMessage instead.
+//
+// This MUST complete synchronously before control returns to the page's
+// <script src> tags: world.js's very first top-level statement reads
+// INITIAL_TREASURY, which doesn't exist until initContentPack() has run, so
+// importing world.js any earlier would throw. A plain fetch() is async and
+// would let later <script> tags run before the pack finished loading, so a
+// synchronous XMLHttpRequest is used instead — it blocks this line until
+// the response arrives, preserving the same load-before-use guarantee the
+// old inline <script class="content-pack"> blocks gave for free. This does
+// mean the game must be served over http(s); file:// is not supported since
+// browsers block XHR/fetch to local files without a server.
 if(typeof document !== 'undefined'){
-  const packs = Array.from(document.querySelectorAll('script.content-pack')).map(el => JSON.parse(el.textContent));
+  const loadJsonSync = (url) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', url, false);
+    xhr.send(null);
+    if(xhr.status !== 0 && xhr.status !== 200){
+      throw new Error(`Failed to load ${url}: HTTP ${xhr.status}`);
+    }
+    return JSON.parse(xhr.responseText);
+  };
+  const manifest = loadJsonSync('data/manifest.json');
+  const packs = manifest.map(name => loadJsonSync(`data/${name}`));
   initContentPack(mergeContentPacks(packs));
 }

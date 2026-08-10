@@ -752,6 +752,22 @@ which is also the seam a modding UI could hook into later.
 > Resolved at draw time (not content-pack-validation time) by a real
 > `DOMParser`, so this only ever works on the main thread/in a real
 > browser — exactly where every sprite was already only ever drawn from.
+>
+> **Further amended in Phase 2 (Content packs as static data/*.json files).**
+> The Phase 2 (Content-pack layering) amendment above explicitly kept the
+> content pack as inline `<script>` JSON blocks "since real `data/*.json`
+> files need a bundler or `fetch()`, and `fetch()` fails under `file://`" —
+> that tradeoff no longer applies, because the game is now hosted statically
+> on a real web server rather than opened via `file://` at all. Content
+> packs are real files now: `data/manifest.json` lists pack filenames in
+> load order, and `data/base.json`/`data/coal.json` hold exactly what used
+> to sit inline. The loader reads them with a synchronous `XMLHttpRequest`
+> (not `fetch()`) specifically to preserve the load-before-use ordering the
+> old inline blocks gave for free — see README's "Content packs as static
+> data/*.json files" addendum for why synchronous XHR, not async fetch, was
+> required. **`file://` support is dropped as a project requirement**: §1's
+> "fully client-side" constraint still holds (no backend, no server-side
+> logic), but the game now requires a static file server to load at all.
 
 ---
 

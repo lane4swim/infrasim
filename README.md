@@ -15,11 +15,14 @@ vehicle types.
 
 ## Running it
 
-Open `index.html` directly in a browser (Chrome/Edge/Firefox). No build
-step, no server, no npm install — the code is organized into files under
-`src/` (see [Phase 2 — Project Structure](#phase-2--project-structure)
-below), but loading it is still just double-clicking `index.html`; nothing
-to install, no network connection needed.
+Serve the project root over http(s) and open `index.html` (e.g.
+`python3 -m http.server` from the repo root, then visit
+`http://localhost:8000/`). No build step, no npm install — just a static
+file server, since content packs now load from real `data/*.json` files
+(see [Addendum — Content packs as static data/*.json files](#addendum--content-packs-as-static-datajson-files)
+below). **`file://` is no longer supported**: browsers block `fetch()`/XHR
+to local files without a server, so double-clicking `index.html` will fail
+to load the content packs.
 
 ## How to play
 
@@ -3537,3 +3540,87 @@ draw-order pipeline, not a bug in the transform math). Also confirmed the
 base game — no content pack ships any override — renders pixel-identical
 to before this addendum, with `INFRASTRUCTURE_SPRITES`/`SPRITE_SHEETS`
 both defaulting to empty objects.
+
+# Addendum — Content packs as static data/*.json files
+
+The game is now hosted statically on a real web server rather than opened
+via `file://`, so this addendum supersedes every earlier "content packs
+stay inline because `fetch()` fails under `file://`" rationale (§ Content-
+Pack Refactor, § Content-pack layering) — that constraint is gone by
+explicit choice: **`file://` support is dropped**, and content packs load
+only from separate `data/*.json` files fetched over http(s).
+
+## Design
+
+- **`data/manifest.json`** is a plain JSON array of pack filenames, in load
+  order (`["base.json", "coal.json"]`). A modder adds a pack by dropping a
+  new `data/<name>.json` file and appending its name here — no
+  `index.html` or JS changes, same "new content = data file only" promise
+  the inline `<script class="content-pack">` blocks made, now backed by
+  real files instead of blocks glued into the page.
+- **`data/base.json`** and **`data/coal.json`** hold exactly the JSON that
+  used to sit inline in `index.html`'s two `<script type="application/
+  json" class="content-pack">` blocks — same content, same merge order,
+  just moved to its own file per pack.
+- **`loader.js`'s bootstrap loads them with a synchronous `XMLHttpRequest`**
+  (`xhr.open('GET', url, false)`), not `fetch()`. This isn't a style choice:
+  `world.js`'s very first top-level statement reads `INITIAL_TREASURY`,
+  which only exists after `initContentPack()` has run, and classic
+  `<script src>` tags execute synchronously in document order — an async
+  `fetch()` would let `world.js` run (and throw) before the pack finished
+  loading. A synchronous XHR blocks the bootstrap line until the response
+  arrives, so by the time control returns to the page's next `<script src>`
+  tag, `initContentPack()` has already completed — the exact same
+  load-before-use guarantee the old inline blocks gave for free, without
+  restructuring the rest of the classic-script loading order into ES
+  modules or dynamic script injection.
+- **`index.html` no longer contains any inline pack JSON** — just the
+  `<script src="src/content/loader.js">` tag and the rest of the script
+  list, unchanged in order.
+- **`test/harness.js`** now reads the real `data/manifest.json` +
+  `data/*.json` files from disk (via `fs`, mirroring what a browser would
+  fetch) instead of regex-extracting `<script class="content-pack">`
+  blocks from `index.html`. Since the sandboxed `vm` context loader.js runs
+  in has no real network access, `newGameContext()` installs a `FakeXHR`
+  class on the sandbox that serves canned responses for exactly the URL
+  shapes loader.js's bootstrap requests (`data/manifest.json` and
+  `data/<name>` per listed pack) — built either from the real on-disk pack
+  files, or from the `contentPacks`/`contentPackJson` fixture arrays tests
+  already used to swap in deliberately-broken or multi-pack test data. The
+  real `mergeContentPacks`/`validateContentPack`/`initContentPack` code
+  path still runs for real inside the sandbox; only the transport is
+  stubbed.
+
+## What changed
+
+- **`data/manifest.json`, `data/base.json`, `data/coal.json`**: new — the
+  content previously inline in `index.html`.
+- **`src/content/loader.js`**: the bottom-of-file bootstrap now does
+  `loadJsonSync('data/manifest.json')` then `loadJsonSync('data/<name>')`
+  per listed pack via a synchronous `XMLHttpRequest`, instead of parsing
+  `document.querySelectorAll('script.content-pack')`.
+- **`index.html`**: removed both inline `<script type="application/json"
+  class="content-pack">` blocks; rewrote the explanatory comment above the
+  script list to describe the new `data/*.json` + manifest architecture
+  and the dropped `file://` support; updated the "Running it" section
+  (top of this document) to require a static file server.
+- **`test/harness.js`**: `extractContentPackBlocks(htmlPath)` now reads
+  `data/manifest.json` + `data/*.json` (still returns an array of raw JSON
+  text strings, same contract as before) instead of regex-parsing
+  `index.html`; `newGameContext()` stubs `XMLHttpRequest` in the vm sandbox
+  instead of stubbing `document.querySelectorAll('script.content-pack')`.
+
+## Testing
+
+All 14 existing test files pass unmodified against the new harness — the
+`FakeXHR` stub is transparent to every test that calls `newGameContext()`,
+`extractContentPackJson()`, or passes `contentPacks`/`contentPackJson`
+fixtures. Verified in a real browser via Playwright against a local static
+server (`python3 -m http.server`, since `file://` no longer works by
+design): `data/manifest.json`, `data/base.json`, and `data/coal.json` all
+load with a 200 response, the base and coal packs merge correctly (the
+Colliery building button, Coal Hauler vehicle button, and "Wagon: Coal"
+option are all present and buildable), and there are zero console errors
+(the only console message a fresh page load ever produces there is the
+browser's own unrelated `favicon.ico` 404, present on any static host and
+unaffected by this change).
