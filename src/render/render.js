@@ -113,48 +113,68 @@ const TRACK_SEGMENT_KEY = {
   'N,S':'N-S', 'S,N':'N-S', 'E,W':'E-W', 'W,E':'E-W',
   'N,E':'N-E', 'E,N':'N-E', 'N,W':'N-W', 'W,N':'N-W', 'S,E':'S-E', 'E,S':'S-E', 'S,W':'S-W', 'W,S':'S-W',
 };
-// A rail segment is a real physical stretch of track: a ballast bed (the
-// dominant fill — this is what `color` tints, so a cell's grade/depth
-// still reads exactly the way the old flat-color line did), a handful of
-// perpendicular wooden ties along its length, and two parallel steel rails
-// inset from center. `dashed` (underground/airspace grades only — the
-// grades that were always a muted "X-ray hint," never real visible track)
-// skips all of that for a plain dashed hint-line in the same color, both
-// because there's nothing to texture through solid ground and because a
-// dashed FILL doesn't have a clean meaning the way a dashed stroke does.
-function railSegmentSVG(p1, p2, color, width, dashed){
+// A cell almost never draws just ONE segment — a T-junction is a straight
+// plus a spoke, a crossing is two straights, a thrown switch is a straight
+// plus a corner — and each segment used to be one fully self-contained
+// image (ballast+ties+rails already baked together) drawn whole, in
+// whatever order drawTrackCell happened to need it. That's fine in
+// isolation, but at the exact point 2+ segments MEET, the later segment's
+// opaque ballast/asphalt base was painted right over the earlier segment's
+// already-drawn ties/rails/markings, so which segment's fine detail
+// survived right at the junction depended on draw order, not on anything
+// meaningful. Z-levels fix that: every segment is split into its own
+// material sub-layers, and a cell draws ALL its segments' lowest layer
+// first, then ALL their next layer, and so on — so no segment's detail is
+// ever covered by another segment's base, regardless of how many segments
+// share the cell or what order they were queued in. Strictly increasing,
+// grouped by kind so the two kinds' layers can never interleave even
+// though a single drawTrackCell call only ever uses one kind's set:
+// road asphalt(0) < road markings(1) < rail ballast(10) < ties(11) < rails(12).
+const TRACK_LAYER_Z = { asphalt:0, markings:1, ballast:10, ties:11, rails:12 };
+function railBallastSVG(p1, p2, color, width){
   const [x1,y1] = p1, [x2,y2] = p2;
-  if(dashed) return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="${width}" stroke-dasharray="6,5" stroke-linecap="butt"/>`;
+  return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="${width}" stroke-linecap="butt"/>`;
+}
+function railTiesSVG(p1, p2, color, width){
+  const [x1,y1] = p1, [x2,y2] = p2;
   const angle = Math.atan2(y2-y1, x2-x1) * 180/Math.PI;
   const len = Math.hypot(x2-x1, y2-y1);
   const tie = mixTowardBlack(color, 0.45);
-  const rail = mixTowardWhite(color, 0.65);
-  let svg = `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="${width}" stroke-linecap="butt"/>`;
   const tieLen = width+6, tieThick = 2.4;
   const tieCount = Math.max(2, Math.round(len/9));
+  let svg = '';
   for(let i=0;i<=tieCount;i++){
     const t = i/tieCount, tx = x1+(x2-x1)*t, ty = y1+(y2-y1)*t;
     svg += `<rect x="${-tieLen/2}" y="${-tieThick/2}" width="${tieLen}" height="${tieThick}" fill="${tie}" transform="translate(${tx},${ty}) rotate(${angle})"/>`;
   }
+  return svg;
+}
+function railRailsSVG(p1, p2, color, width){
+  const [x1,y1] = p1, [x2,y2] = p2;
+  const angle = Math.atan2(y2-y1, x2-x1) * 180/Math.PI;
+  const rail = mixTowardWhite(color, 0.65);
   const rad = angle*Math.PI/180, nx = -Math.sin(rad), ny = Math.cos(rad), off = width*0.28;
+  let svg = '';
   for(const s of [-1,1]){
     svg += `<line x1="${x1+nx*off*s}" y1="${y1+ny*off*s}" x2="${x2+nx*off*s}" y2="${y2+ny*off*s}" stroke="${rail}" stroke-width="1.6" stroke-linecap="butt"/>`;
   }
   return svg;
 }
-// A road segment is asphalt (`color`, same "still reads as the old flat
-// line's color" contract as rail's ballast) with two thin edge lines, plus
-// — only for a genuine straight through-lane (`center`, true only for the
-// N-S/E-W segments, never a spoke or a turn) — a dashed yellow lane line,
-// the one piece of standard road markings that only makes sense along an
-// unbroken lane rather than a stub or a corner cut.
-function roadSegmentSVG(p1, p2, color, width, dashed, center){
+function roadAsphaltSVG(p1, p2, color, width){
   const [x1,y1] = p1, [x2,y2] = p2;
-  if(dashed) return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="${width}" stroke-dasharray="6,5" stroke-linecap="butt"/>`;
+  return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="${width}" stroke-linecap="butt"/>`;
+}
+// `center` (true only for the genuine N-S/E-W through segments, never a
+// spoke or a turn) adds a dashed yellow lane line — the one piece of
+// standard road markings that only makes sense along an unbroken lane
+// rather than a stub or a corner cut — alongside the two edge lines every
+// segment gets.
+function roadMarkingsSVG(p1, p2, color, width, center){
+  const [x1,y1] = p1, [x2,y2] = p2;
   const angle = Math.atan2(y2-y1, x2-x1) * 180/Math.PI;
   const edge = mixTowardWhite(color, 0.55);
-  let svg = `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="${width}" stroke-linecap="butt"/>`;
   const rad = angle*Math.PI/180, nx = -Math.sin(rad), ny = Math.cos(rad), off = width/2-1;
+  let svg = '';
   for(const s of [-1,1]){
     svg += `<line x1="${x1+nx*off*s}" y1="${y1+ny*off*s}" x2="${x2+nx*off*s}" y2="${y2+ny*off*s}" stroke="${edge}" stroke-width="1" stroke-linecap="butt" opacity="0.75"/>`;
   }
@@ -164,31 +184,50 @@ function roadSegmentSVG(p1, p2, color, width, dashed, center){
 // The isolated/dead-end/hub "core" — a small patch at the cell center,
 // the same role the old fillRect core played (an isolated tile reads as
 // disconnected; a dead-end's spoke blends into it; a road T/4-way's
-// spokes all meet on it as a real intersection pad).
+// spokes all meet on it as a real intersection pad). A single shape, so it
+// only ever occupies one z-level — the base tier for its kind (ballast for
+// rail, asphalt for road), since there's no separate ties/rails or
+// markings layer to give it. `dashed` (underground/airspace) swaps the
+// solid fill for a dashed ring, the same "hint, not real visible track"
+// treatment the segments below give a dashed straight/corner/spoke.
 function nubSVG(color, width, dashed){
   const r = Math.max(4, width*0.35);
   const [cx,cy] = LOCAL_PORT.C;
   if(dashed) return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="3,3"/>`;
   return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}"/>`;
 }
-// One Image per (kind, segment, color, width, dashed) combination, built
-// once and cached forever — same contract as spriteImageFor's content-pack
-// cache, just keyed by a plain string since these are engine-generated,
-// not per-def. The color/width/dashed axes are exactly the parameters the
-// old procedural version already varied per grade (ground/elevated/
-// underground/airspace, each with their own margin and color) — nothing
-// new to precompute, this just generates real markup for each combination
-// the first time it's actually needed instead of live-stroking it every
-// frame.
+// Returns [{z, svg}] — the sub-layer(s) one segment (or 'NUB') breaks into,
+// each tagged with its TRACK_LAYER_Z above. `dashed` (underground/airspace
+// grades — always a muted "X-ray hint," never real visible track) and NUB
+// both collapse to a single layer at their kind's base tier: there's
+// nothing to texture through solid ground, and a dashed FILL doesn't have
+// a clean meaning the way a dashed stroke does, so neither ever produces
+// more than one z-level.
+function trackSegmentLayers(kind, segKey, color, width, dashed){
+  const baseZ = kind==='rail' ? TRACK_LAYER_Z.ballast : TRACK_LAYER_Z.asphalt;
+  if(segKey==='NUB') return [{z: baseZ, svg: nubSVG(color, width, dashed)}];
+  const p1 = LOCAL_PORT[segKey[0]], p2 = LOCAL_PORT[segKey[2]];
+  if(dashed) return [{z: baseZ, svg: `<line x1="${p1[0]}" y1="${p1[1]}" x2="${p2[0]}" y2="${p2[1]}" stroke="${color}" stroke-width="${width}" stroke-dasharray="6,5" stroke-linecap="butt"/>`}];
+  if(kind==='rail') return [
+    {z: TRACK_LAYER_Z.ballast, svg: railBallastSVG(p1,p2,color,width)},
+    {z: TRACK_LAYER_Z.ties,    svg: railTiesSVG(p1,p2,color,width)},
+    {z: TRACK_LAYER_Z.rails,   svg: railRailsSVG(p1,p2,color,width)},
+  ];
+  return [
+    {z: TRACK_LAYER_Z.asphalt,  svg: roadAsphaltSVG(p1,p2,color,width)},
+    {z: TRACK_LAYER_Z.markings, svg: roadMarkingsSVG(p1,p2,color,width, segKey==='N-S'||segKey==='E-W')},
+  ];
+}
+// One Image per (kind, segment, z-level, color, width, dashed) combination
+// — one PER LAYER now, not one per whole segment — built once and cached
+// forever, same contract as spriteImageFor's content-pack cache, just
+// keyed by a plain string since these are engine-generated, not per-def.
 const trackSpriteCache = new Map();
-function trackSegmentImage(kind, segKey, color, width, dashed){
-  const key = `${kind}|${segKey}|${color}|${width}|${dashed}`;
+function trackLayerImage(kind, segKey, z, svgInner, color, width, dashed){
+  const key = `${kind}|${segKey}|${z}|${color}|${width}|${dashed}`;
   let img = trackSpriteCache.get(key);
   if(img) return img;
-  const inner = segKey==='NUB' ? nubSVG(color, width, dashed)
-    : (kind==='rail' ? railSegmentSVG(LOCAL_PORT[segKey[0]], LOCAL_PORT[segKey[2]], color, width, dashed)
-                      : roadSegmentSVG(LOCAL_PORT[segKey[0]], LOCAL_PORT[segKey[2]], color, width, dashed, segKey==='N-S'||segKey==='E-W'));
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${TRACK_SPRITE_VIEWBOX}">${inner}</svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${TRACK_SPRITE_VIEWBOX}">${svgInner}</svg>`;
   img = new Image();
   img.src = spriteDataUri({type:'svg', markup: svg});
   trackSpriteCache.set(key, img);
@@ -253,17 +292,21 @@ function crossingMarkerImage(){
 // here — the SAME segment the plain 2-connected corner case uses, so a
 // player-thrown switch reads as a real extra piece of track, not a hidden
 // pathfinding-only rule.
+//
+// Which segments a cell needs is collected into `segKeys` first rather
+// than drawn immediately — a cell can need more than one (a T-junction is
+// a straight plus a spoke, a crossing is two straights, a thrown switch is
+// a straight plus a corner), and TRACK_LAYER_Z above needs every needed
+// segment's layers gathered before sorting, so the whole cell draws
+// material-by-material (every segment's ballast, then every segment's
+// ties, then every segment's rails) instead of segment-by-segment.
 function drawTrackCell(x, y, dirs, color, margin, kind, diagonalPairs, dashed){
   const width = CELL - margin*2;
-  const corners = diamondPath(x, y);
-  const xs = corners.map(c=>c[0]), ys = corners.map(c=>c[1]);
-  const minX = Math.min(...xs), minY = Math.min(...ys);
-  const bw = Math.max(...xs)-minX, bh = Math.max(...ys)-minY;
-  const drawSeg = (segKey) => ctx.drawImage(trackSegmentImage(kind, segKey, color, width, dashed), minX, minY, bw, bh);
+  const segKeys = [];
   if(kind==='rail' && dirs.length>=3){
     const present = new Set(dirs);
     const throughPairs = [['N','S'],['E','W']].filter(([a,b]) => present.has(a) && present.has(b));
-    for(const [a,b] of throughPairs) drawSeg(TRACK_SEGMENT_KEY[a+','+b]);
+    for(const [a,b] of throughPairs) segKeys.push(TRACK_SEGMENT_KEY[a+','+b]);
     const throughDirs = new Set(throughPairs.flat());
     for(const dir of dirs){
       if(throughDirs.has(dir)) continue; // a T-junction's lone branch direction
@@ -275,23 +318,34 @@ function drawTrackCell(x, y, dirs, color, margin, kind, diagonalPairs, dashed){
       const reachableViaSwitch = diagonalPairs && Object.keys(DIAGONAL_PAIR_PORTS).some(k =>
         diagonalPairs[k] && DIAGONAL_PAIR_PORTS[k].includes(dir));
       if(reachableViaSwitch) continue;
-      drawSeg(TRACK_SEGMENT_KEY[dir+',C']);
+      segKeys.push(TRACK_SEGMENT_KEY[dir+',C']);
     }
     for(const pairKey in DIAGONAL_PAIR_PORTS){
       if(!diagonalPairs || !diagonalPairs[pairKey]) continue;
       const [d1,d2] = DIAGONAL_PAIR_PORTS[pairKey];
       if(!present.has(d1) || !present.has(d2)) continue; // corner not buildable here (e.g. a T missing that side)
-      drawSeg(TRACK_SEGMENT_KEY[d1+','+d2]);
+      segKeys.push(TRACK_SEGMENT_KEY[d1+','+d2]);
     }
-    return;
+  } else if(dirs.length === 2){
+    segKeys.push(TRACK_SEGMENT_KEY[dirs[0]+','+dirs[1]]);
+  } else if(dirs.length === 0){
+    segKeys.push('NUB'); // isolated tile: core only, reads as disconnected
+  } else {
+    segKeys.push('NUB'); // core — also what a lone spoke's flat end blends into, or a road junction's intersection pad
+    for(const dir of dirs) segKeys.push(TRACK_SEGMENT_KEY[dir+',C']);
   }
-  if(dirs.length === 2){
-    drawSeg(TRACK_SEGMENT_KEY[dirs[0]+','+dirs[1]]);
-    return;
+  const layers = [];
+  for(const segKey of segKeys){
+    for(const layer of trackSegmentLayers(kind, segKey, color, width, dashed)) layers.push({segKey, ...layer});
   }
-  if(dirs.length === 0){ drawSeg('NUB'); return; } // isolated tile: core only, reads as disconnected
-  drawSeg('NUB'); // core — also what a lone spoke's flat end blends into, or a road junction's intersection pad
-  for(const dir of dirs) drawSeg(TRACK_SEGMENT_KEY[dir+',C']);
+  layers.sort((a,b) => a.z - b.z); // material-by-material across every segment — see the big comment above
+  const corners = diamondPath(x, y);
+  const xs = corners.map(c=>c[0]), ys = corners.map(c=>c[1]);
+  const minX = Math.min(...xs), minY = Math.min(...ys);
+  const bw = Math.max(...xs)-minX, bh = Math.max(...ys)-minY;
+  for(const {segKey, z, svg} of layers){
+    ctx.drawImage(trackLayerImage(kind, segKey, z, svg, color, width, dashed), minX, minY, bw, bh);
+  }
 }
 
 // Terrain elevation (§ Terrain elevation) — a subtle tint per cell, cool
@@ -322,7 +376,7 @@ function mixTowardBlack(hex, t){
   return `rgb(${mix(r)},${mix(g)},${mix(b)})`;
 }
 // Its mirror image, toward white — used by the track sprite generators
-// (railSegmentSVG/roadSegmentSVG above) to derive a lighter rail/edge-line
+// (railRailsSVG/roadMarkingsSVG above) to derive a lighter rail/edge-line
 // shade from the same base color that tints the dominant ballast/asphalt
 // fill, so every grade's sprite stays internally consistent without a
 // second color parameter anywhere in the call chain.

@@ -3339,3 +3339,78 @@ from the solid ground one, and the one-way arrow/crossing marker/ramp
 diamond all still render in the right place). Also ran a real train
 scenario for several seconds of live simulation ticks (sustained per-frame
 `drawImage` calls, not just one static screenshot) with zero errors.
+
+# Addendum — track sprites draw material-by-material, not segment-by-segment
+
+A cell with 2+ segments (a T-junction's straight-plus-spoke, a crossing's
+two straights, a thrown switch's straight-plus-corner) used to draw each
+segment as one fully self-contained image — ballast, ties, and rails
+already baked together — in whatever order it needed that segment. Right
+at the exact point two segments meet, the later segment's opaque
+ballast/asphalt base painted over the earlier segment's already-drawn
+ties/rails/markings, so which segment's fine detail survived at the
+junction depended on draw order, not on anything meaningful.
+
+Every segment now splits into its own material sub-layers, each tagged
+with a fixed z-level, and a cell draws ALL its segments' lowest layer
+first, then all their next layer, and so on: road asphalt is 0, road
+markings 1, rail ballast 10, ties 11, rails 12. So at a crossing, both
+lines' ballast beds go down first, then both lines' ties, then both
+lines' rails — every segment's fine detail stays visible through the
+junction regardless of how many segments share the cell.
+
+## Design
+
+- **Split each generator into one function per layer.** `railSegmentSVG`/
+  `roadSegmentSVG` (one function producing a whole segment's markup) are
+  now `railBallastSVG`/`railTiesSVG`/`railRailsSVG` and `roadAsphaltSVG`/
+  `roadMarkingsSVG` — one function per layer, each still taking the same
+  `(p1, p2, color, width)` it always did. `nubSVG` and the dashed
+  (underground/airspace) case stay single-layer, since neither has more
+  than one thing to draw — both are pinned to their kind's base tier
+  (`ballast`/`asphalt`).
+- **A new `trackSegmentLayers(kind, segKey, color, width, dashed)`**
+  returns `[{z, svg}, ...]` for one segment — the layer list a rail
+  segment produces, or the 2-entry list a road segment does, or the
+  single entry NUB/dashed produce. This is the one place that knows which
+  layers a given kind/segment/dashed combination has.
+- **`drawTrackCell` now collects `segKeys` first instead of drawing
+  immediately**, expands every needed segment into its layers via
+  `trackSegmentLayers`, flattens all of them into one list, and sorts by
+  `z` before drawing anything — so the actual `drawImage` loop draws
+  strictly in z-order across the WHOLE cell, not segment-by-segment.
+  Array.sort is stable, so same-z layers from different segments keep
+  their original relative order (harmless, since same-tier layers never
+  meaningfully overlap the way a later ballast would over an earlier
+  segment's rails).
+- **Caching moved to per-layer**: `trackSegmentImage` (one Image per whole
+  segment) is now `trackLayerImage` (one Image per `kind|segKey|z|color|
+  width|dashed` combination) — more cache entries (up to 3x for rail, 2x
+  for road) but each individually smaller and still cached forever on
+  first use, same contract as before.
+
+## What changed
+
+- **`render.js`**: `TRACK_LAYER_Z` (new); `railSegmentSVG`/`roadSegmentSVG`
+  replaced by `railBallastSVG`/`railTiesSVG`/`railRailsSVG`/
+  `roadAsphaltSVG`/`roadMarkingsSVG`; `nubSVG` gained back its `dashed`
+  parameter (briefly dropped during this split — see Testing); new
+  `trackSegmentLayers`; `trackSegmentImage` renamed/reworked into
+  `trackLayerImage`; `drawTrackCell` restructured around collecting
+  `segKeys` then a sort-and-draw pass over their expanded layers.
+
+## Testing
+
+All 13 test files pass (pure rendering change, no sim-layer behavior
+touched). While splitting `nubSVG`, an early pass dropped its `dashed`
+parameter entirely, which would have silently regressed the underground
+dead-end nub from a dashed ring back to a solid filled circle — caught by
+re-screenshotting the exact underground-vs-ground nub comparison from the
+original SVG track sprites work and noticing the dashed variant was gone,
+fixed by restoring the parameter. Re-verified in a real browser via
+Playwright: a genuine 4-way rail crossing, a T-junction with a thrown
+diagonal switch, and a 4-way road intersection all now show every
+segment's rails/lane-markings clearly crossing THROUGH the junction point
+(previously the later-drawn segment's ballast/asphalt would have covered
+the earlier one's fine detail there), and the underground-vs-ground nub
+distinction (dashed ring vs. solid dot) still holds — zero console errors.
