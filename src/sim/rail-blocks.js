@@ -155,9 +155,39 @@ function computeRailBlocks(){
   computeRailBlocksForLayer('railDeepUnderground', blockIdCounter);
   computeRailBlocksForLayer('railAirspace', blockIdCounter);
 }
+// A train holds every block its body currently spans, not just whichever
+// one its FRONT most recently entered — a train longer than one block's
+// remaining stretch still has its TAIL sitting in the previous block for a
+// while after its front has already crossed into the next one, and that
+// previous block has to stay held until the tail has cleared it too, or a
+// second train could be let onto a block this train's own tail is still
+// physically occupying. `v.blockTrail` mirrors `v.trail` (systems.js) —
+// index i is the block of the edge crossed i steps ago — so the trailing
+// edges still "under" the train's body are exactly its first `cellsNeeded`
+// entries, the same `Math.ceil(v.length)` formula footprintKeysFor
+// (systems.js) already uses for the soft per-cell reservation, so this
+// always covers at least as much of the train as that does. Only PRUNES
+// blocks that fell out of that window — acquiring a newly-entered block is
+// still done at the point of crossing (tickTrainMovement's onEnter), since
+// that's the one place that actually knows a new edge was just crossed.
+function updateHeldBlocks(v){
+  const cellsNeeded = Math.max(1, Math.ceil(v.length));
+  const edgesToConsider = Math.min(cellsNeeded, v.blockTrail.length);
+  const stillNeeded = new Set(v.blockTrail.slice(0, edgesToConsider).filter(b => b!=null));
+  for(const blockId of v.heldBlocks){
+    if(stillNeeded.has(blockId)) continue;
+    const block = world.railBlocks.get(blockId);
+    if(block && block.occupiedBy===v.id) block.occupiedBy = null;
+  }
+  v.heldBlocks = [...stillNeeded];
+}
+// Releases every block this train currently holds — used when a train is
+// sold/demolished, so it never leaves a block locked with no train left to
+// eventually clear it.
 function releaseBlock(v){
-  if(v.currentBlock==null) return;
-  const block = world.railBlocks.get(v.currentBlock);
-  if(block && block.occupiedBy===v.id) block.occupiedBy = null;
-  v.currentBlock = null;
+  for(const blockId of v.heldBlocks){
+    const block = world.railBlocks.get(blockId);
+    if(block && block.occupiedBy===v.id) block.occupiedBy = null;
+  }
+  v.heldBlocks = [];
 }

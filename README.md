@@ -3729,3 +3729,81 @@ silhouette instead of a flat diamond, and sampling actual canvas pixels
 confirmed the road and rail lines render in their distinct authored colors
 (dark charcoal asphalt vs. rust-brown ballast) rather than the engine's
 default palette; zero console errors throughout.
+
+# Addendum — A train's tail keeps its previous block held until it clears it
+
+A real bug in the rail block-reservation mechanic (§2.7/Rail Milestone,
+"block mutual exclusion"): a train released the block it was leaving the
+instant its FRONT crossed into the next block, with no regard for whether
+its own TAIL — for anything longer than one cell, up to `Math.ceil(length)`
+cells behind the front — was still physically sitting inside the block
+just released. That's a hole in the "two trains can never hold the same
+block at once" guarantee the whole mechanism exists to provide: a second
+train could be let onto a block the first train's own tail hadn't actually
+finished clearing yet.
+
+## Design
+
+- **A train now holds every block its body currently spans, not just the
+  one its front most recently entered.** `Movement`'s old single
+  `currentBlock` field is replaced by two: `blockTrail` (mirrors `trail`
+  index-for-index — entry `i` is the block of the edge crossed `i` steps
+  ago) and `heldBlocks` (every block id currently held, as an array).
+- **Acquiring a block still happens at the moment of crossing** — the one
+  place that actually knows a new edge was just traversed — inside
+  `tickTrainMovement`'s `onEnter` callback (systems.js), same as before.
+  **Releasing is now a prune, not a replace**: `updateHeldBlocks`
+  (rail-blocks.js) runs after every step, keeping exactly the blocks still
+  "under" the train's body — its first `Math.ceil(v.length)` `blockTrail`
+  entries, the SAME `cellsNeeded` formula `footprintKeysFor` (systems.js)
+  already uses for the soft per-cell occupancy reservation, so the block
+  hold always covers at least as much of the train as that already did —
+  and drops anything that's fallen out of that window. A length-1 vehicle
+  (a train physically no different from its own front) reduces to exactly
+  the old single-block behavior; only a longer train's transition across a
+  boundary actually changes.
+- **Same cap as the rest of the movement engine, deliberately not fixed
+  here**: `blockTrail`, like `trail`, is capped at 6 entries (see `trail`'s
+  own "generous cap — no vehicle in this build needs more" comment) — a
+  train whose `Math.ceil(length)` exceeds 6 (a long multi-wagon consist)
+  is covered only approximately, same pre-existing limitation the soft
+  per-cell reservation already has. Fixing that cap is a separate, larger
+  change; this addendum only fixes the block hold to be AT LEAST as
+  accurate as the existing per-cell reservation, not to exceed it.
+- **`releaseBlock(v)`** (used when a train is sold/demolished — see
+  `destroyEntity`, ecs.js) now releases every entry in `heldBlocks`, not
+  just one.
+
+## What changed
+
+- **`src/sim/rail-blocks.js`**: `releaseBlock` rewritten to release every
+  held block; new `updateHeldBlocks`, which prunes `v.heldBlocks` down to
+  whatever's still under the train's own length.
+- **`src/sim/systems.js`**: `tickTrainMovement`'s `onEnter` callback now
+  always records the crossed edge's block into `v.blockTrail` (not just
+  when it differs from the previous one), then calls `updateHeldBlocks`.
+- **`src/sim/entities.js`**: `Movement`'s `currentBlock: null` replaced by
+  `blockTrail: []` and `heldBlocks: []`.
+- **`src/sim/ecs.js`**: `COMPONENT_TYPES`/`FIELD_MAP` updated for the
+  renamed fields.
+- **`test/test-rail.js`**: Test 1's `currentBlock` check updated to
+  `heldBlocks.includes(...)`; new Test 1b specifically covers a train
+  whose tail is still inside the previous block while its front is
+  already several cells into the next one — asserting both blocks stay in
+  `heldBlocks` and that the previous block's `occupiedBy` is still this
+  train (not `null`), then that it does eventually release once the train
+  has genuinely cleared it.
+
+## Testing
+
+All 15 test files pass, including the new Test 1b — verified it actually
+catches the regression by temporarily reverting `updateHeldBlocks` to only
+ever consider the single most-recent block (the old behavior) and
+confirming Test 1b fails exactly as expected, then restoring the real fix.
+Verified in a real browser via Playwright too: built a junction layout
+with two distinct blocks, assembled a train, and watched `heldBlocks`/
+`world.railBlocks` directly through the Worker's shadow snapshot — at the
+moment the train's front was several cells into block2, `heldBlocks`
+genuinely contained both block ids and block1's `occupiedBy` was still the
+train's own id, confirming a second train could not have been let onto it.
+Zero console errors.

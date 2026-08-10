@@ -12,7 +12,7 @@ const COMPONENT_TYPES = [
   'Producer',   // {recipeId,ticksRemaining} — Mines and Mills
   'Consumer',   // {population,consumptionPerTick,priceMultiplier} — Towns only
   'Identity',   // {kind:'building'|'vehicle', type} — every entity
-  'Movement',   // {speed,maxSpeed,massEmpty,engineForce,brakeForce,length,path,pathIndex,frac,trail,currentBlock} — vehicles only; currentBlock is rail-only (see tickTrainMovement)
+  'Movement',   // {speed,maxSpeed,massEmpty,engineForce,brakeForce,length,path,pathIndex,frac,trail,blockTrail,heldBlocks} — vehicles only; blockTrail/heldBlocks are rail-only (see tickTrainMovement)
   'Status',     // {state} — vehicles only (idle|moving|loading|unloading|blocked)
   'Orders',     // {list,index} — vehicles only, player-authored (§6.6)
   'Cargo',      // {amount,capacity,resource} — vehicles only; capacity/resource are fixed at creation (a truck's own def, or a train's wagons — see Consist)
@@ -64,7 +64,8 @@ const FIELD_MAP = {
   speed:['Movement','speed'], maxSpeed:['Movement','maxSpeed'], massEmpty:['Movement','massEmpty'],
   engineForce:['Movement','engineForce'], brakeForce:['Movement','brakeForce'], length:['Movement','length'],
   path:['Movement','path'], pathIndex:['Movement','pathIndex'], frac:['Movement','frac'], trail:['Movement','trail'],
-  currentBlock:['Movement','currentBlock'], // rail-only: the Block id (see world.railBlocks) this train currently holds, or null
+  blockTrail:['Movement','blockTrail'], // rail-only: block id of the edge crossed i steps ago, mirroring `trail`
+  heldBlocks:['Movement','heldBlocks'], // rail-only: every Block id (see world.railBlocks) this train currently holds
   state:['Status','state'],
   orders:['Orders','list'], ordersIndex:['Orders','index'],
   cargoAmount:['Cargo','amount'], capacity:['Cargo','capacity'], cargoResource:['Cargo','resource'],

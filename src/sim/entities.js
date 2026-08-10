@@ -147,7 +147,9 @@ function randomizedMovement(spec){
     frac:0,                // 0..1 progress from path[pathIndex] toward path[pathIndex+1]
     trail:[],               // recently-occupied {x,y,layer} cells, most recent first — the physical
                              // basis for this vehicle's trailing-length reservation (see tickVehicles)
-    currentBlock: null,     // rail-only: the Block id this train currently holds (see tickTrainMovement)
+    blockTrail:[],           // rail-only: block id of the edge crossed i steps ago, mirroring `trail`
+                             // index-for-index (see updateHeldBlocks, rail-blocks.js)
+    heldBlocks: [],          // rail-only: every Block id this train currently holds (see tickTrainMovement)
   };
 }
 function createTruck(x,y,vehicleType){

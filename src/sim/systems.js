@@ -483,15 +483,21 @@ function tickTrainMovement(){
       // The hard rule on top of the soft gap above: a train may only enter
       // the next cell if the BLOCK that edge belongs to is unheld (or
       // already held by this same train) — never "as close as physics
-      // allows," always a full stop at the block boundary. Acquiring a new
-      // block releases whichever one this train held before, so it never
-      // holds more than one at a time. `cur.layer` (not a hardcoded 'rail')
-      // since a train can now be on 'railElevated' too; a vertical move
-      // through a railRamp (same x,y, different layer — dirBetween has no
-      // entry for that) has no lateral edge or block of its own to check —
-      // the ramp cell is already a hub on each layer's own independent
-      // block graph (see railCellIsHub in rail-blocks.js), so the vertical
-      // step itself is always allowed.
+      // allows," always a full stop at the block boundary. `cur.layer`
+      // (not a hardcoded 'rail') since a train can now be on 'railElevated'
+      // too; a vertical move through a railRamp (same x,y, different layer
+      // — dirBetween has no entry for that) has no lateral edge or block of
+      // its own to check — the ramp cell is already a hub on each layer's
+      // own independent block graph (see railCellIsHub in rail-blocks.js),
+      // so the vertical step itself is always allowed.
+      //
+      // Every step (whether it crosses a block boundary or not) records
+      // its edge's block in `v.blockTrail`, then prunes `v.heldBlocks` down
+      // to whatever's still under the train's own length (updateHeldBlocks,
+      // rail-blocks.js) — a PREVIOUS block stays held for as long as the
+      // train's tail is still physically inside it, not just until the
+      // front has moved on, so a second train can never be let onto a
+      // block this train hasn't fully cleared yet.
       advanceAlongPath(v, occupied,
         (cur,next) => {
           if(cur.layer !== next.layer) return true;
@@ -501,15 +507,18 @@ function tickTrainMovement(){
           return !block || block.occupiedBy===null || block.occupiedBy===v.id;
         },
         (cur,next) => {
-          if(cur.layer !== next.layer) return;
-          const dir = dirBetween(cur,next).dir;
-          const blockId = trackAt(cur.x,cur.y,cur.layer).blockId[dir];
-          if(blockId !== v.currentBlock){
-            releaseBlock(v);
-            const block = blockId!=null ? world.railBlocks.get(blockId) : null;
-            if(block) block.occupiedBy = v.id;
-            v.currentBlock = blockId ?? null;
+          let blockId = null;
+          if(cur.layer === next.layer){
+            const dir = dirBetween(cur,next).dir;
+            blockId = trackAt(cur.x,cur.y,cur.layer).blockId[dir] ?? null;
+            if(blockId!=null){
+              const block = world.railBlocks.get(blockId);
+              if(block) block.occupiedBy = v.id; // canEnter above already verified free-or-self
+            }
           }
+          v.blockTrail.unshift(blockId);
+          if(v.blockTrail.length > 6) v.blockTrail.length = 6; // stays in lockstep with v.trail's own cap
+          updateHeldBlocks(v);
         }
       );
       continue;

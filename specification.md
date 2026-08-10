@@ -481,6 +481,26 @@ to decide *where* it should go.
 > "connected = bidirectional," so worth having from the start for every
 > discrete network mode, not just trucks.
 
+> **Amended in Phase 2 (Rail block mutual exclusion — a train's own
+> length).** "Block/signal constraints (single track = mutual exclusion per
+> block)" above was implemented as a train holding exactly one block —
+> whichever one its front-most cell was currently in — releasing it the
+> instant the front crossed into the next block. That's correct for a
+> train physically no longer than one tile, but a real assembled train
+> (engine + N wagons) can be many tiles long, and the block boundary it
+> just crossed doesn't mean the train has actually LEFT the old block —
+> its tail can still be sitting inside it for a while longer. The fix: a
+> train now holds every block any part of its own current body spans
+> (bounded by the same `Math.ceil(length)` cell count its per-cell
+> following/queueing reservation already uses — see §6.6/§16.3), not just
+> the one its front is in, and only releases a block once no part of the
+> train's body is inside it anymore. Without this, a second train could
+> have been let onto a block the first train's own tail was still
+> physically occupying — a real hole in the "two trains can never hold the
+> same block at once" guarantee this whole mechanism exists to provide.
+> See README's "A train's tail keeps its previous block held until it
+> clears it" addendum for the implementation.
+
 ### 6.3 Continuous networks (pipeline, powerline)
 
 Modeled as a **flow graph**, not discrete vehicles: each tick, `FlowSystem`

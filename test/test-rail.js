@@ -69,10 +69,10 @@ section('Test 1 — block mutual exclusion', () => {
   let block2Id = null;
   for(let i=0;i<1000;i++){
     run(ctx, `simTick();`);
-    const a = run(ctx, `const a = world.entities.get(${trainAId}); return {x:a.x, currentBlock:a.currentBlock};`);
+    const a = run(ctx, `const a = world.entities.get(${trainAId}); return {x:a.x, heldBlocks:a.heldBlocks};`);
     if(a.x >= 10 && a.x <= 13){
       block2Id = run(ctx, `return trackAt(9,5,'rail').blockId.E;`);
-      check('train A holds block2 while crossing it', a.currentBlock === block2Id, `currentBlock=${a.currentBlock} block2Id=${block2Id}`);
+      check('train A holds block2 while crossing it', a.heldBlocks.includes(block2Id), `heldBlocks=${JSON.stringify(a.heldBlocks)} block2Id=${block2Id}`);
       break;
     }
   }
@@ -119,6 +119,58 @@ section('Test 1 — block mutual exclusion', () => {
   check('train B starts moving within a bounded number of ticks of block2 releasing (not stalled indefinitely)',
     bMovedAtTick !== -1 && bMovedAtTick - releasedAtTick <= 40,
     `released@${releasedAtTick} moved@${bMovedAtTick}`);
+});
+
+section('Test 1b — a train\'s tail keeps the block it hasn\'t fully cleared held, even after its front has moved on to the next one', () => {
+  const ctx = newGameContext();
+  const {depotBId} = buildJunctionLine(ctx);
+
+  // A single-wagon train: length = diesel(3) + ore_wagon(2.5) = 5.5 tiles,
+  // so cellsNeeded = ceil(5.5) = 6 — exactly at the trail/blockTrail cap
+  // (systems.js's advanceAlongPath caps `trail` at 6 entries), so this
+  // scenario is covered exactly, not just approximately, by
+  // updateHeldBlocks (rail-blocks.js). Long enough that once its front is
+  // several cells into block2 (east of the junction at x=8), its tail is
+  // still solidly inside block1 (west of the junction) — the exact
+  // situation the old single-`currentBlock` logic got wrong, releasing
+  // block1 the instant the FRONT crossed into block2 regardless of where
+  // the tail physically was.
+  const trainId = run(ctx, `
+    const train = createTrain(3, 5, 'diesel', 'ore_wagon', 1);
+    cmdSetOrders(train, [{nodeId: ${depotBId}, action:'unload_all', resource:'ore'}]);
+    return train.id;
+  `);
+  const block1Id = run(ctx, `return trackAt(6,5,'rail').blockId.E;`); // west of the junction
+  const block2Id = run(ctx, `return trackAt(9,5,'rail').blockId.E;`); // east of the junction
+
+  let checked = false;
+  for(let i=0;i<1000;i++){
+    run(ctx, `simTick();`);
+    const t = run(ctx, `
+      const t = world.entities.get(${trainId});
+      return {x:t.x, heldBlocks:t.heldBlocks, block1OccupiedBy: world.railBlocks.get(${block1Id}).occupiedBy};
+    `);
+    if(t.x >= 10 && t.x <= 11){
+      checked = true;
+      check('the front (several cells into block2) holds block2', t.heldBlocks.includes(block2Id), JSON.stringify(t.heldBlocks));
+      check('the tail (still inside block1) keeps block1 held too — NOT released just because the front moved on',
+        t.heldBlocks.includes(block1Id), JSON.stringify(t.heldBlocks));
+      check('block1.occupiedBy is still this train, not null — a second train genuinely cannot be let in',
+        t.block1OccupiedBy === trainId, `occupiedBy=${t.block1OccupiedBy} trainId=${trainId}`);
+      break;
+    }
+  }
+  check('train reached the check window within budget', checked);
+
+  // The hold is delayed, not permanent — once the train has actually moved
+  // far enough that no part of its body is in block1 anymore, it releases.
+  let releasedAtTick = -1;
+  for(let i=0;i<1000;i++){
+    run(ctx, `simTick();`);
+    const occupiedBy = run(ctx, `return world.railBlocks.get(${block1Id}).occupiedBy;`);
+    if(occupiedBy===null){ releasedAtTick = i; break; }
+  }
+  check('block1 is eventually released once the train has fully cleared it (the hold isn\'t permanent)', releasedAtTick !== -1);
 });
 
 section('Test 2 — block computation correctness', () => {
